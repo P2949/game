@@ -9,6 +9,7 @@ pub mod surface;
 pub mod swapchain;
 pub mod text;
 pub mod texture;
+pub mod vertex;
 // pub struct Renderer {
 //     // private Vulkan internals
 // }

@@ -1,7 +1,7 @@
 use ash::{Entry, vk};
 use std::ffi::{CStr, CString};
 
-use crate::renderer::{debug, device, frame, swapchain};
+use crate::renderer::{debug, device, frame, pipeline, swapchain};
 
 pub struct VulkanContext {
     // Keep the Vulkan loader alive for objects created from it.
@@ -18,6 +18,7 @@ pub struct VulkanContext {
     pub logical_device: Option<device::LogicalDevice>,
     pub swapchain: swapchain::Swapchain,
     pub swapchain_image_views: swapchain::SwapchainImageViews,
+    pub graphics_pipeline: pipeline::GraphicsPipeline,
     pub image_render_finished: Vec<vk::Semaphore>,
     pub frames: Vec<frame::FrameData>,
     pub current_frame: usize,
@@ -116,6 +117,8 @@ impl VulkanContext {
             &swapchain.images,
             swapchain.format,
         )?;
+        let graphics_pipeline =
+            pipeline::GraphicsPipeline::new_triangle(&logical_device.device, swapchain.format)?;
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         let mut image_render_finished = Vec::with_capacity(swapchain.images.len());
         for _ in &swapchain.images {
@@ -146,6 +149,7 @@ impl VulkanContext {
             logical_device: Some(logical_device),
             swapchain,
             swapchain_image_views,
+            graphics_pipeline,
             image_render_finished,
             frames,
             current_frame: 0,
@@ -221,6 +225,7 @@ impl Drop for VulkanContext {
                     frame.destroy(&logical_device.device);
                 }
 
+                self.graphics_pipeline.destroy(&logical_device.device);
                 self.swapchain_image_views.destroy(&logical_device.device);
             }
 

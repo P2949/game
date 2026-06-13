@@ -3,6 +3,8 @@
 use ash::vk;
 use std::io::Cursor;
 
+use crate::renderer::vertex::Vertex2D;
+
 pub const TRIANGLE_VERT_SPV: &[u8] = include_bytes!("../../shaders/triangle.vert.spv");
 pub const TRIANGLE_FRAG_SPV: &[u8] = include_bytes!("../../shaders/triangle.frag.spv");
 pub const SPRITE_VERT_SPV: &[u8] = include_bytes!("../../shaders/sprite.vert.spv");
@@ -32,4 +34,142 @@ pub fn create_sprite_shader_modules(
     let vert = create_shader_module(device, SPRITE_VERT_SPV)?;
     let frag = create_shader_module(device, SPRITE_FRAG_SPV)?;
     Ok((vert, frag))
+}
+
+pub struct GraphicsPipeline {
+    pub layout: vk::PipelineLayout,
+    pub pipeline: vk::Pipeline,
+}
+
+impl GraphicsPipeline {
+    pub fn new_triangle(
+        device: &ash::Device,
+        swapchain_format: vk::Format,
+    ) -> anyhow::Result<Self> {
+        let (vert_module, frag_module) = create_triangle_shader_modules(device)?;
+        let result = create_graphics_pipeline(device, swapchain_format, vert_module, frag_module);
+
+        unsafe {
+            device.destroy_shader_module(frag_module, None);
+            device.destroy_shader_module(vert_module, None);
+        }
+
+        result
+    }
+
+    pub unsafe fn destroy(&self, device: &ash::Device) {
+        unsafe {
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_pipeline_layout(self.layout, None);
+        }
+    }
+}
+
+fn create_graphics_pipeline(
+    device: &ash::Device,
+    swapchain_format: vk::Format,
+    vert_module: vk::ShaderModule,
+    frag_module: vk::ShaderModule,
+) -> anyhow::Result<GraphicsPipeline> {
+    let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default();
+    let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_info, None)? };
+
+    let color_formats = [swapchain_format];
+    let mut rendering_info =
+        vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&color_formats);
+
+    let main = c"main";
+
+    let shader_stages = [
+        vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(vert_module)
+            .name(main),
+        vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(frag_module)
+            .name(main),
+    ];
+
+    let binding = Vertex2D::binding_description();
+    let attributes = Vertex2D::attribute_descriptions();
+
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+        .vertex_binding_descriptions(std::slice::from_ref(&binding))
+        .vertex_attribute_descriptions(&attributes);
+
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+        .viewport_count(1)
+        .scissor_count(1);
+
+    let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+        .polygon_mode(vk::PolygonMode::FILL)
+        .cull_mode(vk::CullModeFlags::NONE)
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+        .line_width(1.0);
+
+    let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+    let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
+        .color_write_mask(
+            vk::ColorComponentFlags::R
+                | vk::ColorComponentFlags::G
+                | vk::ColorComponentFlags::B
+                | vk::ColorComponentFlags::A,
+        )
+        .blend_enable(false);
+
+    let color_blend = vk::PipelineColorBlendStateCreateInfo::default()
+        .attachments(std::slice::from_ref(&color_blend_attachment));
+
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_state =
+        vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+
+    let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+        .push_next(&mut rendering_info)
+        .stages(&shader_stages)
+        .vertex_input_state(&vertex_input)
+        .input_assembly_state(&input_assembly)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization)
+        .multisample_state(&multisample)
+        .color_blend_state(&color_blend)
+        .dynamic_state(&dynamic_state)
+        .layout(pipeline_layout);
+
+    let pipeline_result = unsafe {
+        device.create_graphics_pipelines(
+            vk::PipelineCache::null(),
+            std::slice::from_ref(&pipeline_info),
+            None,
+        )
+    };
+
+    let pipeline = match pipeline_result {
+        Ok(pipelines) => pipelines[0],
+        Err((pipelines, err)) => {
+            unsafe {
+                for pipeline in pipelines {
+                    device.destroy_pipeline(pipeline, None);
+                }
+                device.destroy_pipeline_layout(pipeline_layout, None);
+            }
+            return Err(err.into());
+        }
+    };
+
+    log::info!(
+        "created dynamic-rendering graphics pipeline for {:?}",
+        swapchain_format
+    );
+
+    Ok(GraphicsPipeline {
+        layout: pipeline_layout,
+        pipeline,
+    })
 }
