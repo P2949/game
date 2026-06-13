@@ -1,10 +1,19 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use crossbeam_queue::ArrayQueue;
 use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback};
 
-pub type SharedMixer = Arc<Mutex<Mixer>>;
-
 const AUDIO_SCRATCH_SAMPLES: usize = 4096;
+const AUDIO_COMMAND_QUEUE_CAPACITY: usize = 128;
+
+#[derive(Debug, Clone, Copy)]
+enum AudioCommand {
+    Play {
+        sound_id: usize,
+        volume: f32,
+        looping: bool,
+    },
+}
 
 pub struct Sound {
     pub samples: Vec<f32>,
@@ -95,7 +104,7 @@ impl Default for Mixer {
 }
 
 pub struct AudioSystem {
-    pub mixer: SharedMixer,
+    commands: Arc<ArrayQueue<AudioCommand>>,
     blip_sound: usize,
     _stream: AudioStreamWithCallback<MixerCallback>,
 }
@@ -118,13 +127,14 @@ impl AudioSystem {
             mixer.add_sound(sine_sound(110.0, 1.0, sample_rate as u32, channels as u16));
         mixer.play(music_sound, 0.08, true);
 
-        let mixer = Arc::new(Mutex::new(mixer));
+        let commands = Arc::new(ArrayQueue::new(AUDIO_COMMAND_QUEUE_CAPACITY));
         let audio = sdl.audio().map_err(anyhow::Error::msg)?;
         let stream = audio
             .open_playback_stream(
                 &spec,
                 MixerCallback {
-                    mixer: Arc::clone(&mixer),
+                    mixer,
+                    commands: Arc::clone(&commands),
                     scratch: vec![0.0; AUDIO_SCRATCH_SAMPLES],
                 },
             )
@@ -134,48 +144,61 @@ impl AudioSystem {
         log::info!("started SDL audio mixer at {sample_rate} Hz, {channels} channels");
 
         Ok(Self {
-            mixer,
+            commands,
             blip_sound,
             _stream: stream,
         })
     }
 
     pub fn play_blip(&self) {
-        if let Ok(mut mixer) = self.mixer.lock() {
-            mixer.play(self.blip_sound, 0.8, false);
+        let command = AudioCommand::Play {
+            sound_id: self.blip_sound,
+            volume: 0.8,
+            looping: false,
+        };
+
+        if self.commands.push(command).is_err() {
+            log::warn!("dropping audio command because the queue is full");
         }
     }
 }
 
 struct MixerCallback {
-    mixer: SharedMixer,
+    mixer: Mixer,
+    commands: Arc<ArrayQueue<AudioCommand>>,
     scratch: Vec<f32>,
+}
+
+impl MixerCallback {
+    fn drain_commands(&mut self) {
+        while let Some(command) = self.commands.pop() {
+            match command {
+                AudioCommand::Play {
+                    sound_id,
+                    volume,
+                    looping,
+                } => {
+                    self.mixer.play(sound_id, volume, looping);
+                }
+            }
+        }
+    }
 }
 
 impl AudioCallback<f32> for MixerCallback {
     fn callback(&mut self, stream: &mut AudioStream, requested: i32) {
+        self.drain_commands();
+
         let mut remaining = requested.max(0) as usize;
 
-        if let Ok(mut mixer) = self.mixer.try_lock() {
-            while remaining > 0 {
-                let chunk_len = remaining.min(self.scratch.len());
-                let out = &mut self.scratch[..chunk_len];
+        while remaining > 0 {
+            let chunk_len = remaining.min(self.scratch.len());
+            let out = &mut self.scratch[..chunk_len];
 
-                mixer.mix_into(out);
-                let _ = stream.put_data_f32(out);
+            self.mixer.mix_into(out);
+            let _ = stream.put_data_f32(out);
 
-                remaining -= chunk_len;
-            }
-        } else {
-            while remaining > 0 {
-                let chunk_len = remaining.min(self.scratch.len());
-                let out = &mut self.scratch[..chunk_len];
-
-                out.fill(0.0);
-                let _ = stream.put_data_f32(out);
-
-                remaining -= chunk_len;
-            }
+            remaining -= chunk_len;
         }
     }
 }
@@ -202,7 +225,11 @@ fn sine_sound(freq: f32, seconds: f32, sample_rate: u32, channels: u16) -> Sound
 
 #[cfg(test)]
 mod tests {
-    use super::{Mixer, Sound};
+    use std::sync::Arc;
+
+    use crossbeam_queue::ArrayQueue;
+
+    use super::{AudioCommand, Mixer, MixerCallback, Sound};
 
     #[test]
     fn finished_voice_is_removed() {
@@ -259,5 +286,35 @@ mod tests {
         mixer.play(123, 1.0, false);
 
         assert!(mixer.voices.is_empty());
+    }
+
+    #[test]
+    fn callback_drains_play_commands() {
+        let mut mixer = Mixer::new();
+        let sound_id = mixer.add_sound(Sound {
+            samples: vec![0.25],
+            channels: 1,
+            sample_rate: 48_000,
+        });
+        let commands = Arc::new(ArrayQueue::new(4));
+        commands
+            .push(AudioCommand::Play {
+                sound_id,
+                volume: 0.5,
+                looping: false,
+            })
+            .unwrap();
+        let mut callback = MixerCallback {
+            mixer,
+            commands: Arc::clone(&commands),
+            scratch: Vec::new(),
+        };
+
+        callback.drain_commands();
+
+        assert!(commands.is_empty());
+        assert_eq!(callback.mixer.voices.len(), 1);
+        assert_eq!(callback.mixer.voices[0].sound_id, sound_id);
+        assert_eq!(callback.mixer.voices[0].volume, 0.5);
     }
 }

@@ -13,6 +13,7 @@ glam = "0.33.1"
 image = "0.25"
 fontdue = "0.9"
 bytemuck = { version = "1", features = ["derive"] }
+crossbeam-queue = "0.3"
 
 anyhow = "1"
 log = "0.4"
