@@ -67,6 +67,7 @@ impl Platform {
 
     pub fn pump_events(&mut self) {
         self.framebuffer_resized = false;
+        self.input.begin_frame();
 
         for event in self.event_pump.poll_iter() {
             match event {

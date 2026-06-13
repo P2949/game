@@ -4,9 +4,10 @@ use crate::renderer::{self, SpriteDraw};
 
 pub struct Game {
     camera: Camera2D,
-    moving_prev_pos: glam::Vec2,
-    moving_pos: glam::Vec2,
-    moving_vel: glam::Vec2,
+    player_prev_pos: glam::Vec2,
+    player_pos: glam::Vec2,
+    player_vel: glam::Vec2,
+    player_size: glam::Vec2,
     log_timer: f32,
 }
 
@@ -17,9 +18,10 @@ impl Game {
                 center: glam::vec2(200.0, 200.0),
                 zoom: 1.0,
             },
-            moving_prev_pos: glam::vec2(420.0, 120.0),
-            moving_pos: glam::vec2(420.0, 120.0),
-            moving_vel: glam::vec2(80.0, 0.0),
+            player_prev_pos: glam::vec2(420.0, 120.0),
+            player_pos: glam::vec2(420.0, 120.0),
+            player_vel: glam::Vec2::ZERO,
+            player_size: glam::vec2(48.0, 48.0),
             log_timer: 0.0,
         }
     }
@@ -29,20 +31,18 @@ impl Game {
     }
 
     pub fn update(&mut self, dt: f32, platform: &Platform) {
-        self.update_camera(dt, platform.input);
+        let speed = 220.0;
+        self.player_prev_pos = self.player_pos;
+        self.player_vel = platform.input.movement() * speed;
+        self.player_pos += self.player_vel * dt;
 
-        self.moving_prev_pos = self.moving_pos;
-        self.moving_pos += self.moving_vel * dt;
-
-        if self.moving_pos.x < 420.0 || self.moving_pos.x > 760.0 {
-            self.moving_vel.x = -self.moving_vel.x;
-            self.moving_pos.x = self.moving_pos.x.clamp(420.0, 760.0);
-        }
+        self.update_camera_zoom(dt, platform.input);
+        self.camera.center = self.player_pos + self.player_size * 0.5;
 
         self.log_timer += dt;
         if self.log_timer >= 1.0 {
             self.log_timer -= 1.0;
-            log::info!("fixed update moving object at {:?}", self.moving_pos);
+            log::info!("fixed update player at {:?}", self.player_pos);
         }
     }
 
@@ -60,11 +60,11 @@ impl Game {
             }
         }
 
-        let moving_pos = self.moving_prev_pos.lerp(self.moving_pos, alpha);
+        let player_pos = self.player_prev_pos.lerp(self.player_pos, alpha);
         renderer.draw_sprite(SpriteDraw {
             texture: renderer::TEST_TEXTURE_ID,
-            position: moving_pos,
-            size: glam::vec2(48.0, 48.0),
+            position: player_pos,
+            size: self.player_size,
             uv_min: glam::Vec2::ZERO,
             uv_max: glam::Vec2::ONE,
             color: glam::vec4(1.0, 0.35, 0.25, 1.0),
@@ -72,31 +72,12 @@ impl Game {
 
         renderer.draw_text(
             "FPS: 240\nSprites: 101",
-            glam::vec2(16.0, 16.0),
+            player_pos + glam::vec2(-404.0, -104.0),
             glam::vec4(1.0, 0.95, 0.75, 1.0),
         );
     }
 
-    fn update_camera(&mut self, dt: f32, input: crate::platform::input::InputState) {
-        let mut movement = glam::Vec2::ZERO;
-
-        if input.move_left {
-            movement.x -= 1.0;
-        }
-        if input.move_right {
-            movement.x += 1.0;
-        }
-        if input.move_up {
-            movement.y -= 1.0;
-        }
-        if input.move_down {
-            movement.y += 1.0;
-        }
-
-        if movement.length_squared() > 0.0 {
-            self.camera.center += movement.normalize() * (360.0 * dt / self.camera.zoom);
-        }
-
+    fn update_camera_zoom(&mut self, dt: f32, input: crate::platform::input::InputState) {
         let zoom_step = 1.0 + 2.0 * dt;
         if input.zoom_in {
             self.camera.zoom *= zoom_step;
