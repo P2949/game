@@ -1,8 +1,8 @@
 use ash::{Entry, vk};
 use std::ffi::{CStr, CString};
 
-use crate::renderer::vertex::Vertex2D;
-use crate::renderer::{buffer, debug, device, frame, pipeline, swapchain};
+use crate::renderer::vertex::quad_vertices;
+use crate::renderer::{buffer, debug, device, frame, pipeline, swapchain, texture};
 
 pub struct VulkanContext {
     // Keep the Vulkan loader alive for objects created from it.
@@ -18,12 +18,16 @@ pub struct VulkanContext {
     pub queue_families: device::QueueFamilies,
     pub logical_device: Option<device::LogicalDevice>,
     pub allocator: Option<gpu_allocator::vulkan::Allocator>,
-    pub triangle_vertex_buffer: Option<buffer::Buffer>,
+    pub sprite_vertex_buffer: Option<buffer::Buffer>,
+    pub test_texture: Option<texture::Texture>,
+    pub texture_descriptor_set_layout: vk::DescriptorSetLayout,
+    pub texture_descriptor_pool: vk::DescriptorPool,
+    pub texture_descriptor_set: vk::DescriptorSet,
     pub upload_command_pool: vk::CommandPool,
     pub upload_fence: vk::Fence,
     pub swapchain: swapchain::Swapchain,
     pub swapchain_image_views: swapchain::SwapchainImageViews,
-    pub graphics_pipeline: pipeline::GraphicsPipeline,
+    pub sprite_pipeline: pipeline::GraphicsPipeline,
     pub image_render_finished: Vec<vk::Semaphore>,
     pub frames: Vec<frame::FrameData>,
     pub current_frame: usize,
@@ -117,13 +121,30 @@ impl VulkanContext {
             logical_device.device.clone(),
             selected_device.physical_device,
         )?;
-        let triangle_vertex_buffer = create_triangle_vertex_buffer(
+        let sprite_vertex_buffer = create_quad_vertex_buffer(
             &logical_device.device,
             &mut allocator,
             logical_device.graphics_queue,
             upload_command_pool,
             upload_fence,
         )?;
+        let test_texture = texture::Texture::from_path(
+            &logical_device.device,
+            &mut allocator,
+            logical_device.graphics_queue,
+            upload_command_pool,
+            upload_fence,
+            "assets/textures/test.png",
+            "test texture",
+        )?;
+        let texture_descriptor_set_layout =
+            texture::create_texture_descriptor_set_layout(&logical_device.device)?;
+        let (texture_descriptor_pool, texture_descriptor_set) =
+            texture::create_texture_descriptor_set(
+                &logical_device.device,
+                texture_descriptor_set_layout,
+                &test_texture,
+            )?;
         let swapchain = swapchain::Swapchain::new(
             &instance,
             &logical_device.device,
@@ -139,8 +160,11 @@ impl VulkanContext {
             &swapchain.images,
             swapchain.format,
         )?;
-        let graphics_pipeline =
-            pipeline::GraphicsPipeline::new_triangle(&logical_device.device, swapchain.format)?;
+        let sprite_pipeline = pipeline::GraphicsPipeline::new_sprite(
+            &logical_device.device,
+            swapchain.format,
+            texture_descriptor_set_layout,
+        )?;
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         let mut image_render_finished = Vec::with_capacity(swapchain.images.len());
         for _ in &swapchain.images {
@@ -170,12 +194,16 @@ impl VulkanContext {
             queue_families: selected_device.queue_families,
             logical_device: Some(logical_device),
             allocator: Some(allocator),
-            triangle_vertex_buffer: Some(triangle_vertex_buffer),
+            sprite_vertex_buffer: Some(sprite_vertex_buffer),
+            test_texture: Some(test_texture),
+            texture_descriptor_set_layout,
+            texture_descriptor_pool,
+            texture_descriptor_set,
             upload_command_pool,
             upload_fence,
             swapchain,
             swapchain_image_views,
-            graphics_pipeline,
+            sprite_pipeline,
             image_render_finished,
             frames,
             current_frame: 0,
@@ -189,10 +217,10 @@ impl VulkanContext {
 
         let device = &logical_device.device;
         let frame = &self.frames[self.current_frame];
-        let triangle_vertex_buffer = self
-            .triangle_vertex_buffer
+        let sprite_vertex_buffer = self
+            .sprite_vertex_buffer
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("triangle vertex buffer has been destroyed"))?;
+            .ok_or_else(|| anyhow::anyhow!("sprite vertex buffer has been destroyed"))?;
 
         unsafe {
             device.wait_for_fences(std::slice::from_ref(&frame.in_flight), true, u64::MAX)?;
@@ -220,8 +248,10 @@ impl VulkanContext {
                 self.swapchain.images[image_index_usize],
                 self.swapchain_image_views.views[image_index_usize],
                 self.swapchain.extent,
-                self.graphics_pipeline.pipeline,
-                triangle_vertex_buffer.handle,
+                self.sprite_pipeline.layout,
+                self.sprite_pipeline.pipeline,
+                sprite_vertex_buffer.handle,
+                self.texture_descriptor_set,
                 t,
             )?;
 
@@ -249,11 +279,27 @@ impl Drop for VulkanContext {
             if let Some(logical_device) = self.logical_device.as_ref() {
                 let _ = logical_device.device.device_wait_idle();
 
+                self.sprite_pipeline.destroy(&logical_device.device);
+
+                logical_device
+                    .device
+                    .destroy_descriptor_pool(self.texture_descriptor_pool, None);
+
+                if let (Some(texture), Some(allocator)) =
+                    (self.test_texture.take(), self.allocator.as_mut())
+                {
+                    texture.destroy(&logical_device.device, allocator);
+                }
+
                 if let (Some(vertex_buffer), Some(allocator)) =
-                    (self.triangle_vertex_buffer.take(), self.allocator.as_mut())
+                    (self.sprite_vertex_buffer.take(), self.allocator.as_mut())
                 {
                     vertex_buffer.destroy(&logical_device.device, allocator);
                 }
+
+                logical_device
+                    .device
+                    .destroy_descriptor_set_layout(self.texture_descriptor_set_layout, None);
 
                 logical_device.device.destroy_fence(self.upload_fence, None);
                 logical_device
@@ -268,7 +314,6 @@ impl Drop for VulkanContext {
                     frame.destroy(&logical_device.device);
                 }
 
-                self.graphics_pipeline.destroy(&logical_device.device);
                 self.swapchain_image_views.destroy(&logical_device.device);
             }
 
@@ -313,27 +358,14 @@ fn create_upload_fence(device: &ash::Device) -> anyhow::Result<vk::Fence> {
     Ok(fence)
 }
 
-fn create_triangle_vertex_buffer(
+fn create_quad_vertex_buffer(
     device: &ash::Device,
     allocator: &mut gpu_allocator::vulkan::Allocator,
     queue: vk::Queue,
     upload_pool: vk::CommandPool,
     upload_fence: vk::Fence,
 ) -> anyhow::Result<buffer::Buffer> {
-    let vertices = [
-        Vertex2D {
-            pos: [0.0, -0.5],
-            color: [1.0, 0.0, 0.0],
-        },
-        Vertex2D {
-            pos: [0.5, 0.5],
-            color: [0.0, 1.0, 0.0],
-        },
-        Vertex2D {
-            pos: [-0.5, 0.5],
-            color: [0.0, 0.0, 1.0],
-        },
-    ];
+    let vertices = quad_vertices(-0.75, -0.75, 1.5, 1.5);
 
     buffer::upload_buffer(
         device,
@@ -343,7 +375,7 @@ fn create_triangle_vertex_buffer(
         upload_fence,
         &vertices,
         vk::BufferUsageFlags::VERTEX_BUFFER,
-        "triangle vertices",
+        "sprite quad vertices",
     )
 }
 
@@ -353,8 +385,10 @@ unsafe fn record_clear_commands(
     image: vk::Image,
     image_view: vk::ImageView,
     extent: vk::Extent2D,
-    triangle_pipeline: vk::Pipeline,
-    triangle_vertex_buffer: vk::Buffer,
+    sprite_pipeline_layout: vk::PipelineLayout,
+    sprite_pipeline: vk::Pipeline,
+    sprite_vertex_buffer: vk::Buffer,
+    texture_descriptor_set: vk::DescriptorSet,
     t: f32,
 ) -> anyhow::Result<()> {
     let begin_info = vk::CommandBufferBeginInfo::default();
@@ -419,13 +453,32 @@ unsafe fn record_clear_commands(
         device.cmd_set_viewport(cmd, 0, std::slice::from_ref(&viewport));
         device.cmd_set_scissor(cmd, 0, std::slice::from_ref(&scissor));
 
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, triangle_pipeline);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, sprite_pipeline);
 
-        let vertex_buffers = [triangle_vertex_buffer];
+        let descriptor_sets = [texture_descriptor_set];
+        device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::GRAPHICS,
+            sprite_pipeline_layout,
+            0,
+            &descriptor_sets,
+            &[],
+        );
+
+        let view_proj = glam::Mat4::IDENTITY.to_cols_array();
+        device.cmd_push_constants(
+            cmd,
+            sprite_pipeline_layout,
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            bytemuck::bytes_of(&view_proj),
+        );
+
+        let vertex_buffers = [sprite_vertex_buffer];
         let offsets = [0_u64];
         device.cmd_bind_vertex_buffers(cmd, 0, &vertex_buffers, &offsets);
 
-        device.cmd_draw(cmd, 3, 1, 0, 0);
+        device.cmd_draw(cmd, 6, 1, 0, 0);
 
         device.cmd_end_rendering(cmd);
 
