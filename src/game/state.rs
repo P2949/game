@@ -17,6 +17,9 @@ pub struct Game {
     camera: Camera2D,
     player: Entity,
     solids: Vec<Aabb>,
+    shake: Shake,
+    effect_time: f32,
+    frame_graph: FrameGraph,
     log_timer: f32,
 }
 
@@ -28,6 +31,9 @@ impl Game {
             camera,
             player,
             solids,
+            shake: Shake::default(),
+            effect_time: 0.0,
+            frame_graph: FrameGraph::default(),
             log_timer: 0.0,
         }
     }
@@ -36,7 +42,14 @@ impl Game {
         self.camera
     }
 
+    pub fn record_frame_time(&mut self, ms: f32) {
+        self.frame_graph.push(ms);
+    }
+
     pub fn update(&mut self, dt: f32, platform: &Platform) {
+        self.effect_time += dt;
+        self.shake.update(dt);
+
         match self.mode {
             GameMode::MainMenu => {
                 if platform.input.action_pressed {
@@ -114,11 +127,18 @@ impl Game {
 
     fn update_playing(&mut self, dt: f32, platform: &Platform) {
         let speed = 220.0;
-        self.player.vel = platform.input.movement() * speed;
+        let desired_vel = platform.input.movement() * speed;
+        self.player.vel = desired_vel;
         move_with_collision(&mut self.player, &self.solids, dt);
+        if desired_vel.length_squared() > 0.0
+            && self.player.vel.length_squared() < desired_vel.length_squared()
+        {
+            self.shake.add(0.18);
+        }
 
         self.update_camera_zoom(dt, platform.input);
-        self.camera.center = self.player.pos + self.player.size * 0.5;
+        self.camera.center =
+            self.player.pos + self.player.size * 0.5 + self.shake.offset(self.effect_time);
 
         self.log_timer += dt;
         if self.log_timer >= 1.0 {
@@ -167,6 +187,7 @@ impl Game {
             player_pos + glam::vec2(-404.0, -104.0),
             glam::vec4(1.0, 0.95, 0.75, 1.0),
         );
+        self.render_frame_graph(renderer, player_pos + glam::vec2(-404.0, -184.0));
     }
 
     fn reset_world(&mut self) {
@@ -174,6 +195,8 @@ impl Game {
         self.camera = camera;
         self.player = player;
         self.solids = solids;
+        self.shake = Shake::default();
+        self.effect_time = 0.0;
         self.log_timer = 0.0;
     }
 
@@ -186,6 +209,91 @@ impl Game {
             self.camera.zoom /= zoom_step;
         }
         self.camera.zoom = self.camera.zoom.clamp(0.25, 6.0);
+    }
+
+    fn render_frame_graph(
+        &self,
+        renderer: &mut crate::renderer::context::VulkanContext,
+        origin: glam::Vec2,
+    ) {
+        for (i, ms) in self.frame_graph.recent(120).enumerate() {
+            let height = (ms * 2.0).clamp(1.0, 72.0);
+            let color = if ms <= 16.7 {
+                glam::vec4(0.25, 1.0, 0.45, 0.85)
+            } else if ms <= 33.4 {
+                glam::vec4(1.0, 0.85, 0.25, 0.85)
+            } else {
+                glam::vec4(1.0, 0.25, 0.25, 0.85)
+            };
+
+            renderer.draw_sprite(SpriteDraw {
+                texture: renderer::TEST_TEXTURE_ID,
+                position: origin + glam::vec2(i as f32 * 2.0, 72.0 - height),
+                size: glam::vec2(1.0, height),
+                uv_min: glam::Vec2::ZERO,
+                uv_max: glam::Vec2::ONE,
+                color,
+            });
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Shake {
+    pub trauma: f32,
+}
+
+impl Shake {
+    pub fn add(&mut self, amount: f32) {
+        self.trauma = (self.trauma + amount).clamp(0.0, 1.0);
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        self.trauma = (self.trauma - dt * 1.8).max(0.0);
+    }
+
+    pub fn offset(&self, time: f32) -> glam::Vec2 {
+        let amount = self.trauma * self.trauma;
+        glam::vec2(
+            (time * 71.0).sin() * 8.0 * amount,
+            (time * 53.0).cos() * 8.0 * amount,
+        )
+    }
+}
+
+pub struct FrameGraph {
+    samples_ms: [f32; 240],
+    cursor: usize,
+    filled: bool,
+}
+
+impl FrameGraph {
+    pub fn push(&mut self, ms: f32) {
+        self.samples_ms[self.cursor] = ms;
+        self.cursor = (self.cursor + 1) % self.samples_ms.len();
+        self.filled |= self.cursor == 0;
+    }
+
+    pub fn recent(&self, max: usize) -> impl Iterator<Item = f32> + '_ {
+        let len = if self.filled {
+            self.samples_ms.len()
+        } else {
+            self.cursor
+        }
+        .min(max);
+        let start = (self.cursor + self.samples_ms.len() - len) % self.samples_ms.len();
+
+        (0..len).map(move |i| self.samples_ms[(start + i) % self.samples_ms.len()])
+    }
+}
+
+impl Default for FrameGraph {
+    fn default() -> Self {
+        Self {
+            samples_ms: [0.0; 240],
+            cursor: 0,
+            filled: false,
+        }
     }
 }
 

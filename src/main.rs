@@ -20,8 +20,14 @@ fn main() -> anyhow::Result<()> {
     let mut timestep = platform::time::FixedTimestep::new(120.0);
     let mut game = game::state::Game::new();
     let start = std::time::Instant::now();
+    let mut previous_frame = start;
 
     while !platform.should_quit {
+        let now = std::time::Instant::now();
+        let frame_ms = (now - previous_frame).as_secs_f32() * 1000.0;
+        previous_frame = now;
+        game.record_frame_time(frame_ms);
+
         platform.pump_events();
         if platform.input.action_pressed
             && let Some(audio) = &audio
