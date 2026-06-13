@@ -583,6 +583,7 @@ struct RenderSpriteRange {
     vertex_count: u32,
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn record_clear_commands(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
@@ -711,6 +712,7 @@ unsafe fn record_clear_commands(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn submit_clear_frame(
     device: &ash::Device,
     graphics_queue: vk::Queue,

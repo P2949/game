@@ -281,6 +281,7 @@ pub fn create_texture_descriptor_set(
     Ok((descriptor_pool, descriptor_set))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn transition_image(
     device: &ash::Device,
     cmd: vk::CommandBuffer,

@@ -118,6 +118,7 @@ impl Buffer {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn upload_buffer<T: bytemuck::Pod>(
     device: &ash::Device,
     allocator: &mut Allocator,
