@@ -1,7 +1,7 @@
 use ash::{Entry, vk};
 use std::ffi::{CStr, CString};
 
-use crate::renderer::{debug, device, swapchain};
+use crate::renderer::{debug, device, frame, swapchain};
 
 pub struct VulkanContext {
     // Keep the Vulkan loader alive for objects created from it.
@@ -18,6 +18,9 @@ pub struct VulkanContext {
     pub logical_device: Option<device::LogicalDevice>,
     pub swapchain: swapchain::Swapchain,
     pub swapchain_image_views: swapchain::SwapchainImageViews,
+    pub frames: Vec<frame::FrameData>,
+    #[allow(dead_code)]
+    pub current_frame: usize,
 }
 
 impl VulkanContext {
@@ -113,6 +116,14 @@ impl VulkanContext {
             &swapchain.images,
             swapchain.format,
         )?;
+        let frames: Vec<_> = (0..frame::MAX_FRAMES_IN_FLIGHT)
+            .map(|_| {
+                frame::FrameData::new(
+                    &logical_device.device,
+                    selected_device.queue_families.graphics,
+                )
+            })
+            .collect::<anyhow::Result<_>>()?;
 
         Ok(Self {
             entry,
@@ -125,6 +136,8 @@ impl VulkanContext {
             logical_device: Some(logical_device),
             swapchain,
             swapchain_image_views,
+            frames,
+            current_frame: 0,
         })
     }
 }
@@ -133,6 +146,12 @@ impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
             if let Some(logical_device) = self.logical_device.as_ref() {
+                let _ = logical_device.device.device_wait_idle();
+
+                for frame in &self.frames {
+                    frame.destroy(&logical_device.device);
+                }
+
                 self.swapchain_image_views.destroy(&logical_device.device);
             }
 
@@ -151,4 +170,75 @@ impl Drop for VulkanContext {
             self.instance.destroy_instance(None);
         }
     }
+}
+#[allow(dead_code)]
+unsafe fn record_clear_commands(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    image: vk::Image,
+    image_view: vk::ImageView,
+    extent: vk::Extent2D,
+    t: f32,
+) -> anyhow::Result<()> {
+    let begin_info = vk::CommandBufferBeginInfo::default();
+    unsafe {
+        device.begin_command_buffer(cmd, &begin_info)?;
+    }
+
+    unsafe {
+        crate::renderer::texture::transition_image(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            vk::PipelineStageFlags2::TOP_OF_PIPE,
+            vk::AccessFlags2::empty(),
+            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+        );
+    }
+
+    let clear = vk::ClearValue {
+        color: vk::ClearColorValue {
+            float32: [0.02, 0.02, 0.04 + 0.04 * t.sin().abs(), 1.0],
+        },
+    };
+
+    let color_attachment = vk::RenderingAttachmentInfo::default()
+        .image_view(image_view)
+        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .clear_value(clear);
+
+    let render_area = vk::Rect2D {
+        offset: vk::Offset2D { x: 0, y: 0 },
+        extent,
+    };
+
+    let rendering_info = vk::RenderingInfo::default()
+        .render_area(render_area)
+        .layer_count(1)
+        .color_attachments(std::slice::from_ref(&color_attachment));
+
+    unsafe {
+        device.cmd_begin_rendering(cmd, &rendering_info);
+        device.cmd_end_rendering(cmd);
+
+        crate::renderer::texture::transition_image(
+            device,
+            cmd,
+            image,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            vk::ImageLayout::PRESENT_SRC_KHR,
+            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
+            vk::AccessFlags2::empty(),
+        );
+
+        device.end_command_buffer(cmd)?;
+    }
+    Ok(())
 }
