@@ -27,49 +27,58 @@ impl SpriteBatch {
         self.sprites.push(sprite);
     }
 
-    pub fn sorted_sprites(&self) -> Vec<SpriteDraw> {
-        let mut sprites = self.sprites.clone();
+    /// Sorts the queued sprites in place, then appends their triangle vertices
+    /// to `vertices` while recording per-texture draw ranges in `ranges`.
+    ///
+    /// Both output buffers are appended to (never cleared), and recorded
+    /// `first_vertex` values are absolute indices into `vertices`. This lets a
+    /// caller pack several batches into one shared, reused vertex buffer without
+    /// any per-frame allocation once the buffers reach steady-state capacity.
+    pub fn build_into(
+        &mut self,
+        vertices: &mut Vec<SpriteVertex>,
+        ranges: &mut Vec<SpriteBatchRange>,
+    ) {
         // Layer is the primary ordering key so gameplay/UI code can keep
         // transparent sprites predictable. Texture is only a secondary key to
         // reduce descriptor binds inside a layer; use distinct layers when
         // overlapping transparent sprites require strict front-to-back order.
-        sprites.sort_by_key(|sprite| (sprite.layer, sprite.texture.0));
-        sprites
-    }
+        self.sprites
+            .sort_by_key(|sprite| (sprite.layer, sprite.texture.0));
 
-    pub fn build_vertices(&self) -> (Vec<SpriteVertex>, Vec<SpriteBatchRange>) {
-        let sorted = self.sorted_sprites();
-        let mut vertices = Vec::with_capacity(sorted.len() * 6);
-        let mut ranges = Vec::new();
-        let mut current_texture = None;
-        let mut current_start = 0_u32;
+        let mut current_texture: Option<TextureId> = None;
+        let mut current_start = vertices.len() as u32;
 
-        for sprite in sorted {
+        for &sprite in &self.sprites {
             if current_texture != Some(sprite.texture) {
                 if let Some(texture) = current_texture {
-                    ranges.push(SpriteBatchRange {
-                        texture,
-                        first_vertex: current_start,
-                        vertex_count: vertices.len() as u32 - current_start,
-                    });
+                    let vertex_count = vertices.len() as u32 - current_start;
+                    if vertex_count > 0 {
+                        ranges.push(SpriteBatchRange {
+                            texture,
+                            first_vertex: current_start,
+                            vertex_count,
+                        });
+                    }
                 }
 
                 current_texture = Some(sprite.texture);
                 current_start = vertices.len() as u32;
             }
 
-            append_sprite_vertices(&mut vertices, sprite);
+            append_sprite_vertices(vertices, sprite);
         }
 
         if let Some(texture) = current_texture {
-            ranges.push(SpriteBatchRange {
-                texture,
-                first_vertex: current_start,
-                vertex_count: vertices.len() as u32 - current_start,
-            });
+            let vertex_count = vertices.len() as u32 - current_start;
+            if vertex_count > 0 {
+                ranges.push(SpriteBatchRange {
+                    texture,
+                    first_vertex: current_start,
+                    vertex_count,
+                });
+            }
         }
-
-        (vertices, ranges)
     }
 }
 
@@ -129,4 +138,76 @@ pub fn append_sprite_vertices(out: &mut Vec<SpriteVertex>, sprite: SpriteDraw) {
             color: c,
         },
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::renderer::{FONT_TEXTURE_ID, TEST_TEXTURE_ID};
+
+    fn sprite(texture: TextureId, layer: i16) -> SpriteDraw {
+        SpriteDraw {
+            texture,
+            layer,
+            position: glam::Vec2::ZERO,
+            size: glam::Vec2::ONE,
+            uv_min: glam::Vec2::ZERO,
+            uv_max: glam::Vec2::ONE,
+            color: glam::Vec4::ONE,
+        }
+    }
+
+    #[test]
+    fn build_into_merges_runs_and_sorts_by_layer() {
+        let mut batch = SpriteBatch::new();
+        // Pushed out of order and interleaved by texture; sorting by (layer,
+        // texture) must group the two TEST sprites on layer 0 into one run.
+        batch.push(sprite(TEST_TEXTURE_ID, 0));
+        batch.push(sprite(FONT_TEXTURE_ID, 5));
+        batch.push(sprite(TEST_TEXTURE_ID, 0));
+
+        let mut vertices = Vec::new();
+        let mut ranges = Vec::new();
+        batch.build_into(&mut vertices, &mut ranges);
+
+        assert_eq!(vertices.len(), 3 * 6);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0].texture, TEST_TEXTURE_ID);
+        assert_eq!(ranges[0].first_vertex, 0);
+        assert_eq!(ranges[0].vertex_count, 12);
+        assert_eq!(ranges[1].texture, FONT_TEXTURE_ID);
+        assert_eq!(ranges[1].first_vertex, 12);
+        assert_eq!(ranges[1].vertex_count, 6);
+    }
+
+    #[test]
+    fn build_into_appends_with_absolute_offsets_across_batches() {
+        let mut world = SpriteBatch::new();
+        world.push(sprite(TEST_TEXTURE_ID, 0));
+        let mut ui = SpriteBatch::new();
+        ui.push(sprite(FONT_TEXTURE_ID, 0));
+
+        let mut vertices = Vec::new();
+        let mut ranges = Vec::new();
+        world.build_into(&mut vertices, &mut ranges);
+        // Second batch packs into the same buffers; its range offset must be
+        // absolute (start at 6), not reset to 0.
+        ui.build_into(&mut vertices, &mut ranges);
+
+        assert_eq!(vertices.len(), 12);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[1].first_vertex, 6);
+        assert_eq!(ranges[1].vertex_count, 6);
+    }
+
+    #[test]
+    fn build_into_on_empty_batch_records_nothing() {
+        let mut batch = SpriteBatch::new();
+        let mut vertices = Vec::new();
+        let mut ranges = Vec::new();
+        batch.build_into(&mut vertices, &mut ranges);
+
+        assert!(vertices.is_empty());
+        assert!(ranges.is_empty());
+    }
 }

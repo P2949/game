@@ -4,6 +4,10 @@ use crate::game::world::Entity;
 use crate::platform::input::{FrameActions, InputState};
 use crate::renderer::{self, DrawCommands, SpriteDraw};
 
+// Side length of the decorative floor-tile grid drawn in the world. Kept as a
+// named constant so the HUD sprite count stays in sync with what's rendered.
+const FLOOR_GRID: usize = 10;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
     MainMenu,
@@ -20,7 +24,6 @@ pub struct Game {
     shake: Shake,
     effect_time: f32,
     frame_graph: FrameGraph,
-    log_timer: f32,
 }
 
 impl Game {
@@ -34,7 +37,6 @@ impl Game {
             shake: Shake::default(),
             effect_time: 0.0,
             frame_graph: FrameGraph::default(),
-            log_timer: 0.0,
         }
     }
 
@@ -47,7 +49,11 @@ impl Game {
     }
 
     pub fn update(&mut self, dt: f32, input: InputState, actions: FrameActions) {
-        self.effect_time += dt;
+        // Wrap the effect clock at TAU so it stays bounded over long sessions.
+        // The shake waveform uses sin(t * 71) / cos(t * 53); since 71 and 53 are
+        // integers, advancing t by TAU is a whole number of cycles for both, so
+        // wrapping is seamless while keeping f32 precision high indefinitely.
+        self.effect_time = (self.effect_time + dt).rem_euclid(std::f32::consts::TAU);
         self.shake.update(dt);
 
         match self.mode {
@@ -104,17 +110,11 @@ impl Game {
         self.update_camera_zoom(dt, input);
         self.camera.center =
             self.player.pos + self.player.size * 0.5 + self.shake.offset(self.effect_time);
-
-        self.log_timer += dt;
-        if self.log_timer >= 1.0 {
-            self.log_timer -= 1.0;
-            log::info!("fixed update player at {:?}", self.player.pos);
-        }
     }
 
     fn render_world(&self, alpha: f32, renderer: &mut impl DrawCommands) {
-        for y in 0..10 {
-            for x in 0..10 {
+        for y in 0..FLOOR_GRID {
+            for x in 0..FLOOR_GRID {
                 renderer.draw_world_sprite(SpriteDraw {
                     texture: renderer::TEST_TEXTURE_ID,
                     layer: 0,
@@ -215,7 +215,6 @@ impl Game {
         self.solids = solids;
         self.shake = Shake::default();
         self.effect_time = 0.0;
-        self.log_timer = 0.0;
     }
 
     fn update_camera_zoom(&mut self, dt: f32, input: InputState) {
@@ -253,7 +252,7 @@ impl Game {
     }
 
     fn world_sprite_count(&self) -> usize {
-        10 * 10 + self.solids.len() + 1
+        FLOOR_GRID * FLOOR_GRID + self.solids.len() + 1
     }
 }
 

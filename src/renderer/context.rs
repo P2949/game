@@ -2,15 +2,21 @@ use ash::{Entry, vk};
 use gpu_allocator::MemoryLocation;
 use std::ffi::{CStr, CString};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::renderer::sprite_batch::{SpriteBatch, SpriteBatchRange};
 use crate::renderer::vertex::SpriteVertex;
 use crate::renderer::{
-    DrawCommands, FONT_TEXTURE_ID, SpriteDraw, TEST_TEXTURE_ID, TextureId, buffer, debug, device,
-    frame, pipeline, swapchain, text, texture,
+    DrawCommands, FONT_TEXTURE_ID, SpriteDraw, TEST_TEXTURE_ID, buffer, debug, device, frame,
+    pipeline, swapchain, text, texture,
 };
 
 const INITIAL_SPRITE_VERTEX_BUFFER_BYTES: vk::DeviceSize = 1024 * 1024;
+// Rate-limit swapchain recreations as defense against a driver that reports
+// suboptimal/out-of-date every frame. User-driven resizes are already debounced
+// in the platform layer before a recreate request reaches the context, so no
+// additional extent-stabilization wait is needed here.
+const MIN_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
 const UI_TEXT_LAYER: i16 = 1000;
 
 pub struct VulkanContext {
@@ -30,6 +36,13 @@ pub struct VulkanContext {
     pub dynamic_sprite_buffers: Vec<Option<buffer::Buffer>>,
     pub world_sprite_batch: SpriteBatch,
     pub ui_sprite_batch: SpriteBatch,
+    // Reused scratch buffers for sprite geometry assembly. Kept on the context
+    // so steady-state rendering performs no per-frame heap allocation, even as
+    // scene complexity grows; capacity only ever grows to the high-water mark.
+    sprite_vertices: Vec<SpriteVertex>,
+    scratch_batch_ranges: Vec<SpriteBatchRange>,
+    world_draw_ranges: Vec<RenderSpriteRange>,
+    ui_draw_ranges: Vec<RenderSpriteRange>,
     pub test_texture: Option<texture::Texture>,
     pub font_texture: Option<texture::Texture>,
     pub font_atlas: text::FontAtlas,
@@ -47,6 +60,7 @@ pub struct VulkanContext {
     pub frames: Vec<frame::FrameData>,
     pub current_frame: usize,
     pub needs_swapchain_recreate: bool,
+    last_swapchain_recreate: Option<Instant>,
 }
 
 impl VulkanContext {
@@ -233,6 +247,10 @@ impl VulkanContext {
             dynamic_sprite_buffers,
             world_sprite_batch: SpriteBatch::new(),
             ui_sprite_batch: SpriteBatch::new(),
+            sprite_vertices: Vec::new(),
+            scratch_batch_ranges: Vec::new(),
+            world_draw_ranges: Vec::new(),
+            ui_draw_ranges: Vec::new(),
             test_texture: Some(test_texture),
             font_texture: Some(font_texture),
             font_atlas,
@@ -250,6 +268,7 @@ impl VulkanContext {
             frames,
             current_frame: 0,
             needs_swapchain_recreate: false,
+            last_swapchain_recreate: None,
         })
     }
 
@@ -262,80 +281,57 @@ impl VulkanContext {
         self.ui_sprite_batch.clear();
     }
 
-    fn texture_descriptor(&self, texture: TextureId) -> anyhow::Result<vk::DescriptorSet> {
-        if texture == TEST_TEXTURE_ID {
-            return Ok(self.texture_descriptor_set);
-        }
-        if texture == FONT_TEXTURE_ID {
-            return Ok(self.font_descriptor_set);
-        }
-
-        anyhow::bail!("unknown texture id {:?}", texture);
-    }
-
-    fn draw_ranges_for(
+    fn desired_swapchain_extent(
         &self,
-        batch_ranges: Vec<SpriteBatchRange>,
-        first_vertex_offset: u32,
-    ) -> anyhow::Result<Vec<RenderSpriteRange>> {
-        let mut draw_ranges = Vec::with_capacity(batch_ranges.len());
-        for range in batch_ranges {
-            draw_ranges.push(RenderSpriteRange {
-                descriptor_set: self.texture_descriptor(range.texture)?,
-                first_vertex: first_vertex_offset + range.first_vertex,
-                vertex_count: range.vertex_count,
-            });
-        }
-        Ok(draw_ranges)
-    }
-
-    fn update_sprite_vertex_buffer(
-        &mut self,
-        device: &ash::Device,
-        frame_index: usize,
-        vertices: &[SpriteVertex],
-    ) -> anyhow::Result<Option<vk::Buffer>> {
-        if vertices.is_empty() {
+        window: &sdl3::video::Window,
+    ) -> anyhow::Result<Option<vk::Extent2D>> {
+        let (width, height) = window.size_in_pixels();
+        if width == 0 || height == 0 {
             return Ok(None);
         }
 
-        let required_bytes = std::mem::size_of_val(vertices) as vk::DeviceSize;
-        let allocator = self
-            .allocator
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("allocator has been destroyed"))?;
-        let should_recreate = match &self.dynamic_sprite_buffers[frame_index] {
-            Some(buffer) => buffer.size < required_bytes,
-            None => true,
+        let support = swapchain::query_swapchain_support(
+            &self.surface.loader,
+            self.physical_device,
+            self.surface.handle,
+        )?;
+
+        Ok(Some(swapchain::choose_extent(
+            support.capabilities,
+            (width, height),
+        )))
+    }
+
+    fn swapchain_extent_matches_window(
+        &self,
+        window: &sdl3::video::Window,
+    ) -> anyhow::Result<bool> {
+        let Some(desired_extent) = self.desired_swapchain_extent(window)? else {
+            return Ok(false);
         };
 
-        if should_recreate {
-            if let Some(old_buffer) = self.dynamic_sprite_buffers[frame_index].take() {
-                unsafe {
-                    old_buffer.destroy(device, allocator);
-                }
-            }
+        Ok(desired_extent == self.swapchain.extent)
+    }
 
-            let capacity = sprite_vertex_buffer_capacity(required_bytes);
-            let buffer = buffer::Buffer::new(
-                device,
-                allocator,
-                capacity,
-                vk::BufferUsageFlags::VERTEX_BUFFER,
-                MemoryLocation::CpuToGpu,
-                "dynamic sprite vertex buffer",
-            )?;
-            self.dynamic_sprite_buffers[frame_index] = Some(buffer);
+    fn swapchain_recreate_ready(&self, window: &sdl3::video::Window) -> anyhow::Result<bool> {
+        // Only special-case a zero-size (minimized) window, which has no valid
+        // extent to recreate for. Any nonzero size is recreatable: gating on a
+        // minimum size would strand a small window with no swapchain forever.
+        if self.desired_swapchain_extent(window)?.is_none() {
+            return Ok(false);
         }
 
-        let buffer = self.dynamic_sprite_buffers[frame_index]
-            .as_mut()
-            .expect("dynamic sprite buffer exists after creation");
-        buffer.copy_from_slice(vertices)?;
-        Ok(Some(buffer.handle))
+        if let Some(last_recreate) = self.last_swapchain_recreate
+            && Instant::now().duration_since(last_recreate) < MIN_SWAPCHAIN_RECREATE_INTERVAL
+        {
+            return Ok(false);
+        }
+
+        Ok(true)
     }
 
     pub fn recreate_swapchain(&mut self, window: &sdl3::video::Window) -> anyhow::Result<()> {
+        let recreate_start = Instant::now();
         let (width, height) = window.size_in_pixels();
         if width == 0 || height == 0 {
             self.needs_swapchain_recreate = true;
@@ -363,6 +359,7 @@ impl VulkanContext {
             (width, height),
             old_swapchain,
         )?;
+        let format_changed = new_swapchain.format != self.swapchain.format;
         let new_swapchain_image_views = match swapchain::SwapchainImageViews::new(
             device,
             &new_swapchain.images,
@@ -376,26 +373,32 @@ impl VulkanContext {
                 return Err(err);
             }
         };
-        let new_sprite_pipeline = match pipeline::GraphicsPipeline::new_sprite(
-            device,
-            new_swapchain.format,
-            self.texture_descriptor_set_layout,
-        ) {
-            Ok(pipeline) => pipeline,
-            Err(err) => {
-                unsafe {
-                    new_swapchain_image_views.destroy(device);
-                    new_swapchain.destroy();
+        let new_sprite_pipeline = if format_changed {
+            match pipeline::GraphicsPipeline::new_sprite(
+                device,
+                new_swapchain.format,
+                self.texture_descriptor_set_layout,
+            ) {
+                Ok(pipeline) => Some(pipeline),
+                Err(err) => {
+                    unsafe {
+                        new_swapchain_image_views.destroy(device);
+                        new_swapchain.destroy();
+                    }
+                    return Err(err);
                 }
-                return Err(err);
             }
+        } else {
+            None
         };
         let new_image_render_finished =
             match create_image_render_finished_semaphores(device, new_swapchain.images.len()) {
                 Ok(semaphores) => semaphores,
                 Err(err) => {
                     unsafe {
-                        new_sprite_pipeline.destroy(device);
+                        if let Some(new_sprite_pipeline) = &new_sprite_pipeline {
+                            new_sprite_pipeline.destroy(device);
+                        }
                         new_swapchain_image_views.destroy(device);
                         new_swapchain.destroy();
                     }
@@ -408,18 +411,24 @@ impl VulkanContext {
                 device.destroy_semaphore(semaphore, None);
             }
 
-            self.sprite_pipeline.destroy(device);
+            if let Some(new_sprite_pipeline) = new_sprite_pipeline {
+                self.sprite_pipeline.destroy(device);
+                self.sprite_pipeline = new_sprite_pipeline;
+            }
             self.swapchain_image_views.destroy(device);
             self.swapchain.destroy();
         }
 
         self.swapchain = new_swapchain;
         self.swapchain_image_views = new_swapchain_image_views;
-        self.sprite_pipeline = new_sprite_pipeline;
         self.image_render_finished = new_image_render_finished;
         self.needs_swapchain_recreate = false;
+        self.last_swapchain_recreate = Some(Instant::now());
 
-        log::info!("recreated swapchain for drawable size {width}x{height}");
+        log::info!(
+            "recreated swapchain for drawable size {width}x{height} in {:.3}ms",
+            duration_ms(recreate_start.elapsed())
+        );
 
         Ok(())
     }
@@ -430,11 +439,18 @@ impl VulkanContext {
         camera: crate::game::camera::Camera2D,
     ) -> anyhow::Result<()> {
         if self.needs_swapchain_recreate {
-            self.recreate_swapchain(window)?;
-
-            if self.needs_swapchain_recreate {
+            if self.swapchain_extent_matches_window(window)? {
+                self.needs_swapchain_recreate = false;
+            } else if !self.swapchain_recreate_ready(window)? {
                 self.clear_sprite_batches();
                 return Ok(());
+            } else {
+                self.recreate_swapchain(window)?;
+
+                if self.needs_swapchain_recreate {
+                    self.clear_sprite_batches();
+                    return Ok(());
+                }
             }
         }
 
@@ -451,40 +467,72 @@ impl VulkanContext {
         let image_available = frame.image_available;
         let in_flight = frame.in_flight;
 
-        let (mut vertices, world_batch_ranges) = self.world_sprite_batch.build_vertices();
-        let ui_vertex_offset = vertices.len() as u32;
-        let (ui_vertices, ui_batch_ranges) = self.ui_sprite_batch.build_vertices();
-        vertices.extend_from_slice(&ui_vertices);
-        self.clear_sprite_batches();
+        // Assemble sprite geometry into reusable scratch buffers before touching
+        // the GPU, overlapping this CPU work with the previous frame's fence
+        // wait. World and UI sprites pack into one shared vertex buffer, with
+        // each batch's ranges carrying absolute offsets into it.
+        self.sprite_vertices.clear();
+        self.world_draw_ranges.clear();
+        self.ui_draw_ranges.clear();
+        let test_set = self.texture_descriptor_set;
+        let font_set = self.font_descriptor_set;
 
-        let world_draw_ranges = self.draw_ranges_for(world_batch_ranges, 0)?;
-        let ui_draw_ranges = self.draw_ranges_for(ui_batch_ranges, ui_vertex_offset)?;
+        self.scratch_batch_ranges.clear();
+        self.world_sprite_batch
+            .build_into(&mut self.sprite_vertices, &mut self.scratch_batch_ranges);
+        resolve_draw_ranges(
+            &self.scratch_batch_ranges,
+            &mut self.world_draw_ranges,
+            test_set,
+            font_set,
+        )?;
+
+        self.scratch_batch_ranges.clear();
+        self.ui_sprite_batch
+            .build_into(&mut self.sprite_vertices, &mut self.scratch_batch_ranges);
+        resolve_draw_ranges(
+            &self.scratch_batch_ranges,
+            &mut self.ui_draw_ranges,
+            test_set,
+            font_set,
+        )?;
+
+        self.clear_sprite_batches();
 
         unsafe {
             device.wait_for_fences(std::slice::from_ref(&in_flight), true, u64::MAX)?;
 
-            let (image_index, suboptimal) = match self.swapchain.loader.acquire_next_image(
+            let acquire_result = self.swapchain.loader.acquire_next_image(
                 self.swapchain.handle,
                 u64::MAX,
                 image_available,
                 vk::Fence::null(),
-            ) {
+            );
+
+            let (image_index, suboptimal) = match acquire_result {
                 Ok(result) => result,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    self.needs_swapchain_recreate = true;
-                    self.recreate_swapchain(window)?;
+                    self.request_swapchain_recreate();
                     return Ok(());
                 }
                 Err(err) => return Err(err.into()),
             };
 
-            let mut recreate_after_present = false;
-            if suboptimal {
-                recreate_after_present = true;
-            }
+            let mut recreate_after_present =
+                suboptimal && !self.swapchain_extent_matches_window(window)?;
 
-            let sprite_vertex_buffer =
-                self.update_sprite_vertex_buffer(&device, frame_index, &vertices)?;
+            // Overwriting this frame's vertex buffer is only safe now that the
+            // fence wait above has guaranteed the GPU finished its previous use.
+            let allocator = self
+                .allocator
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("allocator has been destroyed"))?;
+            let sprite_vertex_buffer = upload_sprite_vertices(
+                &device,
+                allocator,
+                &mut self.dynamic_sprite_buffers[frame_index],
+                &self.sprite_vertices,
+            )?;
 
             device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
 
@@ -500,15 +548,15 @@ impl VulkanContext {
             let render_batches = [
                 RenderSpriteBatch {
                     projection: world_projection,
-                    ranges: &world_draw_ranges,
+                    ranges: &self.world_draw_ranges,
                 },
                 RenderSpriteBatch {
                     projection: ui_projection,
-                    ranges: &ui_draw_ranges,
+                    ranges: &self.ui_draw_ranges,
                 },
             ];
 
-            record_clear_commands(
+            record_sprite_commands(
                 &device,
                 command_buffer,
                 self.swapchain.images[image_index_usize],
@@ -520,7 +568,7 @@ impl VulkanContext {
                 &render_batches,
             )?;
 
-            let present_suboptimal = match submit_clear_frame(
+            let submit_result = submit_frame(
                 &device,
                 graphics_queue,
                 present_queue,
@@ -531,28 +579,27 @@ impl VulkanContext {
                 in_flight,
                 render_finished,
                 image_index,
-            ) {
+            );
+
+            let present_suboptimal = match submit_result {
                 Ok(suboptimal) => suboptimal,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
-                    self.needs_swapchain_recreate = true;
-                    self.recreate_swapchain(window)?;
+                    self.request_swapchain_recreate();
                     return Ok(());
                 }
                 Err(err) => return Err(err.into()),
             };
 
-            recreate_after_present |= present_suboptimal;
+            if present_suboptimal && !self.swapchain_extent_matches_window(window)? {
+                recreate_after_present = true;
+            }
 
             self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
 
             if recreate_after_present {
                 self.needs_swapchain_recreate = true;
             }
-        }
-
-        if self.needs_swapchain_recreate {
-            self.recreate_swapchain(window)?;
         }
 
         Ok(())
@@ -711,8 +758,86 @@ struct RenderSpriteBatch<'a> {
     ranges: &'a [RenderSpriteRange],
 }
 
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
+/// Resolves each batch range's texture id to its descriptor set, appending the
+/// GPU-ready draw ranges to `out`. `out` is appended to (never cleared) so the
+/// caller controls buffer reuse across frames.
+fn resolve_draw_ranges(
+    batch_ranges: &[SpriteBatchRange],
+    out: &mut Vec<RenderSpriteRange>,
+    test_descriptor_set: vk::DescriptorSet,
+    font_descriptor_set: vk::DescriptorSet,
+) -> anyhow::Result<()> {
+    out.reserve(batch_ranges.len());
+    for range in batch_ranges {
+        let descriptor_set = if range.texture == TEST_TEXTURE_ID {
+            test_descriptor_set
+        } else if range.texture == FONT_TEXTURE_ID {
+            font_descriptor_set
+        } else {
+            anyhow::bail!("unknown texture id {:?}", range.texture);
+        };
+
+        out.push(RenderSpriteRange {
+            descriptor_set,
+            first_vertex: range.first_vertex,
+            vertex_count: range.vertex_count,
+        });
+    }
+
+    Ok(())
+}
+
+/// Uploads `vertices` into this frame's dynamic vertex buffer, growing (and
+/// reallocating) it only when the existing capacity is too small. Returns the
+/// buffer handle to bind, or `None` when there is nothing to draw.
+fn upload_sprite_vertices(
+    device: &ash::Device,
+    allocator: &mut gpu_allocator::vulkan::Allocator,
+    buffer_slot: &mut Option<buffer::Buffer>,
+    vertices: &[SpriteVertex],
+) -> anyhow::Result<Option<vk::Buffer>> {
+    if vertices.is_empty() {
+        return Ok(None);
+    }
+
+    let required_bytes = std::mem::size_of_val(vertices) as vk::DeviceSize;
+    let should_recreate = match buffer_slot {
+        Some(buffer) => buffer.size < required_bytes,
+        None => true,
+    };
+
+    if should_recreate {
+        if let Some(old_buffer) = buffer_slot.take() {
+            unsafe {
+                old_buffer.destroy(device, allocator);
+            }
+        }
+
+        let capacity = sprite_vertex_buffer_capacity(required_bytes);
+        let buffer = buffer::Buffer::new(
+            device,
+            allocator,
+            capacity,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            MemoryLocation::CpuToGpu,
+            "dynamic sprite vertex buffer",
+        )?;
+        *buffer_slot = Some(buffer);
+    }
+
+    let buffer = buffer_slot
+        .as_mut()
+        .expect("dynamic sprite buffer exists after creation");
+    buffer.copy_from_slice(vertices)?;
+    Ok(Some(buffer.handle))
+}
+
 #[allow(clippy::too_many_arguments)]
-unsafe fn record_clear_commands(
+unsafe fn record_sprite_commands(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
     image: vk::Image,
@@ -840,7 +965,7 @@ unsafe fn record_clear_commands(
 }
 
 #[allow(clippy::too_many_arguments)]
-unsafe fn submit_clear_frame(
+unsafe fn submit_frame(
     device: &ash::Device,
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
@@ -892,6 +1017,18 @@ unsafe fn submit_clear_frame(
 }
 
 fn asset_path(relative: &str) -> PathBuf {
+    // Prefer assets shipped next to the executable (the installed/distributed
+    // layout). Fall back to the crate manifest dir so `cargo run` works from a
+    // source checkout where assets live in the repo root.
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        let candidate = exe_dir.join(relative);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
 }
 

@@ -44,6 +44,11 @@ impl FixedTimestep {
         self.accumulator = self.accumulator.rem_euclid(self.dt);
     }
 
+    pub fn reset_after_pause(&mut self) {
+        self.previous = std::time::Instant::now();
+        self.accumulator = 0.0;
+    }
+
     pub fn alpha(&self) -> f32 {
         (self.accumulator / self.dt).clamp(0.0, 1.0) as f32
     }

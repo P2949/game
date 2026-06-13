@@ -21,3 +21,9 @@ env_logger = "0.11"
 
 [build-dependencies]
 walkdir = "2"
+
+[profile.release]
+# Production builds: optimize across the whole crate graph. codegen-units = 1
+# trades build time for a faster binary, which is the right call for shipping.
+lto = "thin"
+codegen-units = 1
