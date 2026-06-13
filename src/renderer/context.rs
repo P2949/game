@@ -1,7 +1,7 @@
 use ash::{Entry, vk};
 use std::ffi::{CStr, CString};
 
-use crate::renderer::debug;
+use crate::renderer::{debug, device};
 
 pub struct VulkanContext {
     // Keep the Vulkan loader alive for objects created from it.
@@ -11,6 +11,10 @@ pub struct VulkanContext {
     pub debug_utils: Option<ash::ext::debug_utils::Instance>,
     pub debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
     pub surface: crate::renderer::surface::Surface,
+    #[allow(dead_code)]
+    pub physical_device: vk::PhysicalDevice,
+    #[allow(dead_code)]
+    pub queue_families: device::QueueFamilies,
 }
 
 impl VulkanContext {
@@ -84,6 +88,8 @@ impl VulkanContext {
         };
 
         let surface = crate::renderer::surface::Surface::new(&entry, &instance, window)?;
+        let selected_device =
+            device::select_physical_device(&instance, &surface.loader, surface.handle)?;
 
         Ok(Self {
             entry,
@@ -91,6 +97,8 @@ impl VulkanContext {
             debug_utils,
             debug_messenger,
             surface,
+            physical_device: selected_device.physical_device,
+            queue_families: selected_device.queue_families,
         })
     }
 }
