@@ -1,7 +1,7 @@
 use ash::{Entry, vk};
 use std::ffi::{CStr, CString};
 
-use crate::renderer::{debug, device};
+use crate::renderer::{debug, device, swapchain};
 
 pub struct VulkanContext {
     // Keep the Vulkan loader alive for objects created from it.
@@ -15,6 +15,9 @@ pub struct VulkanContext {
     pub physical_device: vk::PhysicalDevice,
     #[allow(dead_code)]
     pub queue_families: device::QueueFamilies,
+    pub logical_device: Option<device::LogicalDevice>,
+    pub swapchain: swapchain::Swapchain,
+    pub swapchain_image_views: swapchain::SwapchainImageViews,
 }
 
 impl VulkanContext {
@@ -90,6 +93,26 @@ impl VulkanContext {
         let surface = crate::renderer::surface::Surface::new(&entry, &instance, window)?;
         let selected_device =
             device::select_physical_device(&instance, &surface.loader, surface.handle)?;
+        let logical_device = device::LogicalDevice::new(
+            &instance,
+            selected_device.physical_device,
+            selected_device.queue_families,
+        )?;
+        let swapchain = swapchain::Swapchain::new(
+            &instance,
+            &logical_device.device,
+            selected_device.physical_device,
+            &surface.loader,
+            surface.handle,
+            selected_device.queue_families,
+            window.size_in_pixels(),
+            vk::SwapchainKHR::null(),
+        )?;
+        let swapchain_image_views = swapchain::SwapchainImageViews::new(
+            &logical_device.device,
+            &swapchain.images,
+            swapchain.format,
+        )?;
 
         Ok(Self {
             entry,
@@ -99,6 +122,9 @@ impl VulkanContext {
             surface,
             physical_device: selected_device.physical_device,
             queue_families: selected_device.queue_families,
+            logical_device: Some(logical_device),
+            swapchain,
+            swapchain_image_views,
         })
     }
 }
@@ -106,6 +132,16 @@ impl VulkanContext {
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            if let Some(logical_device) = self.logical_device.as_ref() {
+                self.swapchain_image_views.destroy(&logical_device.device);
+            }
+
+            self.swapchain.destroy();
+
+            if let Some(logical_device) = self.logical_device.take() {
+                drop(logical_device);
+            }
+
             self.surface.destroy();
 
             if let (Some(debug_utils), Some(messenger)) = (&self.debug_utils, self.debug_messenger)

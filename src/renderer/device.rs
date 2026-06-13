@@ -169,11 +169,13 @@ pub fn select_physical_device(
     })
 }
 
-
 pub struct LogicalDevice {
     pub device: ash::Device,
+    #[allow(dead_code)]
     pub graphics_queue: vk::Queue,
+    #[allow(dead_code)]
     pub present_queue: vk::Queue,
+    #[allow(dead_code)]
     pub queues: QueueFamilies,
 }
 

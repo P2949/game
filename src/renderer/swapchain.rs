@@ -52,18 +52,21 @@ pub fn choose_extent(
     }
 
     vk::Extent2D {
-        width: window_size
-            .0
-            .clamp(capabilities.min_image_extent.width, capabilities.max_image_extent.width),
-        height: window_size
-            .1
-            .clamp(capabilities.min_image_extent.height, capabilities.max_image_extent.height),
+        width: window_size.0.clamp(
+            capabilities.min_image_extent.width,
+            capabilities.max_image_extent.width,
+        ),
+        height: window_size.1.clamp(
+            capabilities.min_image_extent.height,
+            capabilities.max_image_extent.height,
+        ),
     }
 }
 pub struct Swapchain {
     pub loader: ash::khr::swapchain::Device,
     pub handle: vk::SwapchainKHR,
     pub format: vk::Format,
+    #[allow(dead_code)]
     pub extent: vk::Extent2D,
     pub images: Vec<vk::Image>,
 }
@@ -117,6 +120,14 @@ impl Swapchain {
         let handle = unsafe { loader.create_swapchain(&info, None)? };
         let images = unsafe { loader.get_swapchain_images(handle)? };
 
+        log::info!(
+            "created Vulkan swapchain: images={}, format={:?}, extent={}x{}",
+            images.len(),
+            surface_format.format,
+            extent.width,
+            extent.height
+        );
+
         Ok(Self {
             loader,
             handle,
@@ -127,6 +138,52 @@ impl Swapchain {
     }
 
     pub unsafe fn destroy(&self) {
-        self.loader.destroy_swapchain(self.handle, None);
+        unsafe {
+            self.loader.destroy_swapchain(self.handle, None);
+        }
+    }
+}
+
+pub struct SwapchainImageViews {
+    pub views: Vec<vk::ImageView>,
+}
+
+impl SwapchainImageViews {
+    pub fn new(
+        device: &ash::Device,
+        images: &[vk::Image],
+        format: vk::Format,
+    ) -> anyhow::Result<Self> {
+        let mut views = Vec::with_capacity(images.len());
+
+        for &image in images {
+            let subresource_range = vk::ImageSubresourceRange::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1);
+
+            let info = vk::ImageViewCreateInfo::default()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(format)
+                .subresource_range(subresource_range);
+
+            let view = unsafe { device.create_image_view(&info, None)? };
+            views.push(view);
+        }
+
+        log::info!("created {} swapchain image views", views.len());
+
+        Ok(Self { views })
+    }
+
+    pub unsafe fn destroy(&self, device: &ash::Device) {
+        for &view in &self.views {
+            unsafe {
+                device.destroy_image_view(view, None);
+            }
+        }
     }
 }
