@@ -284,7 +284,12 @@ impl VulkanContext {
         Ok(())
     }
 
-    pub fn render(&mut self, window: &sdl3::video::Window, t: f32) -> anyhow::Result<()> {
+    pub fn render(
+        &mut self,
+        window: &sdl3::video::Window,
+        camera: crate::game::camera::Camera2D,
+        t: f32,
+    ) -> anyhow::Result<()> {
         if self.needs_swapchain_recreate {
             self.recreate_swapchain(window)?;
 
@@ -385,6 +390,7 @@ impl VulkanContext {
                 self.sprite_pipeline.pipeline,
                 sprite_vertex_buffer,
                 &draw_ranges,
+                camera,
                 t,
             )?;
 
@@ -544,6 +550,7 @@ unsafe fn record_clear_commands(
     sprite_pipeline: vk::Pipeline,
     sprite_vertex_buffer: Option<vk::Buffer>,
     draw_ranges: &[RenderSpriteRange],
+    camera: crate::game::camera::Camera2D,
     t: f32,
 ) -> anyhow::Result<()> {
     let begin_info = vk::CommandBufferBeginInfo::default();
@@ -613,15 +620,9 @@ unsafe fn record_clear_commands(
         if let Some(sprite_vertex_buffer) = sprite_vertex_buffer
             && !draw_ranges.is_empty()
         {
-            let view_proj = glam::Mat4::orthographic_rh(
-                0.0,
-                extent.width as f32,
-                extent.height as f32,
-                0.0,
-                -1.0,
-                1.0,
-            )
-            .to_cols_array();
+            let view_proj = camera
+                .view_projection(extent.width as f32, extent.height as f32)
+                .to_cols_array();
             device.cmd_push_constants(
                 cmd,
                 sprite_pipeline_layout,

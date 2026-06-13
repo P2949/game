@@ -207,7 +207,7 @@ fn create_sprite_graphics_pipeline(
     let push_constant_range = vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::VERTEX)
         .offset(0)
-        .size(std::mem::size_of::<[f32; 16]>() as u32);
+        .size(std::mem::size_of::<glam::Mat4>() as u32);
     let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
         .set_layouts(&set_layouts)
         .push_constant_ranges(std::slice::from_ref(&push_constant_range));

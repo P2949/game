@@ -3,6 +3,8 @@ use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::Keycode;
 use sdl3::video::Window;
 
+use crate::platform::input::InputState;
+
 pub struct Platform {
     // Keep the SDL context alive for the lifetime of the window and event pump.
     #[allow(dead_code)]
@@ -11,6 +13,7 @@ pub struct Platform {
     pub event_pump: sdl3::EventPump,
     pub should_quit: bool,
     pub framebuffer_resized: bool,
+    pub input: InputState,
 }
 
 impl Platform {
@@ -58,6 +61,7 @@ impl Platform {
             event_pump,
             should_quit: false,
             framebuffer_resized: false,
+            input: InputState::default(),
         })
     }
 
@@ -68,11 +72,18 @@ impl Platform {
             match event {
                 Event::Quit { .. } => self.should_quit = true,
                 Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
+                    keycode: Some(keycode),
                     ..
                 } => {
-                    self.should_quit = true;
+                    if keycode == Keycode::Escape {
+                        self.should_quit = true;
+                    }
+                    self.input.set_key(keycode, true);
                 }
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => self.input.set_key(keycode, false),
                 Event::Window { win_event, .. } => match win_event {
                     WindowEvent::CloseRequested => self.should_quit = true,
                     WindowEvent::Resized(width, height)
