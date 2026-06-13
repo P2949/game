@@ -1,13 +1,13 @@
 use crate::game::camera::Camera2D;
+use crate::game::collision::{Aabb, move_with_collision};
+use crate::game::world::Entity;
 use crate::platform::window::Platform;
 use crate::renderer::{self, SpriteDraw};
 
 pub struct Game {
     camera: Camera2D,
-    player_prev_pos: glam::Vec2,
-    player_pos: glam::Vec2,
-    player_vel: glam::Vec2,
-    player_size: glam::Vec2,
+    player: Entity,
+    solids: Vec<Aabb>,
     log_timer: f32,
 }
 
@@ -18,10 +18,15 @@ impl Game {
                 center: glam::vec2(200.0, 200.0),
                 zoom: 1.0,
             },
-            player_prev_pos: glam::vec2(420.0, 120.0),
-            player_pos: glam::vec2(420.0, 120.0),
-            player_vel: glam::Vec2::ZERO,
-            player_size: glam::vec2(48.0, 48.0),
+            player: Entity {
+                pos: glam::vec2(420.0, 120.0),
+                prev_pos: glam::vec2(420.0, 120.0),
+                vel: glam::Vec2::ZERO,
+                size: glam::vec2(48.0, 48.0),
+                sprite: renderer::TEST_TEXTURE_ID,
+                solid: false,
+            },
+            solids: test_room_solids(),
             log_timer: 0.0,
         }
     }
@@ -32,17 +37,16 @@ impl Game {
 
     pub fn update(&mut self, dt: f32, platform: &Platform) {
         let speed = 220.0;
-        self.player_prev_pos = self.player_pos;
-        self.player_vel = platform.input.movement() * speed;
-        self.player_pos += self.player_vel * dt;
+        self.player.vel = platform.input.movement() * speed;
+        move_with_collision(&mut self.player, &self.solids, dt);
 
         self.update_camera_zoom(dt, platform.input);
-        self.camera.center = self.player_pos + self.player_size * 0.5;
+        self.camera.center = self.player.pos + self.player.size * 0.5;
 
         self.log_timer += dt;
         if self.log_timer >= 1.0 {
             self.log_timer -= 1.0;
-            log::info!("fixed update player at {:?}", self.player_pos);
+            log::info!("fixed update player at {:?}", self.player.pos);
         }
     }
 
@@ -60,11 +64,22 @@ impl Game {
             }
         }
 
-        let player_pos = self.player_prev_pos.lerp(self.player_pos, alpha);
+        for solid in &self.solids {
+            renderer.draw_sprite(SpriteDraw {
+                texture: renderer::TEST_TEXTURE_ID,
+                position: solid.min,
+                size: solid.max - solid.min,
+                uv_min: glam::Vec2::ZERO,
+                uv_max: glam::Vec2::ONE,
+                color: glam::vec4(0.35, 0.45, 0.75, 1.0),
+            });
+        }
+
+        let player_pos = self.player.interpolated_pos(alpha);
         renderer.draw_sprite(SpriteDraw {
-            texture: renderer::TEST_TEXTURE_ID,
+            texture: self.player.sprite,
             position: player_pos,
-            size: self.player_size,
+            size: self.player.size,
             uv_min: glam::Vec2::ZERO,
             uv_max: glam::Vec2::ONE,
             color: glam::vec4(1.0, 0.35, 0.25, 1.0),
@@ -87,6 +102,16 @@ impl Game {
         }
         self.camera.zoom = self.camera.zoom.clamp(0.25, 6.0);
     }
+}
+
+fn test_room_solids() -> Vec<Aabb> {
+    vec![
+        Aabb::from_pos_size(glam::vec2(-160.0, -120.0), glam::vec2(920.0, 24.0)),
+        Aabb::from_pos_size(glam::vec2(-160.0, 520.0), glam::vec2(920.0, 24.0)),
+        Aabb::from_pos_size(glam::vec2(-160.0, -120.0), glam::vec2(24.0, 664.0)),
+        Aabb::from_pos_size(glam::vec2(736.0, -120.0), glam::vec2(24.0, 664.0)),
+        Aabb::from_pos_size(glam::vec2(280.0, 200.0), glam::vec2(96.0, 96.0)),
+    ]
 }
 
 impl Default for Game {
