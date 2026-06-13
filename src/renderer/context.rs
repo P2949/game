@@ -31,6 +31,7 @@ pub struct VulkanContext {
     pub image_render_finished: Vec<vk::Semaphore>,
     pub frames: Vec<frame::FrameData>,
     pub current_frame: usize,
+    pub needs_swapchain_recreate: bool,
 }
 
 impl VulkanContext {
@@ -165,15 +166,10 @@ impl VulkanContext {
             swapchain.format,
             texture_descriptor_set_layout,
         )?;
-        let semaphore_info = vk::SemaphoreCreateInfo::default();
-        let mut image_render_finished = Vec::with_capacity(swapchain.images.len());
-        for _ in &swapchain.images {
-            image_render_finished.push(unsafe {
-                logical_device
-                    .device
-                    .create_semaphore(&semaphore_info, None)?
-            });
-        }
+        let image_render_finished = create_image_render_finished_semaphores(
+            &logical_device.device,
+            swapchain.images.len(),
+        )?;
 
         let frames: Vec<_> = (0..frame::MAX_FRAMES_IN_FLIGHT)
             .map(|_| {
@@ -207,10 +203,85 @@ impl VulkanContext {
             image_render_finished,
             frames,
             current_frame: 0,
+            needs_swapchain_recreate: false,
         })
     }
 
-    pub fn render(&mut self, t: f32) -> anyhow::Result<()> {
+    pub fn request_swapchain_recreate(&mut self) {
+        self.needs_swapchain_recreate = true;
+    }
+
+    pub fn recreate_swapchain(&mut self, window: &sdl3::video::Window) -> anyhow::Result<()> {
+        let (width, height) = window.size_in_pixels();
+        if width == 0 || height == 0 {
+            self.needs_swapchain_recreate = true;
+            return Ok(());
+        }
+
+        let Some(logical_device) = self.logical_device.as_ref() else {
+            anyhow::bail!("cannot recreate swapchain after logical device has been destroyed");
+        };
+
+        let device = &logical_device.device;
+
+        unsafe {
+            device.device_wait_idle()?;
+        }
+
+        let old_swapchain = self.swapchain.handle;
+        let new_swapchain = swapchain::Swapchain::new(
+            &self.instance,
+            device,
+            self.physical_device,
+            &self.surface.loader,
+            self.surface.handle,
+            self.queue_families,
+            (width, height),
+            old_swapchain,
+        )?;
+        let new_swapchain_image_views = swapchain::SwapchainImageViews::new(
+            device,
+            &new_swapchain.images,
+            new_swapchain.format,
+        )?;
+        let new_sprite_pipeline = pipeline::GraphicsPipeline::new_sprite(
+            device,
+            new_swapchain.format,
+            self.texture_descriptor_set_layout,
+        )?;
+        let new_image_render_finished =
+            create_image_render_finished_semaphores(device, new_swapchain.images.len())?;
+
+        unsafe {
+            for &semaphore in &self.image_render_finished {
+                device.destroy_semaphore(semaphore, None);
+            }
+
+            self.sprite_pipeline.destroy(device);
+            self.swapchain_image_views.destroy(device);
+            self.swapchain.destroy();
+        }
+
+        self.swapchain = new_swapchain;
+        self.swapchain_image_views = new_swapchain_image_views;
+        self.sprite_pipeline = new_sprite_pipeline;
+        self.image_render_finished = new_image_render_finished;
+        self.needs_swapchain_recreate = false;
+
+        log::info!("recreated swapchain for drawable size {width}x{height}");
+
+        Ok(())
+    }
+
+    pub fn render(&mut self, window: &sdl3::video::Window, t: f32) -> anyhow::Result<()> {
+        if self.needs_swapchain_recreate {
+            self.recreate_swapchain(window)?;
+
+            if self.needs_swapchain_recreate {
+                return Ok(());
+            }
+        }
+
         let Some(logical_device) = self.logical_device.as_ref() else {
             anyhow::bail!("cannot render after logical device has been destroyed");
         };
@@ -225,15 +296,24 @@ impl VulkanContext {
         unsafe {
             device.wait_for_fences(std::slice::from_ref(&frame.in_flight), true, u64::MAX)?;
 
-            let (image_index, suboptimal) = self.swapchain.loader.acquire_next_image(
+            let (image_index, suboptimal) = match self.swapchain.loader.acquire_next_image(
                 self.swapchain.handle,
                 u64::MAX,
                 frame.image_available,
                 vk::Fence::null(),
-            )?;
+            ) {
+                Ok(result) => result,
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    self.needs_swapchain_recreate = true;
+                    self.recreate_swapchain(window)?;
+                    return Ok(());
+                }
+                Err(err) => return Err(err.into()),
+            };
 
+            let mut recreate_after_present = false;
             if suboptimal {
-                log::debug!("swapchain is suboptimal; resize handling arrives later");
+                recreate_after_present = true;
             }
 
             device.reset_fences(std::slice::from_ref(&frame.in_flight))?;
@@ -255,7 +335,7 @@ impl VulkanContext {
                 t,
             )?;
 
-            submit_clear_frame(
+            let present_suboptimal = match submit_clear_frame(
                 device,
                 logical_device.graphics_queue,
                 logical_device.present_queue,
@@ -264,10 +344,29 @@ impl VulkanContext {
                 frame,
                 render_finished,
                 image_index,
-            )?;
+            ) {
+                Ok(suboptimal) => suboptimal,
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    self.current_frame = (self.current_frame + 1) % frame::MAX_FRAMES_IN_FLIGHT;
+                    self.needs_swapchain_recreate = true;
+                    self.recreate_swapchain(window)?;
+                    return Ok(());
+                }
+                Err(err) => return Err(err.into()),
+            };
+
+            recreate_after_present |= present_suboptimal;
+
+            self.current_frame = (self.current_frame + 1) % frame::MAX_FRAMES_IN_FLIGHT;
+
+            if recreate_after_present {
+                self.needs_swapchain_recreate = true;
+            }
         }
 
-        self.current_frame = (self.current_frame + 1) % frame::MAX_FRAMES_IN_FLIGHT;
+        if self.needs_swapchain_recreate {
+            self.recreate_swapchain(window)?;
+        }
 
         Ok(())
     }
@@ -356,6 +455,20 @@ fn create_upload_fence(device: &ash::Device) -> anyhow::Result<vk::Fence> {
     let fence = unsafe { device.create_fence(&fence_info, None)? };
     log::info!("created upload fence");
     Ok(fence)
+}
+
+fn create_image_render_finished_semaphores(
+    device: &ash::Device,
+    image_count: usize,
+) -> anyhow::Result<Vec<vk::Semaphore>> {
+    let semaphore_info = vk::SemaphoreCreateInfo::default();
+    let mut semaphores = Vec::with_capacity(image_count);
+
+    for _ in 0..image_count {
+        semaphores.push(unsafe { device.create_semaphore(&semaphore_info, None)? });
+    }
+
+    Ok(semaphores)
 }
 
 fn create_quad_vertex_buffer(
@@ -508,7 +621,7 @@ unsafe fn submit_clear_frame(
     frame: &crate::renderer::frame::FrameData,
     render_finished: vk::Semaphore,
     image_index: u32,
-) -> anyhow::Result<()> {
+) -> Result<bool, vk::Result> {
     let wait_info = vk::SemaphoreSubmitInfo::default()
         .semaphore(frame.image_available)
         .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
@@ -542,8 +655,7 @@ unsafe fn submit_clear_frame(
         .image_indices(&image_indices);
 
     unsafe {
-        swapchain_loader.queue_present(present_queue, &present_info)?;
+        let suboptimal = swapchain_loader.queue_present(present_queue, &present_info)?;
+        Ok(suboptimal)
     }
-
-    Ok(())
 }

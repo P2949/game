@@ -14,7 +14,18 @@ fn main() -> anyhow::Result<()> {
 
     while !platform.should_quit {
         platform.pump_events();
-        vk.render(start.elapsed().as_secs_f32())?;
+
+        if platform.framebuffer_resized {
+            vk.request_swapchain_recreate();
+        }
+
+        let (width, height) = platform.drawable_size();
+        if width == 0 || height == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            continue;
+        }
+
+        vk.render(&platform.window, start.elapsed().as_secs_f32())?;
     }
 
     Ok(())

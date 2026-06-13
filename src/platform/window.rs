@@ -10,7 +10,7 @@ pub struct Platform {
     pub window: Window,
     pub event_pump: sdl3::EventPump,
     pub should_quit: bool,
-    pub resized: Option<(u32, u32)>,
+    pub framebuffer_resized: bool,
 }
 
 impl Platform {
@@ -57,12 +57,12 @@ impl Platform {
             window,
             event_pump,
             should_quit: false,
-            resized: None,
+            framebuffer_resized: false,
         })
     }
 
     pub fn pump_events(&mut self) {
-        self.resized = None;
+        self.framebuffer_resized = false;
 
         for event in self.event_pump.poll_iter() {
             match event {
@@ -77,9 +77,8 @@ impl Platform {
                     WindowEvent::CloseRequested => self.should_quit = true,
                     WindowEvent::Resized(width, height)
                     | WindowEvent::PixelSizeChanged(width, height) => {
-                        if width > 0 && height > 0 {
-                            self.resized = Some((width as u32, height as u32));
-                        }
+                        self.framebuffer_resized = true;
+                        log::debug!("window framebuffer resized: {width}x{height}");
                     }
                     _ => {
                         log::debug!("window event: {win_event:?}");
@@ -88,5 +87,9 @@ impl Platform {
                 _ => {}
             }
         }
+    }
+
+    pub fn drawable_size(&self) -> (u32, u32) {
+        self.window.size_in_pixels()
     }
 }
