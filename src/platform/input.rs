@@ -7,6 +7,8 @@ pub struct InputState {
     pub action: bool,
     pub action_pressed: bool,
     pub pause_pressed: bool,
+    pub reset_pressed: bool,
+    pub debug_die_pressed: bool,
     pub zoom_in: bool,
     pub zoom_out: bool,
     left: bool,
@@ -19,6 +21,8 @@ impl InputState {
     pub fn begin_frame(&mut self) {
         self.action_pressed = false;
         self.pause_pressed = false;
+        self.reset_pressed = false;
+        self.debug_die_pressed = false;
     }
 
     pub fn set_key(&mut self, keycode: Keycode, pressed: bool) {
@@ -34,6 +38,8 @@ impl InputState {
                 }
             }
             Keycode::P if pressed => self.pause_pressed = true,
+            Keycode::R if pressed => self.reset_pressed = true,
+            Keycode::K if pressed => self.debug_die_pressed = true,
             Keycode::Plus | Keycode::Equals | Keycode::KpPlus => self.zoom_in = pressed,
             Keycode::Minus | Keycode::KpMinus => self.zoom_out = pressed,
             _ => {}
