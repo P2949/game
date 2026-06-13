@@ -10,6 +10,21 @@ pub mod swapchain;
 pub mod text;
 pub mod texture;
 pub mod vertex;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TextureId(pub u32);
+
+pub const TEST_TEXTURE_ID: TextureId = TextureId(0);
+
+#[derive(Clone, Copy, Debug)]
+pub struct SpriteDraw {
+    pub texture: TextureId,
+    pub position: glam::Vec2,
+    pub size: glam::Vec2,
+    pub uv_min: glam::Vec2,
+    pub uv_max: glam::Vec2,
+    pub color: glam::Vec4,
+}
 // pub struct Renderer {
 //     // private Vulkan internals
 // }

@@ -1,8 +1,11 @@
 use ash::{Entry, vk};
 use std::ffi::{CStr, CString};
 
-use crate::renderer::vertex::quad_vertices;
-use crate::renderer::{buffer, debug, device, frame, pipeline, swapchain, texture};
+use crate::renderer::sprite_batch::SpriteBatch;
+use crate::renderer::{
+    SpriteDraw, TEST_TEXTURE_ID, TextureId, buffer, debug, device, frame, pipeline, swapchain,
+    texture,
+};
 
 pub struct VulkanContext {
     // Keep the Vulkan loader alive for objects created from it.
@@ -18,7 +21,8 @@ pub struct VulkanContext {
     pub queue_families: device::QueueFamilies,
     pub logical_device: Option<device::LogicalDevice>,
     pub allocator: Option<gpu_allocator::vulkan::Allocator>,
-    pub sprite_vertex_buffer: Option<buffer::Buffer>,
+    pub dynamic_sprite_buffers: Vec<Option<buffer::Buffer>>,
+    pub sprite_batch: SpriteBatch,
     pub test_texture: Option<texture::Texture>,
     pub texture_descriptor_set_layout: vk::DescriptorSetLayout,
     pub texture_descriptor_pool: vk::DescriptorPool,
@@ -122,13 +126,6 @@ impl VulkanContext {
             logical_device.device.clone(),
             selected_device.physical_device,
         )?;
-        let sprite_vertex_buffer = create_quad_vertex_buffer(
-            &logical_device.device,
-            &mut allocator,
-            logical_device.graphics_queue,
-            upload_command_pool,
-            upload_fence,
-        )?;
         let test_texture = texture::Texture::from_path(
             &logical_device.device,
             &mut allocator,
@@ -179,6 +176,7 @@ impl VulkanContext {
                 )
             })
             .collect::<anyhow::Result<_>>()?;
+        let dynamic_sprite_buffers = (0..frame::MAX_FRAMES_IN_FLIGHT).map(|_| None).collect();
 
         Ok(Self {
             entry,
@@ -190,7 +188,8 @@ impl VulkanContext {
             queue_families: selected_device.queue_families,
             logical_device: Some(logical_device),
             allocator: Some(allocator),
-            sprite_vertex_buffer: Some(sprite_vertex_buffer),
+            dynamic_sprite_buffers,
+            sprite_batch: SpriteBatch::new(),
             test_texture: Some(test_texture),
             texture_descriptor_set_layout,
             texture_descriptor_pool,
@@ -209,6 +208,18 @@ impl VulkanContext {
 
     pub fn request_swapchain_recreate(&mut self) {
         self.needs_swapchain_recreate = true;
+    }
+
+    pub fn draw_sprite(&mut self, sprite: SpriteDraw) {
+        self.sprite_batch.push(sprite);
+    }
+
+    fn texture_descriptor(&self, texture: TextureId) -> anyhow::Result<vk::DescriptorSet> {
+        if texture == TEST_TEXTURE_ID {
+            return Ok(self.texture_descriptor_set);
+        }
+
+        anyhow::bail!("unknown texture id {:?}", texture);
     }
 
     pub fn recreate_swapchain(&mut self, window: &sdl3::video::Window) -> anyhow::Result<()> {
@@ -285,21 +296,35 @@ impl VulkanContext {
         let Some(logical_device) = self.logical_device.as_ref() else {
             anyhow::bail!("cannot render after logical device has been destroyed");
         };
+        let device = logical_device.device.clone();
+        let graphics_queue = logical_device.graphics_queue;
+        let present_queue = logical_device.present_queue;
 
-        let device = &logical_device.device;
-        let frame = &self.frames[self.current_frame];
-        let sprite_vertex_buffer = self
-            .sprite_vertex_buffer
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("sprite vertex buffer has been destroyed"))?;
+        let frame_index = self.current_frame;
+        let frame = &self.frames[frame_index];
+        let command_buffer = frame.command_buffer;
+        let image_available = frame.image_available;
+        let in_flight = frame.in_flight;
+
+        let (vertices, batch_ranges) = self.sprite_batch.build_vertices();
+        self.sprite_batch.clear();
+
+        let mut draw_ranges = Vec::with_capacity(batch_ranges.len());
+        for range in batch_ranges {
+            draw_ranges.push(RenderSpriteRange {
+                descriptor_set: self.texture_descriptor(range.texture)?,
+                first_vertex: range.first_vertex,
+                vertex_count: range.vertex_count,
+            });
+        }
 
         unsafe {
-            device.wait_for_fences(std::slice::from_ref(&frame.in_flight), true, u64::MAX)?;
+            device.wait_for_fences(std::slice::from_ref(&in_flight), true, u64::MAX)?;
 
             let (image_index, suboptimal) = match self.swapchain.loader.acquire_next_image(
                 self.swapchain.handle,
                 u64::MAX,
-                frame.image_available,
+                image_available,
                 vk::Fence::null(),
             ) {
                 Ok(result) => result,
@@ -316,38 +341,68 @@ impl VulkanContext {
                 recreate_after_present = true;
             }
 
-            device.reset_fences(std::slice::from_ref(&frame.in_flight))?;
-            device
-                .reset_command_buffer(frame.command_buffer, vk::CommandBufferResetFlags::empty())?;
+            let sprite_vertex_buffer = {
+                let allocator = self
+                    .allocator
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("allocator has been destroyed"))?;
+
+                if let Some(old_buffer) = self.dynamic_sprite_buffers[frame_index].take() {
+                    old_buffer.destroy(&device, allocator);
+                }
+
+                if vertices.is_empty() {
+                    None
+                } else {
+                    let buffer = buffer::upload_buffer(
+                        &device,
+                        allocator,
+                        graphics_queue,
+                        self.upload_command_pool,
+                        self.upload_fence,
+                        &vertices,
+                        vk::BufferUsageFlags::VERTEX_BUFFER,
+                        "frame sprite vertices",
+                    )?;
+                    let handle = buffer.handle;
+                    self.dynamic_sprite_buffers[frame_index] = Some(buffer);
+                    Some(handle)
+                }
+            };
+
+            device.reset_fences(std::slice::from_ref(&in_flight))?;
+            device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
 
             let image_index_usize = image_index as usize;
             let render_finished = self.image_render_finished[image_index_usize];
             record_clear_commands(
-                device,
-                frame.command_buffer,
+                &device,
+                command_buffer,
                 self.swapchain.images[image_index_usize],
                 self.swapchain_image_views.views[image_index_usize],
                 self.swapchain.extent,
                 self.sprite_pipeline.layout,
                 self.sprite_pipeline.pipeline,
-                sprite_vertex_buffer.handle,
-                self.texture_descriptor_set,
+                sprite_vertex_buffer,
+                &draw_ranges,
                 t,
             )?;
 
             let present_suboptimal = match submit_clear_frame(
-                device,
-                logical_device.graphics_queue,
-                logical_device.present_queue,
+                &device,
+                graphics_queue,
+                present_queue,
                 &self.swapchain.loader,
                 self.swapchain.handle,
-                frame,
+                image_available,
+                command_buffer,
+                in_flight,
                 render_finished,
                 image_index,
             ) {
                 Ok(suboptimal) => suboptimal,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    self.current_frame = (self.current_frame + 1) % frame::MAX_FRAMES_IN_FLIGHT;
+                    self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
                     self.needs_swapchain_recreate = true;
                     self.recreate_swapchain(window)?;
                     return Ok(());
@@ -357,7 +412,7 @@ impl VulkanContext {
 
             recreate_after_present |= present_suboptimal;
 
-            self.current_frame = (self.current_frame + 1) % frame::MAX_FRAMES_IN_FLIGHT;
+            self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
 
             if recreate_after_present {
                 self.needs_swapchain_recreate = true;
@@ -390,10 +445,12 @@ impl Drop for VulkanContext {
                     texture.destroy(&logical_device.device, allocator);
                 }
 
-                if let (Some(vertex_buffer), Some(allocator)) =
-                    (self.sprite_vertex_buffer.take(), self.allocator.as_mut())
-                {
-                    vertex_buffer.destroy(&logical_device.device, allocator);
+                if let Some(allocator) = self.allocator.as_mut() {
+                    for vertex_buffer in &mut self.dynamic_sprite_buffers {
+                        if let Some(vertex_buffer) = vertex_buffer.take() {
+                            vertex_buffer.destroy(&logical_device.device, allocator);
+                        }
+                    }
                 }
 
                 logical_device
@@ -471,25 +528,10 @@ fn create_image_render_finished_semaphores(
     Ok(semaphores)
 }
 
-fn create_quad_vertex_buffer(
-    device: &ash::Device,
-    allocator: &mut gpu_allocator::vulkan::Allocator,
-    queue: vk::Queue,
-    upload_pool: vk::CommandPool,
-    upload_fence: vk::Fence,
-) -> anyhow::Result<buffer::Buffer> {
-    let vertices = quad_vertices(-0.75, -0.75, 1.5, 1.5);
-
-    buffer::upload_buffer(
-        device,
-        allocator,
-        queue,
-        upload_pool,
-        upload_fence,
-        &vertices,
-        vk::BufferUsageFlags::VERTEX_BUFFER,
-        "sprite quad vertices",
-    )
+struct RenderSpriteRange {
+    descriptor_set: vk::DescriptorSet,
+    first_vertex: u32,
+    vertex_count: u32,
 }
 
 unsafe fn record_clear_commands(
@@ -500,8 +542,8 @@ unsafe fn record_clear_commands(
     extent: vk::Extent2D,
     sprite_pipeline_layout: vk::PipelineLayout,
     sprite_pipeline: vk::Pipeline,
-    sprite_vertex_buffer: vk::Buffer,
-    texture_descriptor_set: vk::DescriptorSet,
+    sprite_vertex_buffer: Option<vk::Buffer>,
+    draw_ranges: &[RenderSpriteRange],
     t: f32,
 ) -> anyhow::Result<()> {
     let begin_info = vk::CommandBufferBeginInfo::default();
@@ -568,30 +610,43 @@ unsafe fn record_clear_commands(
 
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, sprite_pipeline);
 
-        let descriptor_sets = [texture_descriptor_set];
-        device.cmd_bind_descriptor_sets(
-            cmd,
-            vk::PipelineBindPoint::GRAPHICS,
-            sprite_pipeline_layout,
-            0,
-            &descriptor_sets,
-            &[],
-        );
+        if let Some(sprite_vertex_buffer) = sprite_vertex_buffer
+            && !draw_ranges.is_empty()
+        {
+            let view_proj = glam::Mat4::orthographic_rh(
+                0.0,
+                extent.width as f32,
+                extent.height as f32,
+                0.0,
+                -1.0,
+                1.0,
+            )
+            .to_cols_array();
+            device.cmd_push_constants(
+                cmd,
+                sprite_pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                bytemuck::bytes_of(&view_proj),
+            );
 
-        let view_proj = glam::Mat4::IDENTITY.to_cols_array();
-        device.cmd_push_constants(
-            cmd,
-            sprite_pipeline_layout,
-            vk::ShaderStageFlags::VERTEX,
-            0,
-            bytemuck::bytes_of(&view_proj),
-        );
+            let vertex_buffers = [sprite_vertex_buffer];
+            let offsets = [0_u64];
+            device.cmd_bind_vertex_buffers(cmd, 0, &vertex_buffers, &offsets);
 
-        let vertex_buffers = [sprite_vertex_buffer];
-        let offsets = [0_u64];
-        device.cmd_bind_vertex_buffers(cmd, 0, &vertex_buffers, &offsets);
-
-        device.cmd_draw(cmd, 6, 1, 0, 0);
+            for range in draw_ranges {
+                let descriptor_sets = [range.descriptor_set];
+                device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    sprite_pipeline_layout,
+                    0,
+                    &descriptor_sets,
+                    &[],
+                );
+                device.cmd_draw(cmd, range.vertex_count, 1, range.first_vertex, 0);
+            }
+        }
 
         device.cmd_end_rendering(cmd);
 
@@ -618,15 +673,17 @@ unsafe fn submit_clear_frame(
     present_queue: vk::Queue,
     swapchain_loader: &ash::khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
-    frame: &crate::renderer::frame::FrameData,
+    image_available: vk::Semaphore,
+    command_buffer: vk::CommandBuffer,
+    in_flight: vk::Fence,
     render_finished: vk::Semaphore,
     image_index: u32,
 ) -> Result<bool, vk::Result> {
     let wait_info = vk::SemaphoreSubmitInfo::default()
-        .semaphore(frame.image_available)
+        .semaphore(image_available)
         .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
 
-    let cmd_info = vk::CommandBufferSubmitInfo::default().command_buffer(frame.command_buffer);
+    let cmd_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
 
     let signal_info = vk::SemaphoreSubmitInfo::default()
         .semaphore(render_finished)
@@ -641,7 +698,7 @@ unsafe fn submit_clear_frame(
         device.queue_submit2(
             graphics_queue,
             std::slice::from_ref(&submit_info),
-            frame.in_flight,
+            in_flight,
         )?;
     }
 

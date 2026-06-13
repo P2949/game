@@ -25,6 +25,19 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
 
+        for y in 0..10 {
+            for x in 0..10 {
+                vk.draw_sprite(renderer::SpriteDraw {
+                    texture: renderer::TEST_TEXTURE_ID,
+                    position: glam::vec2(x as f32 * 40.0, y as f32 * 40.0),
+                    size: glam::vec2(32.0, 32.0),
+                    uv_min: glam::Vec2::ZERO,
+                    uv_max: glam::Vec2::ONE,
+                    color: glam::Vec4::ONE,
+                });
+            }
+        }
+
         vk.render(&platform.window, start.elapsed().as_secs_f32())?;
     }
 
