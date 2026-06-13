@@ -5,6 +5,7 @@ use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStrea
 
 const AUDIO_SCRATCH_SAMPLES: usize = 4096;
 const AUDIO_COMMAND_QUEUE_CAPACITY: usize = 128;
+const MAX_VOICES: usize = 32;
 
 #[derive(Debug, Clone, Copy)]
 enum AudioCommand {
@@ -40,7 +41,7 @@ impl Mixer {
     pub fn new() -> Self {
         Self {
             sounds: Vec::new(),
-            voices: Vec::new(),
+            voices: Vec::with_capacity(MAX_VOICES),
             master_volume: 1.0,
         }
     }
@@ -57,6 +58,10 @@ impl Mixer {
         };
 
         if sound.samples.is_empty() {
+            return;
+        }
+
+        if self.voices.len() >= MAX_VOICES {
             return;
         }
 
@@ -232,6 +237,13 @@ mod tests {
     use super::{AudioCommand, Mixer, MixerCallback, Sound};
 
     #[test]
+    fn mixer_preallocates_voice_capacity() {
+        let mixer = Mixer::new();
+
+        assert!(mixer.voices.capacity() >= super::MAX_VOICES);
+    }
+
+    #[test]
     fn finished_voice_is_removed() {
         let mut mixer = Mixer::new();
         let sound_id = mixer.add_sound(Sound {
@@ -266,6 +278,26 @@ mod tests {
     }
 
     #[test]
+    fn looping_music_produces_nonzero_samples() {
+        let sample_rate = 48_000;
+        let channels = 2;
+
+        let mut mixer = Mixer::new();
+        mixer.master_volume = 0.3;
+
+        let music_sound = mixer.add_sound(super::sine_sound(110.0, 1.0, sample_rate, channels));
+        mixer.play(music_sound, 0.08, true);
+
+        let mut out = vec![0.0; 1024];
+        mixer.mix_into(&mut out);
+
+        assert!(
+            out.iter().any(|sample| sample.abs() > 0.0001),
+            "looping music mixed only silence"
+        );
+    }
+
+    #[test]
     fn empty_sound_is_not_played() {
         let mut mixer = Mixer::new();
         let sound_id = mixer.add_sound(Sound {
@@ -289,6 +321,26 @@ mod tests {
     }
 
     #[test]
+    fn play_drops_new_voice_when_voice_cap_is_reached() {
+        let mut mixer = Mixer::new();
+        let sound_id = mixer.add_sound(Sound {
+            samples: vec![0.25],
+            channels: 1,
+            sample_rate: 48_000,
+        });
+
+        for _ in 0..super::MAX_VOICES {
+            mixer.play(sound_id, 1.0, true);
+        }
+
+        assert_eq!(mixer.voices.len(), super::MAX_VOICES);
+
+        mixer.play(sound_id, 1.0, true);
+
+        assert_eq!(mixer.voices.len(), super::MAX_VOICES);
+    }
+
+    #[test]
     fn callback_drains_play_commands() {
         let mut mixer = Mixer::new();
         let sound_id = mixer.add_sound(Sound {
@@ -307,7 +359,7 @@ mod tests {
         let mut callback = MixerCallback {
             mixer,
             commands: Arc::clone(&commands),
-            scratch: Vec::new(),
+            scratch: vec![0.0; super::AUDIO_SCRATCH_SAMPLES],
         };
 
         callback.drain_commands();
@@ -316,5 +368,38 @@ mod tests {
         assert_eq!(callback.mixer.voices.len(), 1);
         assert_eq!(callback.mixer.voices[0].sound_id, sound_id);
         assert_eq!(callback.mixer.voices[0].volume, 0.5);
+    }
+
+    #[test]
+    fn callback_drained_play_commands_respect_voice_cap() {
+        let mut mixer = Mixer::new();
+        let sound_id = mixer.add_sound(Sound {
+            samples: vec![0.25],
+            channels: 1,
+            sample_rate: 48_000,
+        });
+
+        let commands = Arc::new(ArrayQueue::new(super::MAX_VOICES + 8));
+        for _ in 0..(super::MAX_VOICES + 8) {
+            commands
+                .push(AudioCommand::Play {
+                    sound_id,
+                    volume: 0.5,
+                    looping: true,
+                })
+                .unwrap();
+        }
+
+        let mut callback = MixerCallback {
+            mixer,
+            commands: Arc::clone(&commands),
+            scratch: vec![0.0; super::AUDIO_SCRATCH_SAMPLES],
+        };
+
+        callback.drain_commands();
+
+        assert!(commands.is_empty());
+        assert_eq!(callback.mixer.voices.len(), super::MAX_VOICES);
+        assert!(callback.mixer.voices.capacity() >= super::MAX_VOICES);
     }
 }
