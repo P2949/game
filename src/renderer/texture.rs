@@ -30,6 +30,39 @@ impl Texture {
         let width = rgba.width();
         let height = rgba.height();
         let pixels = rgba.into_raw();
+        Self::from_rgba8(
+            device,
+            allocator,
+            queue,
+            upload_pool,
+            upload_fence,
+            width,
+            height,
+            &pixels,
+            name,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_rgba8(
+        device: &ash::Device,
+        allocator: &mut Allocator,
+        queue: vk::Queue,
+        upload_pool: vk::CommandPool,
+        upload_fence: vk::Fence,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+        name: &str,
+    ) -> anyhow::Result<Self> {
+        let expected_len = width as usize * height as usize * 4;
+        if pixels.len() != expected_len {
+            anyhow::bail!(
+                "texture '{name}' has {} bytes, expected {expected_len}",
+                pixels.len()
+            );
+        }
+
         let image_size = pixels.len() as vk::DeviceSize;
 
         let staging_name = format!("{name} texture staging");

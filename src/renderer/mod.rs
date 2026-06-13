@@ -15,6 +15,7 @@ pub mod vertex;
 pub struct TextureId(pub u32);
 
 pub const TEST_TEXTURE_ID: TextureId = TextureId(0);
+pub const FONT_TEXTURE_ID: TextureId = TextureId(1);
 
 #[derive(Clone, Copy, Debug)]
 pub struct SpriteDraw {

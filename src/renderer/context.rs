@@ -3,8 +3,8 @@ use std::ffi::{CStr, CString};
 
 use crate::renderer::sprite_batch::SpriteBatch;
 use crate::renderer::{
-    SpriteDraw, TEST_TEXTURE_ID, TextureId, buffer, debug, device, frame, pipeline, swapchain,
-    texture,
+    FONT_TEXTURE_ID, SpriteDraw, TEST_TEXTURE_ID, TextureId, buffer, debug, device, frame,
+    pipeline, swapchain, text, texture,
 };
 
 pub struct VulkanContext {
@@ -24,9 +24,13 @@ pub struct VulkanContext {
     pub dynamic_sprite_buffers: Vec<Option<buffer::Buffer>>,
     pub sprite_batch: SpriteBatch,
     pub test_texture: Option<texture::Texture>,
+    pub font_texture: Option<texture::Texture>,
+    pub font_atlas: text::FontAtlas,
     pub texture_descriptor_set_layout: vk::DescriptorSetLayout,
     pub texture_descriptor_pool: vk::DescriptorPool,
     pub texture_descriptor_set: vk::DescriptorSet,
+    pub font_descriptor_pool: vk::DescriptorPool,
+    pub font_descriptor_set: vk::DescriptorSet,
     pub upload_command_pool: vk::CommandPool,
     pub upload_fence: vk::Fence,
     pub swapchain: swapchain::Swapchain,
@@ -135,6 +139,20 @@ impl VulkanContext {
             "assets/textures/test.png",
             "test texture",
         )?;
+        let font_atlas_image =
+            text::build_ascii_atlas("assets/fonts/DejaVuSans.ttf", FONT_TEXTURE_ID)?;
+        let font_texture = texture::Texture::from_rgba8(
+            &logical_device.device,
+            &mut allocator,
+            logical_device.graphics_queue,
+            upload_command_pool,
+            upload_fence,
+            font_atlas_image.width,
+            font_atlas_image.height,
+            &font_atlas_image.pixels,
+            "font atlas",
+        )?;
+        let font_atlas = font_atlas_image.atlas;
         let texture_descriptor_set_layout =
             texture::create_texture_descriptor_set_layout(&logical_device.device)?;
         let (texture_descriptor_pool, texture_descriptor_set) =
@@ -143,6 +161,11 @@ impl VulkanContext {
                 texture_descriptor_set_layout,
                 &test_texture,
             )?;
+        let (font_descriptor_pool, font_descriptor_set) = texture::create_texture_descriptor_set(
+            &logical_device.device,
+            texture_descriptor_set_layout,
+            &font_texture,
+        )?;
         let swapchain = swapchain::Swapchain::new(
             &instance,
             &logical_device.device,
@@ -191,9 +214,13 @@ impl VulkanContext {
             dynamic_sprite_buffers,
             sprite_batch: SpriteBatch::new(),
             test_texture: Some(test_texture),
+            font_texture: Some(font_texture),
+            font_atlas,
             texture_descriptor_set_layout,
             texture_descriptor_pool,
             texture_descriptor_set,
+            font_descriptor_pool,
+            font_descriptor_set,
             upload_command_pool,
             upload_fence,
             swapchain,
@@ -214,9 +241,16 @@ impl VulkanContext {
         self.sprite_batch.push(sprite);
     }
 
+    pub fn draw_text(&mut self, text: &str, pos: glam::Vec2, color: glam::Vec4) {
+        text::draw_text(&mut self.sprite_batch, &self.font_atlas, text, pos, color);
+    }
+
     fn texture_descriptor(&self, texture: TextureId) -> anyhow::Result<vk::DescriptorSet> {
         if texture == TEST_TEXTURE_ID {
             return Ok(self.texture_descriptor_set);
+        }
+        if texture == FONT_TEXTURE_ID {
+            return Ok(self.font_descriptor_set);
         }
 
         anyhow::bail!("unknown texture id {:?}", texture);
@@ -444,9 +478,18 @@ impl Drop for VulkanContext {
                 logical_device
                     .device
                     .destroy_descriptor_pool(self.texture_descriptor_pool, None);
+                logical_device
+                    .device
+                    .destroy_descriptor_pool(self.font_descriptor_pool, None);
 
                 if let (Some(texture), Some(allocator)) =
                     (self.test_texture.take(), self.allocator.as_mut())
+                {
+                    texture.destroy(&logical_device.device, allocator);
+                }
+
+                if let (Some(texture), Some(allocator)) =
+                    (self.font_texture.take(), self.allocator.as_mut())
                 {
                     texture.destroy(&logical_device.device, allocator);
                 }

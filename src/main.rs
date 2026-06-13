@@ -46,6 +46,11 @@ fn main() -> anyhow::Result<()> {
                 });
             }
         }
+        vk.draw_text(
+            "FPS: 240\nSprites: 100",
+            glam::vec2(16.0, 16.0),
+            glam::vec4(1.0, 0.95, 0.75, 1.0),
+        );
 
         vk.render(&platform.window, camera, start.elapsed().as_secs_f32())?;
     }
