@@ -6,7 +6,14 @@ pub struct FixedTimestep {
 }
 
 impl FixedTimestep {
+    pub const MAX_STEPS_PER_FRAME: usize = 8;
+
     pub fn new(sim_hz: f64) -> Self {
+        assert!(
+            sim_hz.is_finite() && sim_hz > 0.0,
+            "fixed timestep rate must be finite and positive"
+        );
+
         Self {
             previous: std::time::Instant::now(),
             accumulator: 0.0,
@@ -33,7 +40,11 @@ impl FixedTimestep {
         self.dt as f32
     }
 
+    pub fn discard_lag(&mut self) {
+        self.accumulator = self.accumulator.rem_euclid(self.dt);
+    }
+
     pub fn alpha(&self) -> f32 {
-        (self.accumulator / self.dt) as f32
+        (self.accumulator / self.dt).clamp(0.0, 1.0) as f32
     }
 }

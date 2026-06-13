@@ -447,7 +447,6 @@ dependencies = [
  "image",
  "log",
  "sdl3",
- "thiserror",
  "walkdir",
 ]
 

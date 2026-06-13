@@ -1,11 +1,17 @@
 use ash::{Entry, vk};
+use gpu_allocator::MemoryLocation;
 use std::ffi::{CStr, CString};
+use std::path::PathBuf;
 
-use crate::renderer::sprite_batch::SpriteBatch;
+use crate::renderer::sprite_batch::{SpriteBatch, SpriteBatchRange};
+use crate::renderer::vertex::SpriteVertex;
 use crate::renderer::{
-    FONT_TEXTURE_ID, SpriteDraw, TEST_TEXTURE_ID, TextureId, buffer, debug, device, frame,
-    pipeline, swapchain, text, texture,
+    DrawCommands, FONT_TEXTURE_ID, SpriteDraw, TEST_TEXTURE_ID, TextureId, buffer, debug, device,
+    frame, pipeline, swapchain, text, texture,
 };
+
+const INITIAL_SPRITE_VERTEX_BUFFER_BYTES: vk::DeviceSize = 1024 * 1024;
+const UI_TEXT_LAYER: i16 = 1000;
 
 pub struct VulkanContext {
     // Keep the Vulkan loader alive for objects created from it.
@@ -22,7 +28,8 @@ pub struct VulkanContext {
     pub logical_device: Option<device::LogicalDevice>,
     pub allocator: Option<gpu_allocator::vulkan::Allocator>,
     pub dynamic_sprite_buffers: Vec<Option<buffer::Buffer>>,
-    pub sprite_batch: SpriteBatch,
+    pub world_sprite_batch: SpriteBatch,
+    pub ui_sprite_batch: SpriteBatch,
     pub test_texture: Option<texture::Texture>,
     pub font_texture: Option<texture::Texture>,
     pub font_atlas: text::FontAtlas,
@@ -75,16 +82,21 @@ impl VulkanContext {
             extension_names.iter().map(|name| name.as_ptr()).collect();
 
         let layer_names: Vec<&CStr> = if cfg!(debug_assertions) {
+            if !validation_layer_available(&entry)? {
+                anyhow::bail!(
+                    "debug build requested {}, but the Vulkan validation layer is not installed",
+                    debug::VALIDATION_LAYER.to_string_lossy()
+                );
+            }
             vec![debug::VALIDATION_LAYER]
         } else {
             vec![]
         };
         let layer_ptrs: Vec<*const i8> = layer_names.iter().map(|layer| layer.as_ptr()).collect();
 
-        let mut validation_features = vk::ValidationFeaturesEXT::default()
-            .enabled_validation_features(&[
-                vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,
-            ]);
+        let validation_enables = [vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION];
+        let mut validation_features =
+            vk::ValidationFeaturesEXT::default().enabled_validation_features(&validation_enables);
 
         let mut debug_create_info = debug::debug_messenger_create_info();
 
@@ -130,29 +142,36 @@ impl VulkanContext {
             logical_device.device.clone(),
             selected_device.physical_device,
         )?;
-        let test_texture = texture::Texture::from_path(
-            &logical_device.device,
-            &mut allocator,
-            logical_device.graphics_queue,
-            upload_command_pool,
-            upload_fence,
-            "assets/textures/test.png",
-            "test texture",
-        )?;
-        let font_atlas_image =
-            text::build_ascii_atlas("assets/fonts/DejaVuSans.ttf", FONT_TEXTURE_ID)?;
-        let font_texture = texture::Texture::from_rgba8(
-            &logical_device.device,
-            &mut allocator,
-            logical_device.graphics_queue,
-            upload_command_pool,
-            upload_fence,
-            font_atlas_image.width,
-            font_atlas_image.height,
-            &font_atlas_image.pixels,
-            "font atlas",
-        )?;
-        let font_atlas = font_atlas_image.atlas;
+        let (test_texture, font_texture, font_atlas) = {
+            let mut texture_upload = texture::TextureUpload {
+                device: &logical_device.device,
+                allocator: &mut allocator,
+                queue: logical_device.graphics_queue,
+                upload_pool: upload_command_pool,
+                upload_fence,
+            };
+
+            let test_texture = texture::Texture::from_path(
+                &mut texture_upload,
+                asset_path("assets/textures/test.png"),
+                texture::TextureColorSpace::SrgbColor,
+                "test texture",
+            )?;
+            let font_atlas_image = text::build_ascii_atlas(
+                asset_path("assets/fonts/DejaVuSans.ttf"),
+                FONT_TEXTURE_ID,
+            )?;
+            let font_texture = texture::Texture::from_rgba8(
+                &mut texture_upload,
+                font_atlas_image.width,
+                font_atlas_image.height,
+                &font_atlas_image.pixels,
+                texture::TextureColorSpace::LinearData,
+                "font atlas",
+            )?;
+
+            (test_texture, font_texture, font_atlas_image.atlas)
+        };
         let texture_descriptor_set_layout =
             texture::create_texture_descriptor_set_layout(&logical_device.device)?;
         let (texture_descriptor_pool, texture_descriptor_set) =
@@ -212,7 +231,8 @@ impl VulkanContext {
             logical_device: Some(logical_device),
             allocator: Some(allocator),
             dynamic_sprite_buffers,
-            sprite_batch: SpriteBatch::new(),
+            world_sprite_batch: SpriteBatch::new(),
+            ui_sprite_batch: SpriteBatch::new(),
             test_texture: Some(test_texture),
             font_texture: Some(font_texture),
             font_atlas,
@@ -237,14 +257,6 @@ impl VulkanContext {
         self.needs_swapchain_recreate = true;
     }
 
-    pub fn draw_sprite(&mut self, sprite: SpriteDraw) {
-        self.sprite_batch.push(sprite);
-    }
-
-    pub fn draw_text(&mut self, text: &str, pos: glam::Vec2, color: glam::Vec4) {
-        text::draw_text(&mut self.sprite_batch, &self.font_atlas, text, pos, color);
-    }
-
     fn texture_descriptor(&self, texture: TextureId) -> anyhow::Result<vk::DescriptorSet> {
         if texture == TEST_TEXTURE_ID {
             return Ok(self.texture_descriptor_set);
@@ -254,6 +266,68 @@ impl VulkanContext {
         }
 
         anyhow::bail!("unknown texture id {:?}", texture);
+    }
+
+    fn draw_ranges_for(
+        &self,
+        batch_ranges: Vec<SpriteBatchRange>,
+        first_vertex_offset: u32,
+    ) -> anyhow::Result<Vec<RenderSpriteRange>> {
+        let mut draw_ranges = Vec::with_capacity(batch_ranges.len());
+        for range in batch_ranges {
+            draw_ranges.push(RenderSpriteRange {
+                descriptor_set: self.texture_descriptor(range.texture)?,
+                first_vertex: first_vertex_offset + range.first_vertex,
+                vertex_count: range.vertex_count,
+            });
+        }
+        Ok(draw_ranges)
+    }
+
+    fn update_sprite_vertex_buffer(
+        &mut self,
+        device: &ash::Device,
+        frame_index: usize,
+        vertices: &[SpriteVertex],
+    ) -> anyhow::Result<Option<vk::Buffer>> {
+        if vertices.is_empty() {
+            return Ok(None);
+        }
+
+        let required_bytes = std::mem::size_of_val(vertices) as vk::DeviceSize;
+        let allocator = self
+            .allocator
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("allocator has been destroyed"))?;
+        let should_recreate = match &self.dynamic_sprite_buffers[frame_index] {
+            Some(buffer) => buffer.size < required_bytes,
+            None => true,
+        };
+
+        if should_recreate {
+            if let Some(old_buffer) = self.dynamic_sprite_buffers[frame_index].take() {
+                unsafe {
+                    old_buffer.destroy(device, allocator);
+                }
+            }
+
+            let capacity = sprite_vertex_buffer_capacity(required_bytes);
+            let buffer = buffer::Buffer::new(
+                device,
+                allocator,
+                capacity,
+                vk::BufferUsageFlags::VERTEX_BUFFER,
+                MemoryLocation::CpuToGpu,
+                "dynamic sprite vertex buffer",
+            )?;
+            self.dynamic_sprite_buffers[frame_index] = Some(buffer);
+        }
+
+        let buffer = self.dynamic_sprite_buffers[frame_index]
+            .as_mut()
+            .expect("dynamic sprite buffer exists after creation");
+        buffer.copy_from_slice(vertices)?;
+        Ok(Some(buffer.handle))
     }
 
     pub fn recreate_swapchain(&mut self, window: &sdl3::video::Window) -> anyhow::Result<()> {
@@ -284,18 +358,45 @@ impl VulkanContext {
             (width, height),
             old_swapchain,
         )?;
-        let new_swapchain_image_views = swapchain::SwapchainImageViews::new(
+        let new_swapchain_image_views = match swapchain::SwapchainImageViews::new(
             device,
             &new_swapchain.images,
             new_swapchain.format,
-        )?;
-        let new_sprite_pipeline = pipeline::GraphicsPipeline::new_sprite(
+        ) {
+            Ok(views) => views,
+            Err(err) => {
+                unsafe {
+                    new_swapchain.destroy();
+                }
+                return Err(err);
+            }
+        };
+        let new_sprite_pipeline = match pipeline::GraphicsPipeline::new_sprite(
             device,
             new_swapchain.format,
             self.texture_descriptor_set_layout,
-        )?;
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(err) => {
+                unsafe {
+                    new_swapchain_image_views.destroy(device);
+                    new_swapchain.destroy();
+                }
+                return Err(err);
+            }
+        };
         let new_image_render_finished =
-            create_image_render_finished_semaphores(device, new_swapchain.images.len())?;
+            match create_image_render_finished_semaphores(device, new_swapchain.images.len()) {
+                Ok(semaphores) => semaphores,
+                Err(err) => {
+                    unsafe {
+                        new_sprite_pipeline.destroy(device);
+                        new_swapchain_image_views.destroy(device);
+                        new_swapchain.destroy();
+                    }
+                    return Err(err);
+                }
+            };
 
         unsafe {
             for &semaphore in &self.image_render_finished {
@@ -345,17 +446,15 @@ impl VulkanContext {
         let image_available = frame.image_available;
         let in_flight = frame.in_flight;
 
-        let (vertices, batch_ranges) = self.sprite_batch.build_vertices();
-        self.sprite_batch.clear();
+        let (mut vertices, world_batch_ranges) = self.world_sprite_batch.build_vertices();
+        let ui_vertex_offset = vertices.len() as u32;
+        let (ui_vertices, ui_batch_ranges) = self.ui_sprite_batch.build_vertices();
+        vertices.extend_from_slice(&ui_vertices);
+        self.world_sprite_batch.clear();
+        self.ui_sprite_batch.clear();
 
-        let mut draw_ranges = Vec::with_capacity(batch_ranges.len());
-        for range in batch_ranges {
-            draw_ranges.push(RenderSpriteRange {
-                descriptor_set: self.texture_descriptor(range.texture)?,
-                first_vertex: range.first_vertex,
-                vertex_count: range.vertex_count,
-            });
-        }
+        let world_draw_ranges = self.draw_ranges_for(world_batch_ranges, 0)?;
+        let ui_draw_ranges = self.draw_ranges_for(ui_batch_ranges, ui_vertex_offset)?;
 
         unsafe {
             device.wait_for_fences(std::slice::from_ref(&in_flight), true, u64::MAX)?;
@@ -380,40 +479,31 @@ impl VulkanContext {
                 recreate_after_present = true;
             }
 
-            let sprite_vertex_buffer = {
-                let allocator = self
-                    .allocator
-                    .as_mut()
-                    .ok_or_else(|| anyhow::anyhow!("allocator has been destroyed"))?;
+            let sprite_vertex_buffer =
+                self.update_sprite_vertex_buffer(&device, frame_index, &vertices)?;
 
-                if let Some(old_buffer) = self.dynamic_sprite_buffers[frame_index].take() {
-                    old_buffer.destroy(&device, allocator);
-                }
-
-                if vertices.is_empty() {
-                    None
-                } else {
-                    let buffer = buffer::upload_buffer(
-                        &device,
-                        allocator,
-                        graphics_queue,
-                        self.upload_command_pool,
-                        self.upload_fence,
-                        &vertices,
-                        vk::BufferUsageFlags::VERTEX_BUFFER,
-                        "frame sprite vertices",
-                    )?;
-                    let handle = buffer.handle;
-                    self.dynamic_sprite_buffers[frame_index] = Some(buffer);
-                    Some(handle)
-                }
-            };
-
-            device.reset_fences(std::slice::from_ref(&in_flight))?;
             device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
 
             let image_index_usize = image_index as usize;
             let render_finished = self.image_render_finished[image_index_usize];
+            let world_projection = camera
+                .view_projection(
+                    self.swapchain.extent.width as f32,
+                    self.swapchain.extent.height as f32,
+                )
+                .to_cols_array();
+            let ui_projection = ui_projection(self.swapchain.extent).to_cols_array();
+            let render_batches = [
+                RenderSpriteBatch {
+                    projection: world_projection,
+                    ranges: &world_draw_ranges,
+                },
+                RenderSpriteBatch {
+                    projection: ui_projection,
+                    ranges: &ui_draw_ranges,
+                },
+            ];
+
             record_clear_commands(
                 &device,
                 command_buffer,
@@ -423,8 +513,7 @@ impl VulkanContext {
                 self.sprite_pipeline.layout,
                 self.sprite_pipeline.pipeline,
                 sprite_vertex_buffer,
-                &draw_ranges,
-                camera,
+                &render_batches,
                 t,
             )?;
 
@@ -464,6 +553,27 @@ impl VulkanContext {
         }
 
         Ok(())
+    }
+}
+
+impl DrawCommands for VulkanContext {
+    fn draw_world_sprite(&mut self, sprite: SpriteDraw) {
+        self.world_sprite_batch.push(sprite);
+    }
+
+    fn draw_ui_sprite(&mut self, sprite: SpriteDraw) {
+        self.ui_sprite_batch.push(sprite);
+    }
+
+    fn draw_ui_text(&mut self, text: &str, pos: glam::Vec2, color: glam::Vec4) {
+        text::draw_text(
+            &mut self.ui_sprite_batch,
+            &self.font_atlas,
+            text,
+            pos,
+            color,
+            UI_TEXT_LAYER,
+        );
     }
 }
 
@@ -571,7 +681,17 @@ fn create_image_render_finished_semaphores(
     let mut semaphores = Vec::with_capacity(image_count);
 
     for _ in 0..image_count {
-        semaphores.push(unsafe { device.create_semaphore(&semaphore_info, None)? });
+        match unsafe { device.create_semaphore(&semaphore_info, None) } {
+            Ok(semaphore) => semaphores.push(semaphore),
+            Err(err) => {
+                for &semaphore in &semaphores {
+                    unsafe {
+                        device.destroy_semaphore(semaphore, None);
+                    }
+                }
+                return Err(err.into());
+            }
+        }
     }
 
     Ok(semaphores)
@@ -581,6 +701,11 @@ struct RenderSpriteRange {
     descriptor_set: vk::DescriptorSet,
     first_vertex: u32,
     vertex_count: u32,
+}
+
+struct RenderSpriteBatch<'a> {
+    projection: [f32; 16],
+    ranges: &'a [RenderSpriteRange],
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -593,8 +718,7 @@ unsafe fn record_clear_commands(
     sprite_pipeline_layout: vk::PipelineLayout,
     sprite_pipeline: vk::Pipeline,
     sprite_vertex_buffer: Option<vk::Buffer>,
-    draw_ranges: &[RenderSpriteRange],
-    camera: crate::game::camera::Camera2D,
+    render_batches: &[RenderSpriteBatch<'_>],
     t: f32,
 ) -> anyhow::Result<()> {
     let begin_info = vk::CommandBufferBeginInfo::default();
@@ -661,35 +785,36 @@ unsafe fn record_clear_commands(
 
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, sprite_pipeline);
 
-        if let Some(sprite_vertex_buffer) = sprite_vertex_buffer
-            && !draw_ranges.is_empty()
-        {
-            let view_proj = camera
-                .view_projection(extent.width as f32, extent.height as f32)
-                .to_cols_array();
-            device.cmd_push_constants(
-                cmd,
-                sprite_pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
-                0,
-                bytemuck::bytes_of(&view_proj),
-            );
-
+        if let Some(sprite_vertex_buffer) = sprite_vertex_buffer {
             let vertex_buffers = [sprite_vertex_buffer];
             let offsets = [0_u64];
             device.cmd_bind_vertex_buffers(cmd, 0, &vertex_buffers, &offsets);
 
-            for range in draw_ranges {
-                let descriptor_sets = [range.descriptor_set];
-                device.cmd_bind_descriptor_sets(
+            for batch in render_batches {
+                if batch.ranges.is_empty() {
+                    continue;
+                }
+
+                device.cmd_push_constants(
                     cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
                     sprite_pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX,
                     0,
-                    &descriptor_sets,
-                    &[],
+                    bytemuck::bytes_of(&batch.projection),
                 );
-                device.cmd_draw(cmd, range.vertex_count, 1, range.first_vertex, 0);
+
+                for range in batch.ranges {
+                    let descriptor_sets = [range.descriptor_set];
+                    device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        sprite_pipeline_layout,
+                        0,
+                        &descriptor_sets,
+                        &[],
+                    );
+                    device.cmd_draw(cmd, range.vertex_count, 1, range.first_vertex, 0);
+                }
             }
         }
 
@@ -741,6 +866,7 @@ unsafe fn submit_clear_frame(
         .signal_semaphore_infos(std::slice::from_ref(&signal_info));
 
     unsafe {
+        device.reset_fences(std::slice::from_ref(&in_flight))?;
         device.queue_submit2(
             graphics_queue,
             std::slice::from_ref(&submit_info),
@@ -761,4 +887,35 @@ unsafe fn submit_clear_frame(
         let suboptimal = swapchain_loader.queue_present(present_queue, &present_info)?;
         Ok(suboptimal)
     }
+}
+
+fn asset_path(relative: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
+}
+
+fn sprite_vertex_buffer_capacity(required_bytes: vk::DeviceSize) -> vk::DeviceSize {
+    let mut capacity = INITIAL_SPRITE_VERTEX_BUFFER_BYTES;
+    while capacity < required_bytes {
+        capacity *= 2;
+    }
+    capacity
+}
+
+fn ui_projection(extent: vk::Extent2D) -> glam::Mat4 {
+    glam::Mat4::orthographic_rh(
+        0.0,
+        extent.width as f32,
+        extent.height as f32,
+        0.0,
+        -1.0,
+        1.0,
+    )
+}
+
+fn validation_layer_available(entry: &Entry) -> anyhow::Result<bool> {
+    let layers = unsafe { entry.enumerate_instance_layer_properties()? };
+    Ok(layers.iter().any(|layer| {
+        let name = unsafe { CStr::from_ptr(layer.layer_name.as_ptr()) };
+        name == debug::VALIDATION_LAYER
+    }))
 }

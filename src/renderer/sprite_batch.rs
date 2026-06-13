@@ -29,7 +29,11 @@ impl SpriteBatch {
 
     pub fn sorted_sprites(&self) -> Vec<SpriteDraw> {
         let mut sprites = self.sprites.clone();
-        sprites.sort_by_key(|sprite| sprite.texture.0);
+        // Layer is the primary ordering key so gameplay/UI code can keep
+        // transparent sprites predictable. Texture is only a secondary key to
+        // reduce descriptor binds inside a layer; use distinct layers when
+        // overlapping transparent sprites require strict front-to-back order.
+        sprites.sort_by_key(|sprite| (sprite.layer, sprite.texture.0));
         sprites
     }
 

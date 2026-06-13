@@ -74,12 +74,15 @@ impl Platform {
                 Event::Quit { .. } => self.should_quit = true,
                 Event::KeyDown {
                     keycode: Some(keycode),
+                    repeat,
                     ..
                 } => {
                     if keycode == Keycode::Escape {
                         self.should_quit = true;
                     }
-                    self.input.set_key(keycode, true);
+                    if !repeat {
+                        self.input.set_key(keycode, true);
+                    }
                 }
                 Event::KeyUp {
                     keycode: Some(keycode),

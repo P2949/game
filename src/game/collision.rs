@@ -26,8 +26,8 @@ pub fn move_with_collision(entity: &mut Entity, solids: &[Aabb], dt: f32) {
     entity.prev_pos = entity.pos;
 
     entity.pos.x += entity.vel.x * dt;
-    let aabb = Aabb::from_pos_size(entity.pos, entity.size);
     for solid in solids {
+        let aabb = Aabb::from_pos_size(entity.pos, entity.size);
         if aabb.overlaps(*solid) {
             if entity.vel.x > 0.0 {
                 entity.pos.x = solid.min.x - entity.size.x;
@@ -39,8 +39,8 @@ pub fn move_with_collision(entity: &mut Entity, solids: &[Aabb], dt: f32) {
     }
 
     entity.pos.y += entity.vel.y * dt;
-    let aabb = Aabb::from_pos_size(entity.pos, entity.size);
     for solid in solids {
+        let aabb = Aabb::from_pos_size(entity.pos, entity.size);
         if aabb.overlaps(*solid) {
             if entity.vel.y > 0.0 {
                 entity.pos.y = solid.min.y - entity.size.y;

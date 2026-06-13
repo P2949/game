@@ -3,6 +3,7 @@ mod game;
 mod platform;
 mod renderer;
 
+use platform::input::FrameActions;
 use platform::window::Platform;
 
 fn main() -> anyhow::Result<()> {
@@ -19,6 +20,7 @@ fn main() -> anyhow::Result<()> {
     };
     let mut timestep = platform::time::FixedTimestep::new(120.0);
     let mut game = game::state::Game::new();
+    let mut pending_actions = FrameActions::default();
     let start = std::time::Instant::now();
     let mut previous_frame = start;
 
@@ -29,17 +31,34 @@ fn main() -> anyhow::Result<()> {
         game.record_frame_time(frame_ms);
 
         platform.pump_events();
-        if platform.input.action_pressed
+        let frame_actions = platform.input.take_frame_actions();
+        if frame_actions.action_pressed
             && let Some(audio) = &audio
         {
             audio.play_blip();
         }
+        pending_actions.merge(frame_actions);
 
         timestep.begin_frame();
 
-        while timestep.step_ready() {
+        let mut steps = 0;
+        while timestep.step_ready() && steps < platform::time::FixedTimestep::MAX_STEPS_PER_FRAME {
             let dt = timestep.consume_step();
-            game.update(dt, &platform);
+            let actions = if steps == 0 {
+                std::mem::take(&mut pending_actions)
+            } else {
+                FrameActions::default()
+            };
+            game.update(dt, platform.input, actions);
+            steps += 1;
+        }
+
+        if timestep.step_ready() {
+            log::warn!(
+                "fixed timestep hit {} steps in one frame; discarding accumulated lag",
+                platform::time::FixedTimestep::MAX_STEPS_PER_FRAME
+            );
+            timestep.discard_lag();
         }
 
         if platform.framebuffer_resized {

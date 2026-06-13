@@ -121,6 +121,7 @@ pub fn draw_text(
     text: &str,
     mut pos: glam::Vec2,
     color: glam::Vec4,
+    layer: i16,
 ) {
     let start_x = pos.x;
 
@@ -140,6 +141,7 @@ pub fn draw_text(
 
             batch.push(SpriteDraw {
                 texture: atlas.texture,
+                layer,
                 position: glyph_pos,
                 size: glyph.size,
                 uv_min: glyph.uv_min,

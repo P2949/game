@@ -1,9 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=shaders");
+
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
 
     for entry in walkdir::WalkDir::new("shaders") {
         let entry = entry.expect("walk shader directory");
@@ -22,15 +24,13 @@ fn main() {
         }
 
         println!("cargo:rerun-if-changed={}", path.display());
-        compile_shader(path);
+        compile_shader(path, &out_dir);
     }
 }
 
-fn compile_shader(path: &Path) {
-    let output = path.with_extension(format!(
-        "{}.spv",
-        path.extension().unwrap().to_string_lossy()
-    ));
+fn compile_shader(path: &Path, out_dir: &Path) {
+    let file_name = path.file_name().expect("shader path has a file name");
+    let output = out_dir.join(format!("{}.spv", file_name.to_string_lossy()));
 
     let status = Command::new("glslc")
         .arg(path)

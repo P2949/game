@@ -117,7 +117,15 @@ impl Swapchain {
 
         let loader = ash::khr::swapchain::Device::new(instance, device);
         let handle = unsafe { loader.create_swapchain(&info, None)? };
-        let images = unsafe { loader.get_swapchain_images(handle)? };
+        let images = match unsafe { loader.get_swapchain_images(handle) } {
+            Ok(images) => images,
+            Err(err) => {
+                unsafe {
+                    loader.destroy_swapchain(handle, None);
+                }
+                return Err(err.into());
+            }
+        };
 
         log::info!(
             "created Vulkan swapchain: images={}, format={:?}, extent={}x{}",
@@ -169,7 +177,17 @@ impl SwapchainImageViews {
                 .format(format)
                 .subresource_range(subresource_range);
 
-            let view = unsafe { device.create_image_view(&info, None)? };
+            let view = match unsafe { device.create_image_view(&info, None) } {
+                Ok(view) => view,
+                Err(err) => {
+                    for &created_view in &views {
+                        unsafe {
+                            device.destroy_image_view(created_view, None);
+                        }
+                    }
+                    return Err(err.into());
+                }
+            };
             views.push(view);
         }
 

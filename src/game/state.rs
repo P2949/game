@@ -1,8 +1,8 @@
 use crate::game::camera::Camera2D;
 use crate::game::collision::{Aabb, move_with_collision};
 use crate::game::world::Entity;
-use crate::platform::window::Platform;
-use crate::renderer::{self, SpriteDraw};
+use crate::platform::input::{FrameActions, InputState};
+use crate::renderer::{self, DrawCommands, SpriteDraw};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
@@ -46,35 +46,35 @@ impl Game {
         self.frame_graph.push(ms);
     }
 
-    pub fn update(&mut self, dt: f32, platform: &Platform) {
+    pub fn update(&mut self, dt: f32, input: InputState, actions: FrameActions) {
         self.effect_time += dt;
         self.shake.update(dt);
 
         match self.mode {
             GameMode::MainMenu => {
-                if platform.input.action_pressed {
+                if actions.action_pressed {
                     self.reset_world();
                     self.mode = GameMode::Playing;
                 }
             }
             GameMode::Playing => {
-                if platform.input.debug_die_pressed {
+                if actions.debug_die_pressed {
                     self.mode = GameMode::Dead;
-                } else if platform.input.reset_pressed {
+                } else if actions.reset_pressed {
                     self.reset_world();
-                } else if platform.input.pause_pressed {
+                } else if actions.pause_pressed {
                     self.mode = GameMode::Paused;
                 } else {
-                    self.update_playing(dt, platform);
+                    self.update_playing(dt, input);
                 }
             }
             GameMode::Paused => {
-                if platform.input.pause_pressed {
+                if actions.pause_pressed {
                     self.mode = GameMode::Playing;
                 }
             }
             GameMode::Dead => {
-                if platform.input.action_pressed || platform.input.reset_pressed {
+                if actions.action_pressed || actions.reset_pressed {
                     self.reset_world();
                     self.mode = GameMode::Playing;
                 }
@@ -82,52 +82,17 @@ impl Game {
         }
     }
 
-    pub fn render(&self, alpha: f32, renderer: &mut crate::renderer::context::VulkanContext) {
+    pub fn render(&self, alpha: f32, renderer: &mut impl DrawCommands) {
         if self.mode != GameMode::MainMenu {
             self.render_world(alpha, renderer);
         }
 
-        match self.mode {
-            GameMode::MainMenu => {
-                renderer.draw_text(
-                    "SDL3 + Vulkan Demo",
-                    glam::vec2(80.0, 80.0),
-                    glam::vec4(1.0, 0.95, 0.75, 1.0),
-                );
-                renderer.draw_text(
-                    "Press Space / Enter to start",
-                    glam::vec2(80.0, 140.0),
-                    glam::Vec4::ONE,
-                );
-            }
-            GameMode::Paused => {
-                let pos = self.player.interpolated_pos(alpha) + glam::vec2(-96.0, -160.0);
-                renderer.draw_text("Paused", pos, glam::vec4(1.0, 0.95, 0.75, 1.0));
-                renderer.draw_text(
-                    "Press P to resume",
-                    pos + glam::vec2(0.0, 48.0),
-                    glam::Vec4::ONE,
-                );
-            }
-            GameMode::Dead => {
-                renderer.draw_text(
-                    "You died",
-                    self.player.pos + glam::vec2(-120.0, -160.0),
-                    glam::vec4(1.0, 0.35, 0.25, 1.0),
-                );
-                renderer.draw_text(
-                    "Press Space / Enter to restart",
-                    self.player.pos + glam::vec2(-120.0, -112.0),
-                    glam::Vec4::ONE,
-                );
-            }
-            GameMode::Playing => {}
-        }
+        self.render_ui(alpha, renderer);
     }
 
-    fn update_playing(&mut self, dt: f32, platform: &Platform) {
+    fn update_playing(&mut self, dt: f32, input: InputState) {
         let speed = 220.0;
-        let desired_vel = platform.input.movement() * speed;
+        let desired_vel = input.movement() * speed;
         self.player.vel = desired_vel;
         move_with_collision(&mut self.player, &self.solids, dt);
         if desired_vel.length_squared() > 0.0
@@ -136,7 +101,7 @@ impl Game {
             self.shake.add(0.18);
         }
 
-        self.update_camera_zoom(dt, platform.input);
+        self.update_camera_zoom(dt, input);
         self.camera.center =
             self.player.pos + self.player.size * 0.5 + self.shake.offset(self.effect_time);
 
@@ -147,11 +112,12 @@ impl Game {
         }
     }
 
-    fn render_world(&self, alpha: f32, renderer: &mut crate::renderer::context::VulkanContext) {
+    fn render_world(&self, alpha: f32, renderer: &mut impl DrawCommands) {
         for y in 0..10 {
             for x in 0..10 {
-                renderer.draw_sprite(SpriteDraw {
+                renderer.draw_world_sprite(SpriteDraw {
                     texture: renderer::TEST_TEXTURE_ID,
+                    layer: 0,
                     position: glam::vec2(x as f32 * 40.0, y as f32 * 40.0),
                     size: glam::vec2(32.0, 32.0),
                     uv_min: glam::Vec2::ZERO,
@@ -162,8 +128,9 @@ impl Game {
         }
 
         for solid in &self.solids {
-            renderer.draw_sprite(SpriteDraw {
+            renderer.draw_world_sprite(SpriteDraw {
                 texture: renderer::TEST_TEXTURE_ID,
+                layer: 5,
                 position: solid.min,
                 size: solid.max - solid.min,
                 uv_min: glam::Vec2::ZERO,
@@ -173,21 +140,72 @@ impl Game {
         }
 
         let player_pos = self.player.interpolated_pos(alpha);
-        renderer.draw_sprite(SpriteDraw {
+        renderer.draw_world_sprite(SpriteDraw {
             texture: self.player.sprite,
+            layer: 10,
             position: player_pos,
             size: self.player.size,
             uv_min: glam::Vec2::ZERO,
             uv_max: glam::Vec2::ONE,
             color: glam::vec4(1.0, 0.35, 0.25, 1.0),
         });
+    }
 
-        renderer.draw_text(
-            "FPS: 240\nSprites: 101\nP pause  R reset  K test death",
-            player_pos + glam::vec2(-404.0, -104.0),
-            glam::vec4(1.0, 0.95, 0.75, 1.0),
-        );
-        self.render_frame_graph(renderer, player_pos + glam::vec2(-404.0, -184.0));
+    fn render_ui(&self, _alpha: f32, renderer: &mut impl DrawCommands) {
+        match self.mode {
+            GameMode::MainMenu => {
+                renderer.draw_ui_text(
+                    "SDL3 + Vulkan Demo",
+                    glam::vec2(80.0, 80.0),
+                    glam::vec4(1.0, 0.95, 0.75, 1.0),
+                );
+                renderer.draw_ui_text(
+                    "Press Space / Enter to start",
+                    glam::vec2(80.0, 140.0),
+                    glam::Vec4::ONE,
+                );
+            }
+            GameMode::Paused => {
+                renderer.draw_ui_text(
+                    "Paused",
+                    glam::vec2(80.0, 80.0),
+                    glam::vec4(1.0, 0.95, 0.75, 1.0),
+                );
+                renderer.draw_ui_text(
+                    "Press P to resume",
+                    glam::vec2(80.0, 128.0),
+                    glam::Vec4::ONE,
+                );
+            }
+            GameMode::Dead => {
+                renderer.draw_ui_text(
+                    "You died",
+                    glam::vec2(80.0, 80.0),
+                    glam::vec4(1.0, 0.35, 0.25, 1.0),
+                );
+                renderer.draw_ui_text(
+                    "Press Space / Enter to restart",
+                    glam::vec2(80.0, 128.0),
+                    glam::Vec4::ONE,
+                );
+            }
+            GameMode::Playing => {}
+        }
+
+        if self.mode != GameMode::MainMenu {
+            let avg_ms = self.frame_graph.average_recent(120).unwrap_or(0.0);
+            let fps = if avg_ms > 0.001 { 1000.0 / avg_ms } else { 0.0 };
+            let hud = format!(
+                "FPS: {fps:.0}\nSprites: {}\nP pause  R reset  K test death",
+                self.world_sprite_count()
+            );
+            renderer.draw_ui_text(
+                &hud,
+                glam::vec2(16.0, 16.0),
+                glam::vec4(1.0, 0.95, 0.75, 1.0),
+            );
+            self.render_frame_graph(renderer, glam::vec2(16.0, 104.0));
+        }
     }
 
     fn reset_world(&mut self) {
@@ -200,7 +218,7 @@ impl Game {
         self.log_timer = 0.0;
     }
 
-    fn update_camera_zoom(&mut self, dt: f32, input: crate::platform::input::InputState) {
+    fn update_camera_zoom(&mut self, dt: f32, input: InputState) {
         let zoom_step = 1.0 + 2.0 * dt;
         if input.zoom_in {
             self.camera.zoom *= zoom_step;
@@ -211,11 +229,7 @@ impl Game {
         self.camera.zoom = self.camera.zoom.clamp(0.25, 6.0);
     }
 
-    fn render_frame_graph(
-        &self,
-        renderer: &mut crate::renderer::context::VulkanContext,
-        origin: glam::Vec2,
-    ) {
+    fn render_frame_graph(&self, renderer: &mut impl DrawCommands, origin: glam::Vec2) {
         for (i, ms) in self.frame_graph.recent(120).enumerate() {
             let height = (ms * 2.0).clamp(1.0, 72.0);
             let color = if ms <= 16.7 {
@@ -226,8 +240,9 @@ impl Game {
                 glam::vec4(1.0, 0.25, 0.25, 0.85)
             };
 
-            renderer.draw_sprite(SpriteDraw {
+            renderer.draw_ui_sprite(SpriteDraw {
                 texture: renderer::TEST_TEXTURE_ID,
+                layer: 0,
                 position: origin + glam::vec2(i as f32 * 2.0, 72.0 - height),
                 size: glam::vec2(1.0, height),
                 uv_min: glam::Vec2::ZERO,
@@ -235,6 +250,10 @@ impl Game {
                 color,
             });
         }
+    }
+
+    fn world_sprite_count(&self) -> usize {
+        10 * 10 + self.solids.len() + 1
     }
 }
 
@@ -285,6 +304,17 @@ impl FrameGraph {
 
         (0..len).map(move |i| self.samples_ms[(start + i) % self.samples_ms.len()])
     }
+
+    pub fn average_recent(&self, max: usize) -> Option<f32> {
+        let mut sum = 0.0;
+        let mut count = 0;
+        for ms in self.recent(max) {
+            sum += ms;
+            count += 1;
+        }
+
+        (count > 0).then(|| sum / count as f32)
+    }
 }
 
 impl Default for FrameGraph {
@@ -304,7 +334,6 @@ fn new_world() -> (Camera2D, Entity, Vec<Aabb>) {
         vel: glam::Vec2::ZERO,
         size: glam::vec2(48.0, 48.0),
         sprite: renderer::TEST_TEXTURE_ID,
-        solid: false,
     };
     let camera = Camera2D {
         center: player.pos + player.size * 0.5,
