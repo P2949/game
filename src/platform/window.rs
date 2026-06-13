@@ -1,0 +1,90 @@
+use anyhow::Context;
+use sdl3::event::{Event, WindowEvent};
+use sdl3::keyboard::Keycode;
+use sdl3::video::Window;
+
+pub struct Platform {
+    pub sdl: sdl3::Sdl,
+    pub window: Window,
+    pub event_pump: sdl3::EventPump,
+    pub should_quit: bool,
+    pub resized: Option<(u32, u32)>,
+}
+
+impl Platform {
+    pub fn new(title: &str, width: u32, height: u32) -> anyhow::Result<Self> {
+        let sdl = sdl3::init()
+            .map_err(anyhow::Error::msg)
+            .context("failed to initialize SDL3")?;
+        let video = sdl
+            .video()
+            .map_err(anyhow::Error::msg)
+            .context("failed to initialize SDL3 video subsystem")?;
+
+        let mut window = video
+            .window(title, width, height)
+            .vulkan()
+            .resizable()
+            .position_centered()
+            .build()
+            .map_err(anyhow::Error::msg)
+            .context("failed to create SDL3 Vulkan window")?;
+
+        if !window.show() {
+            anyhow::bail!("failed to show SDL3 window: {}", sdl3::get_error());
+        }
+
+        if !window.sync() {
+            log::warn!("timed out waiting for the SDL3 window to become visible");
+        }
+
+        log::info!(
+            "created SDL3 Vulkan window: logical={}x{}, pixels={:?}",
+            width,
+            height,
+            window.size_in_pixels()
+        );
+
+        let event_pump = sdl
+            .event_pump()
+            .map_err(anyhow::Error::msg)
+            .context("failed to create SDL3 event pump")?;
+
+        Ok(Self {
+            sdl,
+            window,
+            event_pump,
+            should_quit: false,
+            resized: None,
+        })
+    }
+
+    pub fn pump_events(&mut self) {
+        self.resized = None;
+
+        for event in self.event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. } => self.should_quit = true,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => {
+                    self.should_quit = true;
+                }
+                Event::Window { win_event, .. } => match win_event {
+                    WindowEvent::CloseRequested => self.should_quit = true,
+                    WindowEvent::Resized(width, height)
+                    | WindowEvent::PixelSizeChanged(width, height) => {
+                        if width > 0 && height > 0 {
+                            self.resized = Some((width as u32, height as u32));
+                        }
+                    }
+                    _ => {
+                        log::debug!("window event: {win_event:?}");
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+}
