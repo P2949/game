@@ -4,10 +4,13 @@ use std::ffi::{CStr, CString};
 use crate::renderer::debug;
 
 pub struct VulkanContext {
+    // Keep the Vulkan loader alive for objects created from it.
+    #[allow(dead_code)]
     pub entry: Entry,
     pub instance: ash::Instance,
     pub debug_utils: Option<ash::ext::debug_utils::Instance>,
     pub debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+    pub surface: crate::renderer::surface::Surface,
 }
 
 impl VulkanContext {
@@ -80,11 +83,14 @@ impl VulkanContext {
             (None, None)
         };
 
+        let surface = crate::renderer::surface::Surface::new(&entry, &instance, window)?;
+
         Ok(Self {
             entry,
             instance,
             debug_utils,
             debug_messenger,
+            surface,
         })
     }
 }
@@ -92,6 +98,8 @@ impl VulkanContext {
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
+            self.surface.destroy();
+
             if let (Some(debug_utils), Some(messenger)) = (&self.debug_utils, self.debug_messenger)
             {
                 debug_utils.destroy_debug_utils_messenger(messenger, None);

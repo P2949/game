@@ -4,6 +4,8 @@ use sdl3::keyboard::Keycode;
 use sdl3::video::Window;
 
 pub struct Platform {
+    // Keep the SDL context alive for the lifetime of the window and event pump.
+    #[allow(dead_code)]
     pub sdl: sdl3::Sdl,
     pub window: Window,
     pub event_pump: sdl3::EventPump,

@@ -10,10 +10,12 @@ pub unsafe extern "system" fn vulkan_debug_callback(
     callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
     _user_data: *mut c_void,
 ) -> vk::Bool32 {
-    let message = if callback_data.is_null() {
-        c"<null validation message>"
-    } else {
-        CStr::from_ptr((*callback_data).p_message as *const c_char)
+    let message = unsafe {
+        if callback_data.is_null() || (*callback_data).p_message.is_null() {
+            c"<null validation message>"
+        } else {
+            CStr::from_ptr((*callback_data).p_message as *const c_char)
+        }
     };
 
     if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::WARNING {
