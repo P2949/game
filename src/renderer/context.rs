@@ -1,5 +1,4 @@
 use ash::{Entry, vk};
-use gpu_allocator::MemoryLocation;
 use std::ffi::{CStr, CString};
 
 use crate::renderer::vertex::Vertex2D;
@@ -20,6 +19,8 @@ pub struct VulkanContext {
     pub logical_device: Option<device::LogicalDevice>,
     pub allocator: Option<gpu_allocator::vulkan::Allocator>,
     pub triangle_vertex_buffer: Option<buffer::Buffer>,
+    pub upload_command_pool: vk::CommandPool,
+    pub upload_fence: vk::Fence,
     pub swapchain: swapchain::Swapchain,
     pub swapchain_image_views: swapchain::SwapchainImageViews,
     pub graphics_pipeline: pipeline::GraphicsPipeline,
@@ -106,13 +107,23 @@ impl VulkanContext {
             selected_device.physical_device,
             selected_device.queue_families,
         )?;
+        let upload_command_pool = create_upload_command_pool(
+            &logical_device.device,
+            selected_device.queue_families.graphics,
+        )?;
+        let upload_fence = create_upload_fence(&logical_device.device)?;
         let mut allocator = buffer::create_allocator(
             instance.clone(),
             logical_device.device.clone(),
             selected_device.physical_device,
         )?;
-        let triangle_vertex_buffer =
-            create_triangle_vertex_buffer(&logical_device.device, &mut allocator)?;
+        let triangle_vertex_buffer = create_triangle_vertex_buffer(
+            &logical_device.device,
+            &mut allocator,
+            logical_device.graphics_queue,
+            upload_command_pool,
+            upload_fence,
+        )?;
         let swapchain = swapchain::Swapchain::new(
             &instance,
             &logical_device.device,
@@ -160,6 +171,8 @@ impl VulkanContext {
             logical_device: Some(logical_device),
             allocator: Some(allocator),
             triangle_vertex_buffer: Some(triangle_vertex_buffer),
+            upload_command_pool,
+            upload_fence,
             swapchain,
             swapchain_image_views,
             graphics_pipeline,
@@ -242,6 +255,11 @@ impl Drop for VulkanContext {
                     vertex_buffer.destroy(&logical_device.device, allocator);
                 }
 
+                logical_device.device.destroy_fence(self.upload_fence, None);
+                logical_device
+                    .device
+                    .destroy_command_pool(self.upload_command_pool, None);
+
                 for &semaphore in &self.image_render_finished {
                     logical_device.device.destroy_semaphore(semaphore, None);
                 }
@@ -275,9 +293,32 @@ impl Drop for VulkanContext {
     }
 }
 
+fn create_upload_command_pool(
+    device: &ash::Device,
+    queue_family: u32,
+) -> anyhow::Result<vk::CommandPool> {
+    let pool_info = vk::CommandPoolCreateInfo::default()
+        .queue_family_index(queue_family)
+        .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+
+    let command_pool = unsafe { device.create_command_pool(&pool_info, None)? };
+    log::info!("created upload command pool");
+    Ok(command_pool)
+}
+
+fn create_upload_fence(device: &ash::Device) -> anyhow::Result<vk::Fence> {
+    let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+    let fence = unsafe { device.create_fence(&fence_info, None)? };
+    log::info!("created upload fence");
+    Ok(fence)
+}
+
 fn create_triangle_vertex_buffer(
     device: &ash::Device,
     allocator: &mut gpu_allocator::vulkan::Allocator,
+    queue: vk::Queue,
+    upload_pool: vk::CommandPool,
+    upload_fence: vk::Fence,
 ) -> anyhow::Result<buffer::Buffer> {
     let vertices = [
         Vertex2D {
@@ -294,30 +335,16 @@ fn create_triangle_vertex_buffer(
         },
     ];
 
-    let size = std::mem::size_of_val(&vertices) as vk::DeviceSize;
-    let mut vertex_buffer = buffer::Buffer::new(
+    buffer::upload_buffer(
         device,
         allocator,
-        size,
+        queue,
+        upload_pool,
+        upload_fence,
+        &vertices,
         vk::BufferUsageFlags::VERTEX_BUFFER,
-        MemoryLocation::CpuToGpu,
         "triangle vertices",
-    )?;
-
-    let allocation = vertex_buffer.allocation.as_mut().unwrap();
-    let mapped = allocation
-        .mapped_ptr()
-        .expect("CpuToGpu allocation should be mapped");
-
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            vertices.as_ptr() as *const u8,
-            mapped.as_ptr() as *mut u8,
-            size as usize,
-        );
-    }
-
-    Ok(vertex_buffer)
+    )
 }
 
 unsafe fn record_clear_commands(
