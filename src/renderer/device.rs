@@ -168,3 +168,65 @@ pub fn select_physical_device(
         queue_families,
     })
 }
+
+
+pub struct LogicalDevice {
+    pub device: ash::Device,
+    pub graphics_queue: vk::Queue,
+    pub present_queue: vk::Queue,
+    pub queues: QueueFamilies,
+}
+
+impl LogicalDevice {
+    pub fn new(
+        instance: &ash::Instance,
+        physical_device: vk::PhysicalDevice,
+        queues: QueueFamilies,
+    ) -> anyhow::Result<Self> {
+        let queue_priority = [1.0_f32];
+
+        let queue_infos: Vec<_> = queues
+            .unique_indices()
+            .into_iter()
+            .map(|queue_family_index| {
+                vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(queue_family_index)
+                    .queue_priorities(&queue_priority)
+            })
+            .collect();
+
+        let extension_ptrs: Vec<*const i8> = REQUIRED_DEVICE_EXTENSIONS
+            .iter()
+            .map(|name| name.as_ptr())
+            .collect();
+
+        let mut features13 = vk::PhysicalDeviceVulkan13Features::default()
+            .dynamic_rendering(true)
+            .synchronization2(true);
+
+        let device_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queue_infos)
+            .enabled_extension_names(&extension_ptrs)
+            .push_next(&mut features13);
+
+        let device = unsafe { instance.create_device(physical_device, &device_info, None)? };
+
+        let graphics_queue = unsafe { device.get_device_queue(queues.graphics, 0) };
+        let present_queue = unsafe { device.get_device_queue(queues.present, 0) };
+
+        Ok(Self {
+            device,
+            graphics_queue,
+            present_queue,
+            queues,
+        })
+    }
+}
+
+impl Drop for LogicalDevice {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_device(None);
+        }
+    }
+}
