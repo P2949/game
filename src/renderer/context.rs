@@ -257,6 +257,11 @@ impl VulkanContext {
         self.needs_swapchain_recreate = true;
     }
 
+    fn clear_sprite_batches(&mut self) {
+        self.world_sprite_batch.clear();
+        self.ui_sprite_batch.clear();
+    }
+
     fn texture_descriptor(&self, texture: TextureId) -> anyhow::Result<vk::DescriptorSet> {
         if texture == TEST_TEXTURE_ID {
             return Ok(self.texture_descriptor_set);
@@ -423,12 +428,12 @@ impl VulkanContext {
         &mut self,
         window: &sdl3::video::Window,
         camera: crate::game::camera::Camera2D,
-        t: f32,
     ) -> anyhow::Result<()> {
         if self.needs_swapchain_recreate {
             self.recreate_swapchain(window)?;
 
             if self.needs_swapchain_recreate {
+                self.clear_sprite_batches();
                 return Ok(());
             }
         }
@@ -450,8 +455,7 @@ impl VulkanContext {
         let ui_vertex_offset = vertices.len() as u32;
         let (ui_vertices, ui_batch_ranges) = self.ui_sprite_batch.build_vertices();
         vertices.extend_from_slice(&ui_vertices);
-        self.world_sprite_batch.clear();
-        self.ui_sprite_batch.clear();
+        self.clear_sprite_batches();
 
         let world_draw_ranges = self.draw_ranges_for(world_batch_ranges, 0)?;
         let ui_draw_ranges = self.draw_ranges_for(ui_batch_ranges, ui_vertex_offset)?;
@@ -514,7 +518,6 @@ impl VulkanContext {
                 self.sprite_pipeline.pipeline,
                 sprite_vertex_buffer,
                 &render_batches,
-                t,
             )?;
 
             let present_suboptimal = match submit_clear_frame(
@@ -719,7 +722,6 @@ unsafe fn record_clear_commands(
     sprite_pipeline: vk::Pipeline,
     sprite_vertex_buffer: Option<vk::Buffer>,
     render_batches: &[RenderSpriteBatch<'_>],
-    t: f32,
 ) -> anyhow::Result<()> {
     let begin_info = vk::CommandBufferBeginInfo::default();
     unsafe {
@@ -742,7 +744,7 @@ unsafe fn record_clear_commands(
 
     let clear = vk::ClearValue {
         color: vk::ClearColorValue {
-            float32: [0.02, 0.02, 0.04 + 0.04 * t.sin().abs(), 1.0],
+            float32: [0.02, 0.02, 0.04, 1.0],
         },
     };
 

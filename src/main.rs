@@ -21,8 +21,7 @@ fn main() -> anyhow::Result<()> {
     let mut timestep = platform::time::FixedTimestep::new(120.0);
     let mut game = game::state::Game::new();
     let mut pending_actions = FrameActions::default();
-    let start = std::time::Instant::now();
-    let mut previous_frame = start;
+    let mut previous_frame = std::time::Instant::now();
 
     while !platform.should_quit {
         let now = std::time::Instant::now();
@@ -74,11 +73,7 @@ fn main() -> anyhow::Result<()> {
         let alpha = timestep.alpha();
         game.render(alpha, &mut vk);
 
-        vk.render(
-            &platform.window,
-            game.camera(),
-            start.elapsed().as_secs_f32(),
-        )?;
+        vk.render(&platform.window, game.camera())?;
     }
 
     Ok(())

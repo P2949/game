@@ -145,6 +145,9 @@ impl Buffer {
             .mapped_ptr()
             .ok_or_else(|| anyhow::anyhow!("buffer allocation is not CPU mapped"))?;
 
+        // gpu-allocator's CpuToGpu allocations are expected to be host-visible
+        // and mapped for this desktop renderer path. If this is ported to
+        // non-coherent memory, writes need an explicit flush before GPU use.
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.as_ptr() as *mut u8, bytes.len());
         }

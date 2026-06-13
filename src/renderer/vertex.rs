@@ -23,20 +23,43 @@ impl SpriteVertex {
                 binding: 0,
                 location: 0,
                 format: vk::Format::R32G32_SFLOAT,
-                offset: 0,
+                offset: std::mem::offset_of!(SpriteVertex, pos) as u32,
             },
             vk::VertexInputAttributeDescription {
                 binding: 0,
                 location: 1,
                 format: vk::Format::R32G32_SFLOAT,
-                offset: std::mem::size_of::<[f32; 2]>() as u32,
+                offset: std::mem::offset_of!(SpriteVertex, uv) as u32,
             },
             vk::VertexInputAttributeDescription {
                 binding: 0,
                 location: 2,
                 format: vk::Format::R32G32B32A32_SFLOAT,
-                offset: std::mem::size_of::<[f32; 4]>() as u32,
+                offset: std::mem::offset_of!(SpriteVertex, color) as u32,
             },
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SpriteVertex;
+
+    #[test]
+    fn sprite_vertex_attribute_offsets_match_struct_layout() {
+        let attributes = SpriteVertex::attribute_descriptions();
+
+        assert_eq!(
+            attributes[0].offset,
+            std::mem::offset_of!(SpriteVertex, pos) as u32
+        );
+        assert_eq!(
+            attributes[1].offset,
+            std::mem::offset_of!(SpriteVertex, uv) as u32
+        );
+        assert_eq!(
+            attributes[2].offset,
+            std::mem::offset_of!(SpriteVertex, color) as u32
+        );
     }
 }

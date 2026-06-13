@@ -22,6 +22,8 @@ impl Aabb {
     }
 }
 
+// Simple discrete AABB movement for slow actor-style motion. Fast objects can
+// tunnel through thin solids; use swept AABB/substeps if projectiles are added.
 pub fn move_with_collision(entity: &mut Entity, solids: &[Aabb], dt: f32) {
     entity.prev_pos = entity.pos;
 

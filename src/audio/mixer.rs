@@ -4,6 +4,8 @@ use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStrea
 
 pub type SharedMixer = Arc<Mutex<Mixer>>;
 
+const AUDIO_SCRATCH_SAMPLES: usize = 4096;
+
 pub struct Sound {
     pub samples: Vec<f32>,
     #[allow(dead_code)]
@@ -41,7 +43,11 @@ impl Mixer {
     }
 
     pub fn play(&mut self, sound_id: usize, volume: f32, looping: bool) {
-        if sound_id >= self.sounds.len() {
+        let Some(sound) = self.sounds.get(sound_id) else {
+            return;
+        };
+
+        if sound.samples.is_empty() {
             return;
         }
 
@@ -119,7 +125,7 @@ impl AudioSystem {
                 &spec,
                 MixerCallback {
                     mixer: Arc::clone(&mixer),
-                    scratch: Vec::new(),
+                    scratch: vec![0.0; AUDIO_SCRATCH_SAMPLES],
                 },
             )
             .map_err(anyhow::Error::msg)?;
@@ -148,16 +154,29 @@ struct MixerCallback {
 
 impl AudioCallback<f32> for MixerCallback {
     fn callback(&mut self, stream: &mut AudioStream, requested: i32) {
-        let len = requested.max(0) as usize;
-        self.scratch.resize(len, 0.0);
+        let mut remaining = requested.max(0) as usize;
 
-        if let Ok(mut mixer) = self.mixer.lock() {
-            mixer.mix_into(&mut self.scratch);
+        if let Ok(mut mixer) = self.mixer.try_lock() {
+            while remaining > 0 {
+                let chunk_len = remaining.min(self.scratch.len());
+                let out = &mut self.scratch[..chunk_len];
+
+                mixer.mix_into(out);
+                let _ = stream.put_data_f32(out);
+
+                remaining -= chunk_len;
+            }
         } else {
-            self.scratch.fill(0.0);
-        }
+            while remaining > 0 {
+                let chunk_len = remaining.min(self.scratch.len());
+                let out = &mut self.scratch[..chunk_len];
 
-        let _ = stream.put_data_f32(&self.scratch);
+                out.fill(0.0);
+                let _ = stream.put_data_f32(out);
+
+                remaining -= chunk_len;
+            }
+        }
     }
 }
 
@@ -217,5 +236,28 @@ mod tests {
         mixer.mix_into(&mut out);
 
         assert_eq!(out[0], 1.0);
+    }
+
+    #[test]
+    fn empty_sound_is_not_played() {
+        let mut mixer = Mixer::new();
+        let sound_id = mixer.add_sound(Sound {
+            samples: Vec::new(),
+            channels: 1,
+            sample_rate: 48_000,
+        });
+
+        mixer.play(sound_id, 1.0, true);
+
+        assert!(mixer.voices.is_empty());
+    }
+
+    #[test]
+    fn invalid_sound_id_is_ignored() {
+        let mut mixer = Mixer::new();
+
+        mixer.play(123, 1.0, false);
+
+        assert!(mixer.voices.is_empty());
     }
 }
