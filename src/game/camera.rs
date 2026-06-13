@@ -11,8 +11,8 @@ impl Camera2D {
 
         let left = self.center.x - half_w;
         let right = self.center.x + half_w;
-        let bottom = self.center.y + half_h;
-        let top = self.center.y - half_h;
+        let bottom = self.center.y - half_h;
+        let top = self.center.y + half_h;
 
         glam::Mat4::orthographic_rh(left, right, bottom, top, -1.0, 1.0)
     }

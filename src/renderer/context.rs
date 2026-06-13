@@ -907,8 +907,8 @@ fn ui_projection(extent: vk::Extent2D) -> glam::Mat4 {
     glam::Mat4::orthographic_rh(
         0.0,
         extent.width as f32,
-        extent.height as f32,
         0.0,
+        extent.height as f32,
         -1.0,
         1.0,
     )
