@@ -176,6 +176,10 @@ impl VulkanContext {
 
         let device = &logical_device.device;
         let frame = &self.frames[self.current_frame];
+        let triangle_vertex_buffer = self
+            .triangle_vertex_buffer
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("triangle vertex buffer has been destroyed"))?;
 
         unsafe {
             device.wait_for_fences(std::slice::from_ref(&frame.in_flight), true, u64::MAX)?;
@@ -203,6 +207,8 @@ impl VulkanContext {
                 self.swapchain.images[image_index_usize],
                 self.swapchain_image_views.views[image_index_usize],
                 self.swapchain.extent,
+                self.graphics_pipeline.pipeline,
+                triangle_vertex_buffer.handle,
                 t,
             )?;
 
@@ -320,6 +326,8 @@ unsafe fn record_clear_commands(
     image: vk::Image,
     image_view: vk::ImageView,
     extent: vk::Extent2D,
+    triangle_pipeline: vk::Pipeline,
+    triangle_vertex_buffer: vk::Buffer,
     t: f32,
 ) -> anyhow::Result<()> {
     let begin_info = vk::CommandBufferBeginInfo::default();
@@ -366,6 +374,32 @@ unsafe fn record_clear_commands(
 
     unsafe {
         device.cmd_begin_rendering(cmd, &rendering_info);
+
+        let viewport = vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        };
+
+        device.cmd_set_viewport(cmd, 0, std::slice::from_ref(&viewport));
+        device.cmd_set_scissor(cmd, 0, std::slice::from_ref(&scissor));
+
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, triangle_pipeline);
+
+        let vertex_buffers = [triangle_vertex_buffer];
+        let offsets = [0_u64];
+        device.cmd_bind_vertex_buffers(cmd, 0, &vertex_buffers, &offsets);
+
+        device.cmd_draw(cmd, 3, 1, 0, 0);
+
         device.cmd_end_rendering(cmd);
 
         crate::renderer::texture::transition_image(
