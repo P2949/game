@@ -10,12 +10,25 @@ fn main() -> anyhow::Result<()> {
 
     let mut platform = Platform::new("SDL3 + ash demo", 1280, 720)?;
     let mut vk = renderer::context::VulkanContext::new(&platform.window)?;
+    let audio = match audio::AudioSystem::new(&platform.sdl) {
+        Ok(audio) => Some(audio),
+        Err(err) => {
+            log::warn!("audio disabled: {err}");
+            None
+        }
+    };
     let mut timestep = platform::time::FixedTimestep::new(120.0);
     let mut game = game::state::Game::new();
     let start = std::time::Instant::now();
 
     while !platform.should_quit {
         platform.pump_events();
+        if platform.input.action_pressed
+            && let Some(audio) = &audio
+        {
+            audio.play_blip();
+        }
+
         timestep.begin_frame();
 
         while timestep.step_ready() {
