@@ -66,7 +66,6 @@ pub struct Swapchain {
     pub loader: ash::khr::swapchain::Device,
     pub handle: vk::SwapchainKHR,
     pub format: vk::Format,
-    #[allow(dead_code)]
     pub extent: vk::Extent2D,
     pub images: Vec<vk::Image>,
 }

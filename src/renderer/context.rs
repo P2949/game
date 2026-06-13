@@ -18,8 +18,8 @@ pub struct VulkanContext {
     pub logical_device: Option<device::LogicalDevice>,
     pub swapchain: swapchain::Swapchain,
     pub swapchain_image_views: swapchain::SwapchainImageViews,
+    pub image_render_finished: Vec<vk::Semaphore>,
     pub frames: Vec<frame::FrameData>,
-    #[allow(dead_code)]
     pub current_frame: usize,
 }
 
@@ -116,6 +116,16 @@ impl VulkanContext {
             &swapchain.images,
             swapchain.format,
         )?;
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        let mut image_render_finished = Vec::with_capacity(swapchain.images.len());
+        for _ in &swapchain.images {
+            image_render_finished.push(unsafe {
+                logical_device
+                    .device
+                    .create_semaphore(&semaphore_info, None)?
+            });
+        }
+
         let frames: Vec<_> = (0..frame::MAX_FRAMES_IN_FLIGHT)
             .map(|_| {
                 frame::FrameData::new(
@@ -136,9 +146,64 @@ impl VulkanContext {
             logical_device: Some(logical_device),
             swapchain,
             swapchain_image_views,
+            image_render_finished,
             frames,
             current_frame: 0,
         })
+    }
+
+    pub fn render(&mut self, t: f32) -> anyhow::Result<()> {
+        let Some(logical_device) = self.logical_device.as_ref() else {
+            anyhow::bail!("cannot render after logical device has been destroyed");
+        };
+
+        let device = &logical_device.device;
+        let frame = &self.frames[self.current_frame];
+
+        unsafe {
+            device.wait_for_fences(std::slice::from_ref(&frame.in_flight), true, u64::MAX)?;
+
+            let (image_index, suboptimal) = self.swapchain.loader.acquire_next_image(
+                self.swapchain.handle,
+                u64::MAX,
+                frame.image_available,
+                vk::Fence::null(),
+            )?;
+
+            if suboptimal {
+                log::debug!("swapchain is suboptimal; resize handling arrives later");
+            }
+
+            device.reset_fences(std::slice::from_ref(&frame.in_flight))?;
+            device
+                .reset_command_buffer(frame.command_buffer, vk::CommandBufferResetFlags::empty())?;
+
+            let image_index_usize = image_index as usize;
+            let render_finished = self.image_render_finished[image_index_usize];
+            record_clear_commands(
+                device,
+                frame.command_buffer,
+                self.swapchain.images[image_index_usize],
+                self.swapchain_image_views.views[image_index_usize],
+                self.swapchain.extent,
+                t,
+            )?;
+
+            submit_clear_frame(
+                device,
+                logical_device.graphics_queue,
+                logical_device.present_queue,
+                &self.swapchain.loader,
+                self.swapchain.handle,
+                frame,
+                render_finished,
+                image_index,
+            )?;
+        }
+
+        self.current_frame = (self.current_frame + 1) % frame::MAX_FRAMES_IN_FLIGHT;
+
+        Ok(())
     }
 }
 
@@ -147,6 +212,10 @@ impl Drop for VulkanContext {
         unsafe {
             if let Some(logical_device) = self.logical_device.as_ref() {
                 let _ = logical_device.device.device_wait_idle();
+
+                for &semaphore in &self.image_render_finished {
+                    logical_device.device.destroy_semaphore(semaphore, None);
+                }
 
                 for frame in &self.frames {
                     frame.destroy(&logical_device.device);
@@ -171,7 +240,6 @@ impl Drop for VulkanContext {
         }
     }
 }
-#[allow(dead_code)]
 unsafe fn record_clear_commands(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
@@ -192,7 +260,7 @@ unsafe fn record_clear_commands(
             image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            vk::PipelineStageFlags2::TOP_OF_PIPE,
+            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             vk::AccessFlags2::empty(),
             vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
@@ -240,5 +308,54 @@ unsafe fn record_clear_commands(
 
         device.end_command_buffer(cmd)?;
     }
+    Ok(())
+}
+
+unsafe fn submit_clear_frame(
+    device: &ash::Device,
+    graphics_queue: vk::Queue,
+    present_queue: vk::Queue,
+    swapchain_loader: &ash::khr::swapchain::Device,
+    swapchain: vk::SwapchainKHR,
+    frame: &crate::renderer::frame::FrameData,
+    render_finished: vk::Semaphore,
+    image_index: u32,
+) -> anyhow::Result<()> {
+    let wait_info = vk::SemaphoreSubmitInfo::default()
+        .semaphore(frame.image_available)
+        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
+
+    let cmd_info = vk::CommandBufferSubmitInfo::default().command_buffer(frame.command_buffer);
+
+    let signal_info = vk::SemaphoreSubmitInfo::default()
+        .semaphore(render_finished)
+        .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS);
+
+    let submit_info = vk::SubmitInfo2::default()
+        .wait_semaphore_infos(std::slice::from_ref(&wait_info))
+        .command_buffer_infos(std::slice::from_ref(&cmd_info))
+        .signal_semaphore_infos(std::slice::from_ref(&signal_info));
+
+    unsafe {
+        device.queue_submit2(
+            graphics_queue,
+            std::slice::from_ref(&submit_info),
+            frame.in_flight,
+        )?;
+    }
+
+    let wait_semaphores = [render_finished];
+    let swapchains = [swapchain];
+    let image_indices = [image_index];
+
+    let present_info = vk::PresentInfoKHR::default()
+        .wait_semaphores(&wait_semaphores)
+        .swapchains(&swapchains)
+        .image_indices(&image_indices);
+
+    unsafe {
+        swapchain_loader.queue_present(present_queue, &present_info)?;
+    }
+
     Ok(())
 }

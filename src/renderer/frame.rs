@@ -4,7 +4,6 @@ pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 pub struct FrameData {
     pub command_pool: vk::CommandPool,
-    #[allow(dead_code)]
     pub command_buffer: vk::CommandBuffer,
     pub image_available: vk::Semaphore,
     pub render_finished: vk::Semaphore,

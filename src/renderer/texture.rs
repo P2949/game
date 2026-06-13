@@ -1,6 +1,5 @@
 use ash::vk;
 
-#[allow(dead_code)]
 pub unsafe fn transition_image(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
