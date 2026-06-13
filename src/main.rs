@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let mut platform = Platform::new("SDL3 + ash demo", 1280, 720)?;
-
+    let _vk = renderer::context::VulkanContext::new(&platform.window)?;
     while !platform.should_quit {
         platform.pump_events();
         std::thread::sleep(std::time::Duration::from_millis(8));
