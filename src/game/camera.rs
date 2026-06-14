@@ -19,6 +19,17 @@ fn sanitize_zoom(zoom: f32) -> f32 {
     }
 }
 
+/// Maps a viewport dimension to a finite, strictly-positive value. A non-finite
+/// (NaN/inf) or non-positive width/height would otherwise produce a degenerate or
+/// non-finite projection; fall back to 1.0 so the matrix stays well-defined.
+fn sanitize_dimension(value: f32) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        1.0
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Camera2D {
     pub center: glam::Vec2,
@@ -42,8 +53,11 @@ impl Camera2D {
 
     pub fn view_projection(&self, width: f32, height: f32) -> glam::Mat4 {
         // Sanitize at the point of use as well, so even a directly-mutated public
-        // `zoom` field can never produce a divide-by-zero or non-finite matrix.
+        // `zoom` field or a bogus viewport size can never produce a
+        // divide-by-zero, degenerate, or non-finite matrix.
         let zoom = sanitize_zoom(self.zoom);
+        let width = sanitize_dimension(width);
+        let height = sanitize_dimension(height);
         let half_w = width * 0.5 / zoom;
         let half_h = height * 0.5 / zoom;
 
@@ -103,5 +117,22 @@ mod tests {
         camera.zoom = 0.0;
         let m = camera.view_projection(1280.0, 720.0);
         assert!(m.to_cols_array().iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn view_projection_is_finite_for_non_finite_or_zero_dimensions() {
+        let camera = Camera2D::new(glam::Vec2::ZERO, 1.0);
+        for (w, h) in [
+            (0.0, 0.0),
+            (f32::NAN, 720.0),
+            (1280.0, f32::INFINITY),
+            (-1280.0, -720.0),
+        ] {
+            let m = camera.view_projection(w, h);
+            assert!(
+                m.to_cols_array().iter().all(|v| v.is_finite()),
+                "non-finite matrix for size {w}x{h}"
+            );
+        }
     }
 }

@@ -17,13 +17,21 @@ pub mod texture;
 pub mod texture_registry;
 pub mod vertex;
 
+/// Handle to a texture registered in the renderer's `TextureRegistry`.
+///
+/// Ids are assigned sequentially as textures are registered and resolved back to
+/// a descriptor set at draw time; an unknown id is reported as an error rather
+/// than panicking, so a stale id cannot cause unsafe access. The inner value is
+/// `pub` only for the built-in constants below; richer safety (opaque,
+/// registry-minted ids with generation counters) is deferred until the engine
+/// grows dynamic texture lifetimes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
 
 // Built-in texture handles. These are the first two registrations in the
 // renderer's `TextureRegistry`, so the ids are stable and can be referenced as
-// constants from gameplay code. Registration order in `VulkanContext::new` must
-// match these values (debug-asserted there).
+// constants from gameplay code. Registration order in `assets::load_builtin_textures`
+// must match these values (asserted there with `assert_eq!`).
 pub const TEST_TEXTURE_ID: TextureId = TextureId(0);
 pub const FONT_TEXTURE_ID: TextureId = TextureId(1);
 

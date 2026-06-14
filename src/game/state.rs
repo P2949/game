@@ -45,6 +45,10 @@ impl Game {
     }
 
     pub fn record_frame_time(&mut self, ms: f32) {
+        // Keep the debug frame graph well-defined: a NaN/inf would poison every
+        // average computed from it, and a negative delta is meaningless. Clamp to
+        // a non-negative finite value before recording.
+        let ms = if ms.is_finite() { ms.max(0.0) } else { 0.0 };
         self.frame_graph.push(ms);
     }
 

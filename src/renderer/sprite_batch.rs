@@ -55,12 +55,12 @@ impl SpriteBatch {
             .sort_by_key(|sprite| (sprite.layer, sprite.texture.0));
 
         let mut current_texture: Option<TextureId> = None;
-        let mut current_start = vertices.len() as u32;
+        let mut current_start = vertex_index(vertices.len());
 
         for &sprite in &self.sprites {
             if current_texture != Some(sprite.texture) {
                 if let Some(texture) = current_texture {
-                    let vertex_count = vertices.len() as u32 - current_start;
+                    let vertex_count = vertex_index(vertices.len()) - current_start;
                     if vertex_count > 0 {
                         ranges.push(SpriteBatchRange {
                             texture,
@@ -71,14 +71,14 @@ impl SpriteBatch {
                 }
 
                 current_texture = Some(sprite.texture);
-                current_start = vertices.len() as u32;
+                current_start = vertex_index(vertices.len());
             }
 
             append_sprite_vertices(vertices, sprite);
         }
 
         if let Some(texture) = current_texture {
-            let vertex_count = vertices.len() as u32 - current_start;
+            let vertex_count = vertex_index(vertices.len()) - current_start;
             if vertex_count > 0 {
                 ranges.push(SpriteBatchRange {
                     texture,
@@ -94,6 +94,18 @@ impl Default for SpriteBatch {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Narrows a vertex-buffer length/offset to the `u32` that Vulkan draw calls and
+/// `SpriteBatchRange` use. Vertex counts are bounded by GPU buffer capacity far
+/// below `u32::MAX` in practice, but a `debug_assert` documents and guards the
+/// cast so an absurdly large batch trips in debug instead of silently truncating.
+fn vertex_index(len: usize) -> u32 {
+    debug_assert!(
+        len <= u32::MAX as usize,
+        "sprite vertex count {len} exceeds u32 index range"
+    );
+    len as u32
 }
 
 pub fn append_sprite_vertices(out: &mut Vec<SpriteVertex>, sprite: SpriteDraw) {

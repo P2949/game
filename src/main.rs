@@ -8,9 +8,11 @@ use std::time::{Duration, Instant};
 use platform::input::FrameActions;
 use platform::window::Platform;
 
-// While the window is being actively resized (or is zero-sized/minimized) we
-// skip rendering and idle briefly so we neither spin the CPU nor fight the
-// compositor mid-resize.
+// When the window is zero-sized/minimized there is no surface to render to, so
+// we skip rendering and idle briefly instead of spinning the CPU. During an
+// ordinary (nonzero) live resize we keep rendering with the current swapchain and
+// let the debounced resize policy plus SUBOPTIMAL/OUT_OF_DATE handling drive
+// recreation, so the window shows frames instead of freezing.
 const RESIZE_IDLE_SLEEP: Duration = Duration::from_millis(16);
 
 fn main() -> anyhow::Result<()> {
@@ -45,9 +47,10 @@ fn main() -> anyhow::Result<()> {
         platform.pump_events();
 
         let (width, height) = platform.drawable_size();
-        if width == 0 || height == 0 || platform.resize_pending() {
-            // Don't accumulate simulated time across the pause; treat the resize
-            // gap as a single reset so physics doesn't lurch when we resume.
+        if width == 0 || height == 0 {
+            // Minimized / zero-sized window: nothing to draw to. Don't accumulate
+            // simulated time across the pause — treat the gap as a single reset so
+            // physics doesn't lurch when the window comes back.
             previous_frame = Instant::now();
             timestep.reset_after_pause();
             std::thread::sleep(RESIZE_IDLE_SLEEP);

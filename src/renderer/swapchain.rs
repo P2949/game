@@ -31,14 +31,54 @@ pub fn choose_surface_format(
         anyhow::bail!("no surface formats available for swapchain creation");
     }
 
-    Ok(formats
-        .iter()
-        .copied()
-        .find(|format| {
-            format.format == vk::Format::B8G8R8A8_SRGB
-                && format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
-        })
-        .unwrap_or(formats[0]))
+    // Preference order: sRGB nonlinear color space throughout, BGRA before RGBA
+    // (BGRA is the common desktop optimal layout), sRGB-encoded formats before
+    // UNORM. This avoids settling for the surface's first advertised format on a
+    // platform that offers, say, R8G8B8A8_SRGB but not B8G8R8A8_SRGB.
+    const PREFERRED: [(vk::Format, vk::ColorSpaceKHR); 4] = [
+        (vk::Format::B8G8R8A8_SRGB, vk::ColorSpaceKHR::SRGB_NONLINEAR),
+        (vk::Format::R8G8B8A8_SRGB, vk::ColorSpaceKHR::SRGB_NONLINEAR),
+        (
+            vk::Format::B8G8R8A8_UNORM,
+            vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        ),
+        (
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        ),
+    ];
+
+    for (format, color_space) in PREFERRED {
+        if let Some(found) = formats
+            .iter()
+            .copied()
+            .find(|candidate| candidate.format == format && candidate.color_space == color_space)
+        {
+            return Ok(found);
+        }
+    }
+
+    // Nothing preferred is advertised; use whatever the surface lists first.
+    Ok(formats[0])
+}
+
+/// Picks a composite-alpha mode from the surface's advertised set. Prefers
+/// `OPAQUE` (no blending with the desktop behind the window), then the multiplied
+/// modes, then `INHERIT`. A conformant surface always supports at least one of
+/// these; the `OPAQUE` fallback only matters if a driver advertised none, in
+/// which case swapchain creation will surface the error.
+pub fn choose_composite_alpha(supported: vk::CompositeAlphaFlagsKHR) -> vk::CompositeAlphaFlagsKHR {
+    const PREFERRED: [vk::CompositeAlphaFlagsKHR; 4] = [
+        vk::CompositeAlphaFlagsKHR::OPAQUE,
+        vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::INHERIT,
+    ];
+
+    PREFERRED
+        .into_iter()
+        .find(|&mode| supported.contains(mode))
+        .unwrap_or(vk::CompositeAlphaFlagsKHR::OPAQUE)
 }
 
 pub fn choose_present_mode(modes: &[vk::PresentModeKHR]) -> anyhow::Result<vk::PresentModeKHR> {
@@ -104,6 +144,8 @@ impl Swapchain {
         let surface_format = choose_surface_format(&support.formats)?;
         let present_mode = choose_present_mode(&support.present_modes)?;
         let extent = choose_extent(support.capabilities, window_size);
+        let composite_alpha =
+            choose_composite_alpha(support.capabilities.supported_composite_alpha);
 
         let mut image_count = support.capabilities.min_image_count + 1;
         if support.capabilities.max_image_count > 0 {
@@ -128,7 +170,7 @@ impl Swapchain {
             .image_sharing_mode(sharing_mode)
             .queue_family_indices(&queue_indices)
             .pre_transform(support.capabilities.current_transform)
-            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .composite_alpha(composite_alpha)
             .present_mode(present_mode)
             .clipped(true)
             .old_swapchain(old_swapchain);
@@ -246,7 +288,7 @@ impl Drop for SwapchainImageViews {
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_present_mode, choose_surface_format};
+    use super::{choose_composite_alpha, choose_present_mode, choose_surface_format};
     use ash::vk;
 
     fn format(format: vk::Format, color_space: vk::ColorSpaceKHR) -> vk::SurfaceFormatKHR {
@@ -275,7 +317,9 @@ mod tests {
     }
 
     #[test]
-    fn first_format_is_used_as_fallback() {
+    fn rgba_srgb_is_selected_when_bgra_srgb_is_absent() {
+        // BGRA_SRGB not offered, but RGBA_SRGB is — and it must win over the
+        // surface's first advertised (non-preferred-rank) format.
         let formats = [
             format(
                 vk::Format::R8G8B8A8_UNORM,
@@ -284,7 +328,73 @@ mod tests {
             format(vk::Format::R8G8B8A8_SRGB, vk::ColorSpaceKHR::SRGB_NONLINEAR),
         ];
         let chosen = choose_surface_format(&formats).unwrap();
+        assert_eq!(chosen.format, vk::Format::R8G8B8A8_SRGB);
+    }
+
+    #[test]
+    fn unorm_srgb_nonlinear_is_selected_when_no_srgb_format_exists() {
+        // No sRGB-encoded format, but a UNORM + SRGB_NONLINEAR is acceptable.
+        let formats = [format(
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        )];
+        let chosen = choose_surface_format(&formats).unwrap();
         assert_eq!(chosen.format, vk::Format::R8G8B8A8_UNORM);
+        assert_eq!(chosen.color_space, vk::ColorSpaceKHR::SRGB_NONLINEAR);
+    }
+
+    #[test]
+    fn first_format_is_used_when_nothing_preferred_is_advertised() {
+        // None of these use SRGB_NONLINEAR, so no preference matches and the
+        // first advertised format is the last-resort choice.
+        let formats = [
+            format(
+                vk::Format::R8G8B8A8_UNORM,
+                vk::ColorSpaceKHR::DISPLAY_P3_NONLINEAR_EXT,
+            ),
+            format(
+                vk::Format::B8G8R8A8_SRGB,
+                vk::ColorSpaceKHR::DISPLAY_P3_NONLINEAR_EXT,
+            ),
+        ];
+        let chosen = choose_surface_format(&formats).unwrap();
+        assert_eq!(chosen.format, vk::Format::R8G8B8A8_UNORM);
+        assert_eq!(
+            chosen.color_space,
+            vk::ColorSpaceKHR::DISPLAY_P3_NONLINEAR_EXT
+        );
+    }
+
+    #[test]
+    fn composite_alpha_prefers_opaque_when_supported() {
+        let supported = vk::CompositeAlphaFlagsKHR::OPAQUE | vk::CompositeAlphaFlagsKHR::INHERIT;
+        assert_eq!(
+            choose_composite_alpha(supported),
+            vk::CompositeAlphaFlagsKHR::OPAQUE
+        );
+    }
+
+    #[test]
+    fn composite_alpha_falls_through_preference_order() {
+        let supported = vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED
+            | vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED;
+        // PRE_MULTIPLIED outranks POST_MULTIPLIED.
+        assert_eq!(
+            choose_composite_alpha(supported),
+            vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED
+        );
+        assert_eq!(
+            choose_composite_alpha(vk::CompositeAlphaFlagsKHR::INHERIT),
+            vk::CompositeAlphaFlagsKHR::INHERIT
+        );
+    }
+
+    #[test]
+    fn composite_alpha_defaults_to_opaque_when_none_advertised() {
+        assert_eq!(
+            choose_composite_alpha(vk::CompositeAlphaFlagsKHR::empty()),
+            vk::CompositeAlphaFlagsKHR::OPAQUE
+        );
     }
 
     #[test]

@@ -41,6 +41,14 @@ impl InputState {
         self.debug_die_pressed = false;
     }
 
+    /// Clears all held-key and movement state. Called on window focus loss: a key
+    /// released while we are unfocused never delivers a key-up event, so without
+    /// this a held movement/zoom key would stay "down" and the player would keep
+    /// drifting or zooming after refocusing.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     pub fn take_frame_actions(&mut self) -> FrameActions {
         let actions = FrameActions {
             action_pressed: self.action_pressed,
@@ -124,5 +132,22 @@ mod tests {
         let actions = input.take_frame_actions();
         assert!(!actions.pause_pressed);
         assert!(!actions.action_pressed);
+    }
+
+    #[test]
+    fn reset_clears_held_movement_keys() {
+        let mut input = InputState::default();
+        input.set_key(Keycode::Right, true);
+        input.set_key(Keycode::Up, true);
+        assert!(input.movement().length() > 0.0);
+
+        // Simulates losing focus while keys are held.
+        input.reset();
+        assert_eq!(input.movement(), glam::Vec2::ZERO);
+
+        // A late key-up for an already-cleared key must keep movement at rest, not
+        // drive it negative.
+        input.set_key(Keycode::Right, false);
+        assert_eq!(input.movement(), glam::Vec2::ZERO);
     }
 }

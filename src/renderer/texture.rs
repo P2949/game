@@ -239,7 +239,10 @@ impl Texture {
                 .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                .max_lod(1.0);
+                // Images are created with a single mip level, so clamp LOD to 0.0
+                // (sampling mip 0 only). A nonzero max_lod would only matter with
+                // a real mip chain, which these textures do not have.
+                .max_lod(0.0);
             sampler = unsafe { upload.device.create_sampler(&sampler_info, None)? };
 
             log::info!("created texture '{name}' ({width}x{height}, {color_space:?}, {format:?})");

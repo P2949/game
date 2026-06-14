@@ -91,6 +91,12 @@ impl FontAtlas {
     /// Greedily word-wraps `text` so each produced line fits within `max_width`
     /// pixels, preserving existing newlines. Whitespace is the only break point;
     /// a single word longer than `max_width` is left on its own (over-long) line.
+    ///
+    /// Note: word splitting uses `split_whitespace`, so runs of spaces, tabs, and
+    /// other intra-line whitespace are collapsed to single spaces in the output.
+    /// That suits HUD/menu text; whitespace-significant content (pre-formatted or
+    /// code-like text) would need a preserving wrapper instead.
+    ///
     /// Provided for UI layout; not yet wired into gameplay rendering.
     #[allow(dead_code)]
     pub fn wrap_text(&self, text: &str, max_width: f32) -> Vec<String> {

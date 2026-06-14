@@ -52,6 +52,12 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
 
+These commands use your system SDL3 development libraries. CI instead builds
+SDL3 from source through the `ci-build-sdl3` feature (`--features ci-build-sdl3`)
+so the workflow does not depend on whether the runner image ships a `libsdl3-dev`
+package. Local developers can keep using system SDL3, or pass that same feature
+to reproduce the CI build exactly.
+
 ## Known limitations
 
 - UI text is ASCII-only (unsupported characters render a fallback glyph)
