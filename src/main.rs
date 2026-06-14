@@ -132,7 +132,8 @@ fn parse_smoke_frames() -> anyhow::Result<Option<u64>> {
         return Ok(None);
     };
 
-    raw.parse::<u64>()
+    raw.trim()
+        .parse::<u64>()
         .map(Some)
         .map_err(|_| anyhow::anyhow!("GAME_SMOKE_FRAMES must be a non-negative integer"))
 }
@@ -168,6 +169,20 @@ mod tests {
         unsafe {
             std::env::set_var("GAME_SMOKE_FRAMES", "120");
         }
+        assert_eq!(parse_smoke_frames().unwrap(), Some(120));
+
+        unsafe {
+            std::env::remove_var("GAME_SMOKE_FRAMES");
+        }
+    }
+
+    #[test]
+    fn smoke_frames_trims_whitespace() {
+        let _guard = env_lock();
+        unsafe {
+            std::env::set_var("GAME_SMOKE_FRAMES", " 120 ");
+        }
+
         assert_eq!(parse_smoke_frames().unwrap(), Some(120));
 
         unsafe {

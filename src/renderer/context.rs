@@ -20,11 +20,11 @@ use crate::renderer::{
     texture,
 };
 
-// Rate-limit swapchain recreations as defense against a driver that reports
-// suboptimal/out-of-date every frame. User-driven resizes are already debounced
-// in the platform layer before a recreate request reaches the context, so no
-// additional extent-stabilization wait is needed here.
-const MIN_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
+// Rate-limit soft swapchain recreations as defense against noisy request
+// sources. User-driven resizes are already debounced in the platform layer, so
+// keep them more responsive than SUBOPTIMAL driver feedback.
+const MIN_RESIZE_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(350);
+const MIN_SUBOPTIMAL_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
 const FRAME_TIMING_LOG_INTERVAL: Duration = Duration::from_secs(1);
 const UI_TEXT_LAYER: i16 = 1000;
 
@@ -139,24 +139,24 @@ impl VulkanContext {
         // declaration order keeps these child resources destroyed before the
         // logical device local that owns the `VkDevice`).
         let upload_command_pool = OwnedCommandPool::from_handle(
-            &logical_device.device,
+            logical_device.device(),
             create_upload_command_pool(
-                &logical_device.device,
+                logical_device.device(),
                 selected_device.queue_families.graphics,
             )?,
         );
         let upload_fence = OwnedFence::from_handle(
-            &logical_device.device,
-            create_upload_fence(&logical_device.device)?,
+            logical_device.device(),
+            create_upload_fence(logical_device.device())?,
         );
         let mut allocator = buffer::create_allocator(
             instance.handle().clone(),
-            logical_device.device.clone(),
+            logical_device.device().clone(),
             selected_device.physical_device,
         )?;
         let texture_descriptor_set_layout = OwnedDescriptorSetLayout::from_handle(
-            &logical_device.device,
-            texture::create_texture_descriptor_set_layout(&logical_device.device)?,
+            logical_device.device(),
+            texture::create_texture_descriptor_set_layout(logical_device.device())?,
         );
         // The guard owns every registered texture (and its descriptor pool) for
         // the remainder of construction. It is intentionally NOT `finish()`ed
@@ -166,17 +166,17 @@ impl VulkanContext {
         // alive. `load_builtin_textures` registers the built-ins in id order, so
         // `TEST_TEXTURE_ID` / `FONT_TEXTURE_ID` keep resolving to the right entry.
         let mut texture_registry_guard =
-            TextureRegistryGuard::new(&logical_device.device, &mut allocator);
+            TextureRegistryGuard::new(logical_device.device(), &mut allocator);
         let font_atlas = assets::load_builtin_textures(
             &mut texture_registry_guard,
             texture_descriptor_set_layout.handle(),
-            logical_device.graphics_queue,
+            logical_device.graphics_queue(),
             upload_command_pool.handle(),
             upload_fence.handle(),
         )?;
         let swapchain = swapchain::Swapchain::new(
             instance.handle(),
-            &logical_device.device,
+            logical_device.device(),
             selected_device.physical_device,
             surface.loader(),
             surface.handle(),
@@ -185,22 +185,22 @@ impl VulkanContext {
             vk::SwapchainKHR::null(),
         )?;
         let swapchain_image_views = swapchain::SwapchainImageViews::new(
-            &logical_device.device,
+            logical_device.device(),
             swapchain.images(),
             swapchain.format(),
         )?;
         let sprite_pipeline = pipeline::GraphicsPipeline::new_sprite(
-            &logical_device.device,
+            logical_device.device(),
             swapchain.format(),
             texture_descriptor_set_layout.handle(),
         )?;
         let swapchain_sync =
-            SwapchainSync::new(&logical_device.device, swapchain.image_count(), 0)?;
+            SwapchainSync::new(logical_device.device(), swapchain.image_count(), 0)?;
 
         let frames: Vec<_> = (0..frame::MAX_FRAMES_IN_FLIGHT)
             .map(|_| {
                 frame::FrameData::new(
-                    &logical_device.device,
+                    logical_device.device(),
                     selected_device.queue_families.graphics,
                 )
             })
@@ -297,7 +297,11 @@ impl VulkanContext {
         )))
     }
 
-    fn swapchain_recreate_ready(&self, window: &sdl3::video::Window) -> anyhow::Result<bool> {
+    fn swapchain_recreate_ready(
+        &self,
+        window: &sdl3::video::Window,
+        reason: SwapchainRecreateReason,
+    ) -> anyhow::Result<bool> {
         // Only special-case a zero-size (minimized) window, which has no valid
         // extent to recreate for. Any nonzero size is recreatable: gating on a
         // minimum size would strand a small window with no swapchain forever.
@@ -305,8 +309,10 @@ impl VulkanContext {
             return Ok(false);
         }
 
+        let min_interval = recreate_rate_limit_for(reason);
         if let Some(last_recreate) = self.last_swapchain_recreate
-            && Instant::now().duration_since(last_recreate) < MIN_SWAPCHAIN_RECREATE_INTERVAL
+            && min_interval > Duration::ZERO
+            && Instant::now().duration_since(last_recreate) < min_interval
         {
             return Ok(false);
         }
@@ -329,7 +335,7 @@ impl VulkanContext {
             anyhow::bail!("cannot recreate swapchain after logical device has been destroyed");
         };
 
-        let device = &logical_device.device;
+        let device = logical_device.device();
 
         unsafe {
             device.device_wait_idle()?;
@@ -402,7 +408,7 @@ impl VulkanContext {
             let desired_extent = self.desired_swapchain_extent(window)?;
             let has_nonzero_extent = desired_extent.is_some();
             let extent_matches = desired_extent == Some(self.swapchain.extent());
-            let soft_recreate_ready = self.swapchain_recreate_ready(window)?;
+            let soft_recreate_ready = self.swapchain_recreate_ready(window, reason)?;
 
             match swapchain_recreate_action(
                 reason,
@@ -438,9 +444,9 @@ impl VulkanContext {
         let Some(logical_device) = self.logical_device.as_ref() else {
             anyhow::bail!("cannot render after logical device has been destroyed");
         };
-        let device = logical_device.device.clone();
-        let graphics_queue = logical_device.graphics_queue;
-        let present_queue = logical_device.present_queue;
+        let device = logical_device.device().clone();
+        let graphics_queue = logical_device.graphics_queue();
+        let present_queue = logical_device.present_queue();
 
         let frame_index = self.current_frame;
         let frame = &self.frames[frame_index];
@@ -689,7 +695,7 @@ impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
             if let Some(logical_device) = self.logical_device.as_ref() {
-                let _ = logical_device.device.device_wait_idle();
+                let _ = logical_device.device().device_wait_idle();
 
                 self.sprite_pipeline.destroy();
 
@@ -704,11 +710,11 @@ impl Drop for VulkanContext {
                 match self.allocator.as_mut() {
                     Some(allocator) => {
                         self.texture_registry
-                            .destroy(&logical_device.device, allocator);
+                            .destroy(logical_device.device(), allocator);
 
                         for vertex_buffer in &mut self.dynamic_sprite_buffers {
                             if let Some(vertex_buffer) = vertex_buffer.take() {
-                                vertex_buffer.destroy(&logical_device.device, allocator);
+                                vertex_buffer.destroy(logical_device.device(), allocator);
                             }
                         }
                     }
@@ -786,4 +792,34 @@ fn frame_timing_logs_enabled() -> bool {
         std::env::var("GAME_FRAME_TIMINGS").as_deref(),
         Ok("1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
     )
+}
+
+fn recreate_rate_limit_for(reason: SwapchainRecreateReason) -> Duration {
+    match reason {
+        SwapchainRecreateReason::Resize => MIN_RESIZE_SWAPCHAIN_RECREATE_INTERVAL,
+        SwapchainRecreateReason::Suboptimal => MIN_SUBOPTIMAL_SWAPCHAIN_RECREATE_INTERVAL,
+        SwapchainRecreateReason::SurfaceOutOfDate => Duration::ZERO,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SwapchainRecreateReason, recreate_rate_limit_for};
+    use std::time::Duration;
+
+    #[test]
+    fn resize_recreate_rate_limit_is_shorter_than_suboptimal() {
+        assert!(
+            recreate_rate_limit_for(SwapchainRecreateReason::Resize)
+                < recreate_rate_limit_for(SwapchainRecreateReason::Suboptimal)
+        );
+    }
+
+    #[test]
+    fn out_of_date_recreate_is_not_rate_limited() {
+        assert_eq!(
+            recreate_rate_limit_for(SwapchainRecreateReason::SurfaceOutOfDate),
+            Duration::ZERO
+        );
+    }
 }

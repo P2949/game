@@ -35,6 +35,8 @@ impl Entity {
         if !size.is_finite() || size.x <= 0.0 || size.y <= 0.0 {
             anyhow::bail!("entity size must be finite and positive, got {size:?}");
         }
+        crate::game::collision::Aabb::try_from_pos_size(pos, size)
+            .map_err(|err| anyhow::anyhow!("invalid entity bounds: {err}"))?;
 
         Ok(Self {
             pos,
@@ -51,8 +53,7 @@ impl Entity {
         size: glam::Vec2,
         sprite: crate::renderer::TextureId,
     ) -> Self {
-        let pos = sanitize_vec2(pos, glam::Vec2::ZERO);
-        let size = sanitize_size(size, glam::Vec2::ONE);
+        let (pos, size) = sanitize_entity_geometry(pos, size);
         Self {
             pos,
             prev_pos: pos,
@@ -84,7 +85,10 @@ impl Entity {
     }
 
     pub fn set_position(&mut self, pos: glam::Vec2) {
-        self.pos = sanitize_vec2(pos, self.pos);
+        let pos = sanitize_vec2(pos, self.pos);
+        if crate::game::collision::Aabb::new(pos, self.size).is_some() {
+            self.pos = pos;
+        }
     }
 
     pub fn set_velocity(&mut self, vel: glam::Vec2) {
@@ -125,6 +129,18 @@ fn sanitize_size(size: glam::Vec2, fallback: glam::Vec2) -> glam::Vec2 {
     }
 }
 
+#[allow(dead_code)]
+fn sanitize_entity_geometry(pos: glam::Vec2, size: glam::Vec2) -> (glam::Vec2, glam::Vec2) {
+    let pos = sanitize_vec2(pos, glam::Vec2::ZERO);
+    let size = sanitize_size(size, glam::Vec2::ONE);
+
+    if crate::game::collision::Aabb::new(pos, size).is_some() {
+        (pos, size)
+    } else {
+        (glam::Vec2::ZERO, glam::Vec2::ONE)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Entity;
@@ -150,6 +166,18 @@ mod tests {
     }
 
     #[test]
+    fn try_new_rejects_aabb_geometry_that_would_collapse() {
+        assert!(
+            Entity::try_new(
+                glam::Vec2::splat(f32::MAX),
+                glam::Vec2::ONE,
+                crate::renderer::TEST_TEXTURE_ID,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn new_sanitized_repairs_invalid_position_and_size() {
         let entity = Entity::new_sanitized(
             glam::vec2(f32::NAN, 1.0),
@@ -163,6 +191,18 @@ mod tests {
     }
 
     #[test]
+    fn new_sanitized_repairs_aabb_geometry_that_would_collapse() {
+        let entity = Entity::new_sanitized(
+            glam::Vec2::splat(f32::MAX),
+            glam::Vec2::ONE,
+            crate::renderer::TEST_TEXTURE_ID,
+        );
+
+        assert_eq!(entity.position(), glam::Vec2::ZERO);
+        assert_eq!(entity.size(), glam::Vec2::ONE);
+    }
+
+    #[test]
     fn setters_sanitize_position_and_velocity() {
         let mut entity = Entity::new_player(glam::vec2(2.0, 3.0));
         entity.set_position(glam::vec2(f32::INFINITY, 0.0));
@@ -170,6 +210,14 @@ mod tests {
 
         assert_eq!(entity.position(), glam::vec2(2.0, 3.0));
         assert_eq!(entity.velocity(), glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn set_position_rejects_position_that_would_invalidate_aabb() {
+        let mut entity = Entity::new_player(glam::Vec2::ZERO);
+        entity.set_position(glam::Vec2::splat(f32::MAX));
+
+        assert_eq!(entity.position(), glam::Vec2::ZERO);
     }
 
     #[test]

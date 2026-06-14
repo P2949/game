@@ -1,6 +1,10 @@
 [advisories]
 ignore = []
 
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
 [licenses]
 confidence-threshold = 0.8
 allow = [

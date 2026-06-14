@@ -56,7 +56,7 @@ Release packages should not rely on the source-tree fallback.
 | `GAME_DISABLE_VALIDATION` | Set to `1` to disable Vulkan validation layers in any build. |
 | `RUST_LOG` | Controls Rust logging via `env_logger`; defaults to `info`. |
 | `GLSLC` | Overrides the shader compiler path used by `build.rs`. |
-| `SPIRV_VAL` | Overrides the optional SPIR-V validator path used by `build.rs`; if unset, `spirv-val` on `PATH` is used when available. |
+| `SPIRV_VAL` | Overrides the optional SPIR-V validator path used by `build.rs`. If unset, `spirv-val` on `PATH` is used when available. Set to `0`, `off`, `none`, or `disabled` to skip validation. |
 
 ## Packaging
 
