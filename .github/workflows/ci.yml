@@ -85,13 +85,13 @@ jobs:
           key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --locked --force
 
       - name: Audit dependencies
         run: cargo audit
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo install cargo-deny --locked --force
 
       - name: Check dependency policy
         run: cargo deny check advisories licenses sources
@@ -124,10 +124,25 @@ jobs:
             mesa-vulkan-drivers vulkan-tools vulkan-validationlayers xvfb
       - name: Build (debug, validation layers on)
         run: cargo build --locked --features ci-build-sdl3
+      - name: Select lavapipe Vulkan ICD
+        run: |
+          lvp_icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          if [ -z "$lvp_icd" ]; then
+            echo "No lavapipe ICD found in /usr/share/vulkan/icd.d"
+            find /usr/share/vulkan/icd.d -maxdepth 1 -type f -print || true
+            exit 1
+          fi
+          echo "Selected lavapipe ICD: $lvp_icd"
+          echo "VK_DRIVER_FILES=$lvp_icd" >> "$GITHUB_ENV"
+      - name: Check software Vulkan under Xvfb
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SDL_VIDEODRIVER: x11
+        run: xvfb-run -a --server-args="-screen 0 1280x720x24" vulkaninfo --summary
       - name: Render 120 frames headless and exit cleanly
         env:
           GAME_SMOKE_FRAMES: "120"
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           LIBGL_ALWAYS_SOFTWARE: "1"
           RUST_LOG: info
-        run: xvfb-run -a cargo run --locked --features ci-build-sdl3
+          SDL_VIDEODRIVER: x11
+        run: timeout -k 5s 120s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --locked --features ci-build-sdl3
