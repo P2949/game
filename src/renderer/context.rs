@@ -28,6 +28,12 @@ const MIN_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
 const FRAME_TIMING_LOG_INTERVAL: Duration = Duration::from_secs(1);
 const UI_TEXT_LAYER: i16 = 1000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderOutcome {
+    Presented,
+    Skipped,
+}
+
 /// Synchronization resources whose lifetime is tied to one swapchain generation.
 ///
 /// Per-frame resources (`FrameData`) survive swapchain recreation: command
@@ -391,7 +397,7 @@ impl VulkanContext {
         &mut self,
         window: &sdl3::video::Window,
         camera: crate::game::camera::Camera2D,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<RenderOutcome> {
         if let Some(reason) = self.swapchain_recreate_request {
             let desired_extent = self.desired_swapchain_extent(window)?;
             let has_nonzero_extent = desired_extent.is_some();
@@ -409,7 +415,7 @@ impl VulkanContext {
                 }
                 SwapchainRecreateAction::SkipFrame => {
                     self.clear_sprite_batches();
-                    return Ok(());
+                    return Ok(RenderOutcome::Skipped);
                 }
                 SwapchainRecreateAction::DeferAndRender => {
                     // Keep the request pending and continue into normal rendering.
@@ -421,7 +427,7 @@ impl VulkanContext {
                     // request pending; skip this frame and retry next time.
                     if self.swapchain_recreate_request.is_some() {
                         self.clear_sprite_batches();
-                        return Ok(());
+                        return Ok(RenderOutcome::Skipped);
                     }
                 }
             }
@@ -535,7 +541,7 @@ impl VulkanContext {
                 Ok(result) => result,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.request_mandatory_swapchain_recreate();
-                    return Ok(());
+                    return Ok(RenderOutcome::Skipped);
                 }
                 Err(err) => return Err(err.into()),
             };
@@ -574,8 +580,8 @@ impl VulkanContext {
                 self.swapchain.image(image_index_usize),
                 self.swapchain_image_views.view(image_index_usize),
                 swapchain_extent,
-                self.sprite_pipeline.layout,
-                self.sprite_pipeline.pipeline,
+                self.sprite_pipeline.layout(),
+                self.sprite_pipeline.pipeline(),
                 sprite_vertex_buffer,
                 &render_batches,
             ) {
@@ -616,7 +622,7 @@ impl VulkanContext {
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
                     self.request_mandatory_swapchain_recreate();
-                    return Ok(());
+                    return Ok(RenderOutcome::Skipped);
                 }
                 Err(err) => return Err(err.into()),
             };
@@ -648,7 +654,7 @@ impl VulkanContext {
             }
         }
 
-        Ok(())
+        Ok(RenderOutcome::Presented)
     }
 }
 

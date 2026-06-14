@@ -65,11 +65,14 @@ pub fn swapchain_recreate_action(
     }
 }
 
-/// Records a soft recreate request without downgrading an already-pending hard
-/// (`SurfaceOutOfDate`) request. Free function so the priority rule is testable.
+/// Records a soft resize request without downgrading an already-pending stronger
+/// recreate request. Free function so the priority rule is testable.
 pub fn request_soft_recreate(request: &mut Option<SwapchainRecreateReason>) {
-    if *request != Some(SwapchainRecreateReason::SurfaceOutOfDate) {
-        *request = Some(SwapchainRecreateReason::Resize);
+    match *request {
+        None | Some(SwapchainRecreateReason::Resize) => {
+            *request = Some(SwapchainRecreateReason::Resize);
+        }
+        Some(SwapchainRecreateReason::Suboptimal | SwapchainRecreateReason::SurfaceOutOfDate) => {}
     }
 }
 
@@ -199,6 +202,13 @@ mod tests {
     }
 
     #[test]
+    fn soft_request_does_not_downgrade_suboptimal_request() {
+        let mut request = Some(SwapchainRecreateReason::Suboptimal);
+        request_soft_recreate(&mut request);
+        assert_eq!(request, Some(SwapchainRecreateReason::Suboptimal));
+    }
+
+    #[test]
     fn suboptimal_ready_recreates_when_extent_differs() {
         assert_eq!(
             swapchain_recreate_action(SwapchainRecreateReason::Suboptimal, true, false, true),
@@ -209,6 +219,13 @@ mod tests {
     #[test]
     fn suboptimal_request_sets_suboptimal_reason_when_idle() {
         let mut request = None;
+        request_suboptimal_recreate(&mut request);
+        assert_eq!(request, Some(SwapchainRecreateReason::Suboptimal));
+    }
+
+    #[test]
+    fn suboptimal_request_upgrades_resize_request() {
+        let mut request = Some(SwapchainRecreateReason::Resize);
         request_suboptimal_recreate(&mut request);
         assert_eq!(request, Some(SwapchainRecreateReason::Suboptimal));
     }

@@ -34,8 +34,8 @@ pub fn create_sprite_shader_modules(
 
 pub struct GraphicsPipeline {
     device: ash::Device,
-    pub layout: vk::PipelineLayout,
-    pub pipeline: vk::Pipeline,
+    layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
 }
 
 impl GraphicsPipeline {
@@ -59,6 +59,14 @@ impl GraphicsPipeline {
         }
 
         result
+    }
+
+    pub fn layout(&self) -> vk::PipelineLayout {
+        self.layout
+    }
+
+    pub fn pipeline(&self) -> vk::Pipeline {
+        self.pipeline
     }
 
     pub fn destroy(&mut self) {

@@ -248,7 +248,12 @@ fn select_device_candidate(
 fn device_name_filter() -> Option<String> {
     std::env::var("GAME_VK_DEVICE_NAME")
         .ok()
-        .filter(|value| !value.trim().is_empty())
+        .and_then(|value| normalize_device_name_filter(&value))
+}
+
+fn normalize_device_name_filter(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
 }
 
 fn device_name_matches(device_name: &str, filter: &str) -> bool {
@@ -321,7 +326,16 @@ impl Drop for LogicalDevice {
 
 #[cfg(test)]
 mod tests {
-    use super::device_name_matches;
+    use super::{device_name_matches, normalize_device_name_filter};
+
+    #[test]
+    fn device_name_filter_trims_whitespace() {
+        assert_eq!(
+            normalize_device_name_filter(" Radeon "),
+            Some("Radeon".to_owned())
+        );
+        assert_eq!(normalize_device_name_filter(" \t "), None);
+    }
 
     #[test]
     fn device_name_filter_is_case_insensitive() {

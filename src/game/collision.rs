@@ -24,10 +24,12 @@ impl Aabb {
             return None;
         }
 
-        Some(Self {
-            min: pos,
-            max: pos + size,
-        })
+        let max = pos + size;
+        if !max.is_finite() {
+            return None;
+        }
+
+        Some(Self { min: pos, max })
     }
 
     pub fn from_pos_size(pos: glam::Vec2, size: glam::Vec2) -> Self {
@@ -144,6 +146,11 @@ mod tests {
         assert!(Aabb::new(glam::Vec2::ZERO, glam::vec2(0.0, 1.0)).is_none());
         assert!(Aabb::new(glam::Vec2::ZERO, glam::vec2(1.0, -1.0)).is_none());
         assert!(Aabb::new(glam::Vec2::ZERO, glam::Vec2::ONE).is_some());
+    }
+
+    #[test]
+    fn aabb_new_rejects_overflowing_max_corner() {
+        assert!(Aabb::new(glam::Vec2::splat(f32::MAX), glam::Vec2::splat(f32::MAX)).is_none());
     }
 
     #[test]

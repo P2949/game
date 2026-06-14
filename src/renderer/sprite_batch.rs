@@ -142,8 +142,11 @@ impl Default for SpriteBatch {
 }
 
 fn sprite_is_valid(sprite: SpriteDraw) -> bool {
+    let max = sprite.position + sprite.size;
+
     sprite.position.is_finite()
         && sprite.size.is_finite()
+        && max.is_finite()
         && sprite.size.x > 0.0
         && sprite.size.y > 0.0
         && sprite.uv_min.is_finite()
@@ -337,6 +340,11 @@ mod tests {
         assert!(!batch.push(invalid));
 
         invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.position = glam::Vec2::splat(f32::MAX);
+        invalid.size = glam::Vec2::splat(f32::MAX);
+        assert!(!batch.push(invalid));
+
+        invalid = sprite(TEST_TEXTURE_ID, 0);
         invalid.size.x = -1.0;
         assert!(!batch.push(invalid));
 
@@ -363,6 +371,6 @@ mod tests {
         let stats = batch.build_into(&mut vertices, &mut ranges).unwrap();
 
         assert_eq!(stats.sprite_count, 1);
-        assert_eq!(stats.dropped_invalid_sprites, 7);
+        assert_eq!(stats.dropped_invalid_sprites, 8);
     }
 }

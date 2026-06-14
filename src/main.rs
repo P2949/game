@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use platform::input::FrameActions;
 use platform::window::Platform;
+use renderer::context::RenderOutcome;
 
 // When the window is zero-sized/minimized there is no surface to render to, so
 // we skip rendering and idle briefly instead of spinning the CPU. During an
@@ -112,9 +113,9 @@ fn main() -> anyhow::Result<()> {
 
         let alpha = timestep.alpha();
         game.render(alpha, &mut vk);
-        vk.render(&platform.window, game.camera())?;
-
-        rendered_frames += 1;
+        if vk.render(&platform.window, game.camera())? == RenderOutcome::Presented {
+            rendered_frames += 1;
+        }
         if let Some(limit) = smoke_frames
             && rendered_frames >= limit
         {
