@@ -7,6 +7,7 @@ use crate::renderer::{self, DrawCommands, SpriteDraw};
 // Side length of the decorative floor-tile grid drawn in the world. Kept as a
 // named constant so the HUD sprite count stays in sync with what's rendered.
 const FLOOR_GRID: usize = 10;
+const MAX_FRAME_GRAPH_MS: f32 = 10_000.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
@@ -17,7 +18,7 @@ pub enum GameMode {
 }
 
 pub struct Game {
-    pub mode: GameMode,
+    mode: GameMode,
     camera: Camera2D,
     player: Entity,
     solids: Vec<Aabb>,
@@ -42,6 +43,11 @@ impl Game {
 
     pub fn camera(&self) -> Camera2D {
         self.camera
+    }
+
+    #[allow(dead_code)]
+    pub fn mode(&self) -> GameMode {
+        self.mode
     }
 
     pub fn record_frame_time(&mut self, ms: f32) {
@@ -321,8 +327,12 @@ impl FrameGraph {
     pub fn push(&mut self, ms: f32) {
         // Sanitize here so every caller (this is a public method) is protected: a
         // NaN/inf would poison every average derived from the graph, and a negative
-        // delta is meaningless. Clamp to a non-negative finite value.
-        let ms = if ms.is_finite() { ms.max(0.0) } else { 0.0 };
+        // delta is meaningless. Clamp to a bounded diagnostic range.
+        let ms = if ms.is_finite() {
+            ms.clamp(0.0, MAX_FRAME_GRAPH_MS)
+        } else {
+            0.0
+        };
         self.samples_ms[self.cursor] = ms;
         self.cursor = (self.cursor + 1) % self.samples_ms.len();
         self.filled |= self.cursor == 0;
@@ -406,17 +416,17 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(game.mode, GameMode::Playing);
+        assert_eq!(game.mode(), GameMode::Playing);
         game
     }
 
     #[test]
     fn main_menu_starts_playing_on_action() {
         let mut game = Game::new();
-        assert_eq!(game.mode, GameMode::MainMenu);
+        assert_eq!(game.mode(), GameMode::MainMenu);
 
         game.update(DT, InputState::default(), FrameActions::default());
-        assert_eq!(game.mode, GameMode::MainMenu, "no action keeps the menu");
+        assert_eq!(game.mode(), GameMode::MainMenu, "no action keeps the menu");
 
         game.update(
             DT,
@@ -426,7 +436,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(game.mode, GameMode::Playing);
+        assert_eq!(game.mode(), GameMode::Playing);
     }
 
     #[test]
@@ -441,7 +451,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(game.mode, GameMode::Paused);
+        assert_eq!(game.mode(), GameMode::Paused);
 
         game.update(
             DT,
@@ -451,7 +461,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(game.mode, GameMode::Playing);
+        assert_eq!(game.mode(), GameMode::Playing);
     }
 
     #[test]
@@ -466,7 +476,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(game.mode, GameMode::Dead);
+        assert_eq!(game.mode(), GameMode::Dead);
 
         game.update(
             DT,
@@ -476,7 +486,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(game.mode, GameMode::Playing);
+        assert_eq!(game.mode(), GameMode::Playing);
     }
 
     #[test]
@@ -516,7 +526,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(game.mode, GameMode::Playing);
+        assert_eq!(game.mode(), GameMode::Playing);
         assert_eq!(game.camera().center(), START_CAMERA_CENTER);
     }
 
@@ -590,5 +600,22 @@ mod tests {
         // Only the most recent 5 samples, in chronological order.
         let recent: Vec<f32> = graph.recent(5).collect();
         assert_eq!(recent, vec![295.0, 296.0, 297.0, 298.0, 299.0]);
+    }
+
+    #[test]
+    fn frame_graph_clamps_extreme_samples() {
+        let mut graph = FrameGraph::default();
+        graph.push(f32::MAX);
+
+        assert_eq!(graph.average_recent(1), Some(super::MAX_FRAME_GRAPH_MS));
+    }
+
+    #[test]
+    fn frame_graph_rejects_non_finite_samples() {
+        let mut graph = FrameGraph::default();
+        graph.push(f32::INFINITY);
+        graph.push(f32::NAN);
+
+        assert_eq!(graph.average_recent(2), Some(0.0));
     }
 }

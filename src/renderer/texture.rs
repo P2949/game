@@ -8,6 +8,7 @@ use anyhow::Context;
 use crate::renderer::buffer;
 
 const MAX_TEXTURE_DIMENSION: u32 = 16_384;
+const MAX_TEXTURE_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureColorSpace {
@@ -25,9 +26,9 @@ impl TextureColorSpace {
 }
 
 /// Validates RGBA8 texture inputs before any Vulkan image is created. Rejects
-/// zero extents, dimension arithmetic that would overflow `usize`, and pixel
-/// buffers whose length does not match `width * height * 4`. Returns the
-/// expected byte length on success.
+/// zero extents, dimension arithmetic that would overflow `usize`, decoded
+/// buffers that exceed the byte cap, and pixel buffers whose length does not
+/// match `width * height * 4`. Returns the expected byte length on success.
 fn validate_rgba8_texture(
     name: &str,
     width: u32,
@@ -49,6 +50,12 @@ fn validate_rgba8_texture(
         .ok_or_else(|| {
             anyhow::anyhow!("texture '{name}' dimensions overflow ({width}x{height})")
         })?;
+
+    if expected_len > MAX_TEXTURE_BYTES {
+        anyhow::bail!(
+            "texture '{name}' requires {expected_len} bytes, exceeding maximum {MAX_TEXTURE_BYTES}"
+        );
+    }
 
     if pixels_len != expected_len {
         anyhow::bail!("texture '{name}' has {pixels_len} bytes, expected {expected_len}");
@@ -460,6 +467,13 @@ mod tests {
         // 1x1 RGBA8 needs exactly 4 bytes.
         assert!(validate_rgba8_texture("t", 1, 1, 3).is_err());
         assert!(validate_rgba8_texture("t", 1, 1, 5).is_err());
+    }
+
+    #[test]
+    fn excessive_byte_length_is_rejected() {
+        let expected_len = 16_384_usize * 16_384 * 4;
+
+        assert!(validate_rgba8_texture("t", 16_384, 16_384, expected_len).is_err());
     }
 
     #[test]

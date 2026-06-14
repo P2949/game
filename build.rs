@@ -68,17 +68,24 @@ fn main() {
 
 fn resolve_spirv_val() -> Option<String> {
     match std::env::var("SPIRV_VAL") {
-        Ok(value) if value.trim().is_empty() => {
-            println!("cargo:warning=SPIRV_VAL is empty; skipping optional SPIR-V validation");
+        Ok(value) if spirv_val_disabled(&value) => {
+            println!("cargo:warning=SPIRV_VAL disabled; skipping optional SPIR-V validation");
             None
         }
-        Ok(value) => Some(value),
+        Ok(value) => Some(value.trim().to_owned()),
         Err(_) if command_exists("spirv-val") => Some("spirv-val".to_owned()),
         Err(_) => {
             println!("cargo:warning=spirv-val not found; skipping optional SPIR-V validation");
             None
         }
     }
+}
+
+fn spirv_val_disabled(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "no" | "off" | "none" | "disabled"
+    )
 }
 
 fn command_exists(command: &str) -> bool {

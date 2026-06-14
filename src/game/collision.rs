@@ -25,7 +25,7 @@ impl Aabb {
         }
 
         let max = pos + size;
-        if !max.is_finite() {
+        if !max.is_finite() || max.x <= pos.x || max.y <= pos.y {
             return None;
         }
 
@@ -33,13 +33,14 @@ impl Aabb {
     }
 
     pub fn from_pos_size(pos: glam::Vec2, size: glam::Vec2) -> Self {
-        Self::try_from_pos_size(pos, size).expect("AABB geometry must be finite and positive")
+        Self::try_from_pos_size(pos, size)
+            .expect("AABB geometry must be finite, positive, and non-collapsing")
     }
 
     pub fn try_from_pos_size(pos: glam::Vec2, size: glam::Vec2) -> anyhow::Result<Self> {
         Self::new(pos, size).ok_or_else(|| {
             anyhow::anyhow!(
-                "AABB geometry must be finite and positive, got pos={pos:?}, size={size:?}"
+                "AABB geometry must be finite, positive, and non-collapsing, got pos={pos:?}, size={size:?}"
             )
         })
     }
@@ -88,6 +89,10 @@ pub fn validate_spawn(entity: &Entity, solids: &[Aabb]) -> anyhow::Result<()> {
 /// so an entity slides along walls instead of sticking on contact.
 pub fn move_with_collision(entity: &mut Entity, solids: &[Aabb], dt: f32) {
     entity.begin_step();
+
+    if !dt.is_finite() || dt <= 0.0 {
+        return;
+    }
 
     let mut pos = entity.position();
     let mut vel = entity.velocity();
@@ -154,7 +159,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "AABB geometry must be finite and positive")]
+    fn aabb_new_rejects_collapsed_max_corner() {
+        assert!(Aabb::new(glam::Vec2::splat(f32::MAX), glam::Vec2::ONE).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "AABB geometry must be finite, positive, and non-collapsing")]
     fn from_pos_size_panics_on_invalid_geometry() {
         Aabb::from_pos_size(glam::Vec2::ZERO, glam::vec2(0.0, 1.0));
     }
@@ -166,7 +176,7 @@ mod tests {
 
         assert!(
             err.to_string()
-                .contains("AABB geometry must be finite and positive"),
+                .contains("AABB geometry must be finite, positive, and non-collapsing"),
             "{err}"
         );
     }
@@ -295,5 +305,32 @@ mod tests {
 
         assert_eq!(player.position().x, 20.0);
         assert!(player.position().y >= 20.0);
+    }
+
+    #[test]
+    fn move_with_collision_ignores_non_positive_dt_after_begin_step() {
+        let mut e = entity(
+            glam::vec2(1.0, 2.0),
+            glam::vec2(100.0, 0.0),
+            glam::vec2(10.0, 10.0),
+        );
+
+        move_with_collision(&mut e, &[], -1.0);
+
+        assert_eq!(e.position(), glam::vec2(1.0, 2.0));
+        assert_eq!(e.previous_position(), e.position());
+    }
+
+    #[test]
+    fn move_with_collision_ignores_non_finite_dt() {
+        let mut e = entity(
+            glam::vec2(1.0, 2.0),
+            glam::vec2(100.0, 0.0),
+            glam::vec2(10.0, 10.0),
+        );
+
+        move_with_collision(&mut e, &[], f32::NAN);
+
+        assert_eq!(e.position(), glam::vec2(1.0, 2.0));
     }
 }

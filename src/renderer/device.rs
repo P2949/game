@@ -263,11 +263,10 @@ fn device_name_matches(device_name: &str, filter: &str) -> bool {
 }
 
 pub struct LogicalDevice {
-    pub device: ash::Device,
-    pub graphics_queue: vk::Queue,
-    pub present_queue: vk::Queue,
-    #[allow(dead_code)]
-    pub queues: QueueFamilies,
+    device: ash::Device,
+    graphics_queue: vk::Queue,
+    present_queue: vk::Queue,
+    queues: QueueFamilies,
 }
 
 impl LogicalDevice {
@@ -313,6 +312,23 @@ impl LogicalDevice {
             present_queue,
             queues,
         })
+    }
+
+    pub fn device(&self) -> &ash::Device {
+        &self.device
+    }
+
+    pub fn graphics_queue(&self) -> vk::Queue {
+        self.graphics_queue
+    }
+
+    pub fn present_queue(&self) -> vk::Queue {
+        self.present_queue
+    }
+
+    #[allow(dead_code)]
+    pub fn queues(&self) -> QueueFamilies {
+        self.queues
     }
 }
 
