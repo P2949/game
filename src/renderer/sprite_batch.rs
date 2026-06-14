@@ -12,7 +12,6 @@ pub struct SpriteBatchRange {
 pub struct SpriteBatchBuildStats {
     pub sprite_count: usize,
     pub vertex_count: usize,
-    pub index_count: usize,
     pub dropped_invalid_sprites: usize,
 }
 
@@ -39,6 +38,7 @@ impl SpriteBatch {
 
     pub fn clear(&mut self) {
         self.sprites.clear();
+        self.next_order = 0;
         self.dropped_invalid_sprites = 0;
     }
 
@@ -130,7 +130,6 @@ impl SpriteBatch {
         Ok(SpriteBatchBuildStats {
             sprite_count,
             vertex_count,
-            index_count: vertex_count,
             dropped_invalid_sprites: self.dropped_invalid_sprites,
         })
     }
@@ -303,6 +302,26 @@ mod tests {
         assert_eq!(stats, SpriteBatchBuildStats::default());
         assert!(vertices.is_empty());
         assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn clear_resets_submission_order_and_drop_count() {
+        let mut batch = SpriteBatch::new();
+        assert!(batch.push(sprite(TEST_TEXTURE_ID, 0)));
+
+        let mut invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.size.x = 0.0;
+        assert!(!batch.push(invalid));
+        assert_eq!(batch.next_order, 1);
+
+        batch.clear();
+
+        assert_eq!(batch.next_order, 0);
+        let mut vertices = Vec::new();
+        let mut ranges = Vec::new();
+        let stats = batch.build_into(&mut vertices, &mut ranges).unwrap();
+        assert_eq!(stats.dropped_invalid_sprites, 0);
+        assert_eq!(stats.sprite_count, 0);
     }
 
     #[test]

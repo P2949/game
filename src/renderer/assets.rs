@@ -86,6 +86,10 @@ pub fn load_builtin_textures(
 }
 
 pub fn asset_root() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("GAME_ASSET_DIR") {
+        return asset_root_from_override(PathBuf::from(path));
+    }
+
     let candidates = asset_root_candidates()?;
 
     for candidate in &candidates {
@@ -105,6 +109,18 @@ pub fn asset_root() -> anyhow::Result<PathBuf> {
     anyhow::bail!(message)
 }
 
+fn asset_root_from_override(path: PathBuf) -> anyhow::Result<PathBuf> {
+    if path.is_dir() {
+        log::info!("using asset root from GAME_ASSET_DIR: {}", path.display());
+        return Ok(path);
+    }
+
+    anyhow::bail!(
+        "GAME_ASSET_DIR={} is set but is not a directory",
+        path.display()
+    )
+}
+
 struct AssetRootCandidate {
     path: PathBuf,
     description: String,
@@ -113,15 +129,6 @@ struct AssetRootCandidate {
 
 fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
     let mut candidates = Vec::new();
-
-    if let Some(path) = std::env::var_os("GAME_ASSET_DIR") {
-        let path = PathBuf::from(path);
-        candidates.push(AssetRootCandidate {
-            description: format!("GAME_ASSET_DIR={}", path.display()),
-            path,
-            is_debug_fallback: false,
-        });
-    }
 
     let exe = std::env::current_exe().context("failed to resolve current executable path")?;
     if let Some(exe_dir) = exe.parent() {
@@ -143,4 +150,19 @@ fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
     }
 
     Ok(candidates)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::asset_root_from_override;
+    use std::path::Path;
+
+    #[test]
+    fn asset_override_requires_existing_directory() {
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        assert_eq!(asset_root_from_override(assets.clone()).unwrap(), assets);
+
+        let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("does-not-exist");
+        assert!(asset_root_from_override(missing).is_err());
+    }
 }
