@@ -2,6 +2,9 @@
 name = "game"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Small Rust/SDL3/Vulkan game prototype"
+repository = "https://github.com/P2949/game"
 
 [dependencies]
 sdl3 = "0.18.4"            
@@ -21,6 +24,11 @@ env_logger = "0.11"
 
 [build-dependencies]
 walkdir = "2"
+
+[features]
+# CI uses the sdl3 crate's pinned source package so the workflow does not depend
+# on whether the runner image happens to ship a `libsdl3-dev` apt package.
+ci-build-sdl3 = ["sdl3/build-from-source"]
 
 [profile.release]
 # Production builds: optimize across the whole crate graph. codegen-units = 1

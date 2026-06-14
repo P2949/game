@@ -1,32 +1,39 @@
-use ash::{Entry, vk};
-use gpu_allocator::MemoryLocation;
-use std::ffi::{CStr, CString};
-use std::path::PathBuf;
+use ash::vk;
 use std::time::{Duration, Instant};
 
+use crate::renderer::commands::{
+    RenderSpriteBatch, RenderSpriteRange, record_sprite_commands, resolve_draw_ranges,
+    submit_frame, ui_projection, upload_sprite_vertices,
+};
+use crate::renderer::owned::{
+    OwnedCommandPool, OwnedDescriptorSetLayout, OwnedFence, OwnedSemaphore,
+};
+use crate::renderer::recreate::{
+    SwapchainRecreateAction, SwapchainRecreateReason, request_soft_recreate,
+    swapchain_recreate_action,
+};
 use crate::renderer::sprite_batch::{SpriteBatch, SpriteBatchRange};
+use crate::renderer::texture_registry::{TextureRegistry, TextureRegistryGuard};
 use crate::renderer::vertex::SpriteVertex;
 use crate::renderer::{
-    DrawCommands, FONT_TEXTURE_ID, SpriteDraw, TEST_TEXTURE_ID, buffer, debug, device, frame,
-    pipeline, swapchain, text, texture,
+    DrawCommands, FONT_TEXTURE_ID, SpriteDraw, TEST_TEXTURE_ID, assets, buffer, device, frame,
+    instance, pipeline, swapchain, text, texture,
 };
 
-const INITIAL_SPRITE_VERTEX_BUFFER_BYTES: vk::DeviceSize = 1024 * 1024;
 // Rate-limit swapchain recreations as defense against a driver that reports
 // suboptimal/out-of-date every frame. User-driven resizes are already debounced
 // in the platform layer before a recreate request reaches the context, so no
 // additional extent-stabilization wait is needed here.
 const MIN_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
+const FRAME_TIMING_LOG_INTERVAL: Duration = Duration::from_secs(1);
 const UI_TEXT_LAYER: i16 = 1000;
 
 pub struct VulkanContext {
-    // Keep the Vulkan loader alive for objects created from it.
-    #[allow(dead_code)]
-    pub entry: Entry,
-    pub instance: ash::Instance,
-    pub debug_utils: Option<ash::ext::debug_utils::Instance>,
-    pub debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+    // Declared before the instance so it drops first once Surface becomes RAII.
     pub surface: crate::renderer::surface::Surface,
+    // Keep the Vulkan loader/instance/debug messenger alive for objects created
+    // from them. This RAII owner must remain intact during construction.
+    pub instance: instance::VulkanInstance,
     #[allow(dead_code)]
     pub physical_device: vk::PhysicalDevice,
     #[allow(dead_code)]
@@ -43,168 +50,107 @@ pub struct VulkanContext {
     scratch_batch_ranges: Vec<SpriteBatchRange>,
     world_draw_ranges: Vec<RenderSpriteRange>,
     ui_draw_ranges: Vec<RenderSpriteRange>,
-    pub test_texture: Option<texture::Texture>,
-    pub font_texture: Option<texture::Texture>,
     pub font_atlas: text::FontAtlas,
-    pub texture_descriptor_set_layout: vk::DescriptorSetLayout,
-    pub texture_descriptor_pool: vk::DescriptorPool,
-    pub texture_descriptor_set: vk::DescriptorSet,
-    pub font_descriptor_pool: vk::DescriptorPool,
-    pub font_descriptor_set: vk::DescriptorSet,
-    pub upload_command_pool: vk::CommandPool,
-    pub upload_fence: vk::Fence,
+    // Device-child handles owned via RAII wrappers. They are `Option`/`Vec` so
+    // `Drop` can release them (while the device is still alive) before the
+    // logical device itself is destroyed. See `owned.rs`.
+    texture_descriptor_set_layout: Option<OwnedDescriptorSetLayout>,
+    // Owns every registered texture plus its descriptor set/pool; the render path
+    // looks descriptor sets up by id instead of branching per texture.
+    texture_registry: TextureRegistry,
+    upload_command_pool: Option<OwnedCommandPool>,
+    upload_fence: Option<OwnedFence>,
     pub swapchain: swapchain::Swapchain,
     pub swapchain_image_views: swapchain::SwapchainImageViews,
     pub sprite_pipeline: pipeline::GraphicsPipeline,
-    pub image_render_finished: Vec<vk::Semaphore>,
-    pub frames: Vec<frame::FrameData>,
+    image_render_finished: Vec<OwnedSemaphore>,
+    frames: Vec<frame::FrameData>,
     pub current_frame: usize,
     swapchain_recreate_request: Option<SwapchainRecreateReason>,
     last_swapchain_recreate: Option<Instant>,
+    last_frame_timing_log: Instant,
 }
 
 impl VulkanContext {
     pub fn new(window: &sdl3::video::Window) -> anyhow::Result<Self> {
-        let entry = unsafe { Entry::load()? };
+        let instance = instance::VulkanInstance::new(window)?;
 
-        let app_name = CString::new("sdl3-ash-demo")?;
-        let engine_name = CString::new("no-engine")?;
-
-        let app_info = vk::ApplicationInfo::default()
-            .application_name(&app_name)
-            .application_version(vk::make_api_version(0, 0, 1, 0))
-            .engine_name(&engine_name)
-            .engine_version(vk::make_api_version(0, 0, 1, 0))
-            .api_version(vk::API_VERSION_1_3);
-
-        // SDL tells you which platform-specific instance extensions are needed
-        // to create a surface for this window.
-        let sdl_extensions = window
-            .vulkan_instance_extensions()
-            .map_err(anyhow::Error::msg)?;
-
-        let mut extension_names: Vec<CString> = sdl_extensions
-            .iter()
-            .map(|name| CString::new(name.as_str()).expect("SDL extension name contains NUL"))
-            .collect();
-
-        if cfg!(debug_assertions) {
-            extension_names.push(ash::ext::debug_utils::NAME.to_owned());
-        }
-
-        let extension_ptrs: Vec<*const i8> =
-            extension_names.iter().map(|name| name.as_ptr()).collect();
-
-        let layer_names: Vec<&CStr> = if cfg!(debug_assertions) {
-            if !validation_layer_available(&entry)? {
-                anyhow::bail!(
-                    "debug build requested {}, but the Vulkan validation layer is not installed",
-                    debug::VALIDATION_LAYER.to_string_lossy()
-                );
-            }
-            vec![debug::VALIDATION_LAYER]
-        } else {
-            vec![]
-        };
-        let layer_ptrs: Vec<*const i8> = layer_names.iter().map(|layer| layer.as_ptr()).collect();
-
-        let validation_enables = [vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION];
-        let mut validation_features =
-            vk::ValidationFeaturesEXT::default().enabled_validation_features(&validation_enables);
-
-        let mut debug_create_info = debug::debug_messenger_create_info();
-
-        let mut instance_info = vk::InstanceCreateInfo::default()
-            .application_info(&app_info)
-            .enabled_extension_names(&extension_ptrs)
-            .enabled_layer_names(&layer_ptrs);
-
-        if cfg!(debug_assertions) {
-            instance_info = instance_info
-                .push_next(&mut validation_features)
-                .push_next(&mut debug_create_info);
-        }
-
-        let instance = unsafe { entry.create_instance(&instance_info, None)? };
-
-        let (debug_utils, debug_messenger) = if cfg!(debug_assertions) {
-            let debug_utils = ash::ext::debug_utils::Instance::new(&entry, &instance);
-            let messenger = unsafe {
-                debug_utils
-                    .create_debug_utils_messenger(&debug::debug_messenger_create_info(), None)?
-            };
-            (Some(debug_utils), Some(messenger))
-        } else {
-            (None, None)
-        };
-
-        let surface = crate::renderer::surface::Surface::new(&entry, &instance, window)?;
+        let surface =
+            crate::renderer::surface::Surface::new(instance.entry(), instance.handle(), window)?;
         let selected_device =
-            device::select_physical_device(&instance, &surface.loader, surface.handle)?;
+            device::select_physical_device(instance.handle(), surface.loader(), surface.handle())?;
         let logical_device = device::LogicalDevice::new(
-            &instance,
+            instance.handle(),
             selected_device.physical_device,
             selected_device.queue_families,
         )?;
-        let upload_command_pool = create_upload_command_pool(
+        // Adopt each raw handle into an owning RAII wrapper immediately, so any
+        // `?` failure further down drops everything created so far (reverse
+        // declaration order keeps these child resources destroyed before the
+        // logical device local that owns the `VkDevice`).
+        let upload_command_pool = OwnedCommandPool::from_handle(
             &logical_device.device,
-            selected_device.queue_families.graphics,
-        )?;
-        let upload_fence = create_upload_fence(&logical_device.device)?;
+            create_upload_command_pool(
+                &logical_device.device,
+                selected_device.queue_families.graphics,
+            )?,
+        );
+        let upload_fence = OwnedFence::from_handle(
+            &logical_device.device,
+            create_upload_fence(&logical_device.device)?,
+        );
         let mut allocator = buffer::create_allocator(
-            instance.clone(),
+            instance.handle().clone(),
             logical_device.device.clone(),
             selected_device.physical_device,
         )?;
-        let (test_texture, font_texture, font_atlas) = {
+        let assets::RendererAssets {
+            test_texture,
+            font_texture,
+            font_atlas,
+        } = {
             let mut texture_upload = texture::TextureUpload {
                 device: &logical_device.device,
                 allocator: &mut allocator,
                 queue: logical_device.graphics_queue,
-                upload_pool: upload_command_pool,
-                upload_fence,
+                upload_pool: upload_command_pool.handle(),
+                upload_fence: upload_fence.handle(),
             };
-
-            let test_texture = texture::Texture::from_path(
-                &mut texture_upload,
-                asset_path("assets/textures/test.png"),
-                texture::TextureColorSpace::SrgbColor,
-                "test texture",
-            )?;
-            let font_atlas_image = text::build_ascii_atlas(
-                asset_path("assets/fonts/DejaVuSans.ttf"),
-                FONT_TEXTURE_ID,
-            )?;
-            let font_texture = texture::Texture::from_rgba8(
-                &mut texture_upload,
-                font_atlas_image.width,
-                font_atlas_image.height,
-                &font_atlas_image.pixels,
-                texture::TextureColorSpace::LinearData,
-                "font atlas",
-            )?;
-
-            (test_texture, font_texture, font_atlas_image.atlas)
+            assets::RendererAssets::load(&mut texture_upload)?
         };
-        let texture_descriptor_set_layout =
-            texture::create_texture_descriptor_set_layout(&logical_device.device)?;
-        let (texture_descriptor_pool, texture_descriptor_set) =
-            texture::create_texture_descriptor_set(
-                &logical_device.device,
-                texture_descriptor_set_layout,
-                &test_texture,
-            )?;
-        let (font_descriptor_pool, font_descriptor_set) = texture::create_texture_descriptor_set(
+        let texture_descriptor_set_layout = OwnedDescriptorSetLayout::from_handle(
             &logical_device.device,
-            texture_descriptor_set_layout,
-            &font_texture,
+            texture::create_texture_descriptor_set_layout(&logical_device.device)?,
+        );
+        // Register the built-in textures in the order their ids are defined, so
+        // `TEST_TEXTURE_ID` / `FONT_TEXTURE_ID` keep resolving to the right entry.
+        let mut texture_registry_guard =
+            TextureRegistryGuard::new(&logical_device.device, &mut allocator);
+        let test_id = texture_registry_guard.register_texture(
+            texture_descriptor_set_layout.handle(),
+            test_texture,
+            "test texture",
         )?;
+        let font_id = texture_registry_guard.register_texture(
+            texture_descriptor_set_layout.handle(),
+            font_texture,
+            "font atlas",
+        )?;
+        assert_eq!(
+            test_id, TEST_TEXTURE_ID,
+            "built-in test texture must keep its stable TextureId"
+        );
+        assert_eq!(
+            font_id, FONT_TEXTURE_ID,
+            "built-in font texture must keep its stable TextureId"
+        );
+        let texture_registry = texture_registry_guard.finish();
         let swapchain = swapchain::Swapchain::new(
-            &instance,
+            instance.handle(),
             &logical_device.device,
             selected_device.physical_device,
-            &surface.loader,
-            surface.handle,
+            surface.loader(),
+            surface.handle(),
             selected_device.queue_families,
             window.size_in_pixels(),
             vk::SwapchainKHR::null(),
@@ -217,7 +163,7 @@ impl VulkanContext {
         let sprite_pipeline = pipeline::GraphicsPipeline::new_sprite(
             &logical_device.device,
             swapchain.format,
-            texture_descriptor_set_layout,
+            texture_descriptor_set_layout.handle(),
         )?;
         let image_render_finished = create_image_render_finished_semaphores(
             &logical_device.device,
@@ -235,11 +181,8 @@ impl VulkanContext {
         let dynamic_sprite_buffers = (0..frame::MAX_FRAMES_IN_FLIGHT).map(|_| None).collect();
 
         Ok(Self {
-            entry,
-            instance,
-            debug_utils,
-            debug_messenger,
             surface,
+            instance,
             physical_device: selected_device.physical_device,
             queue_families: selected_device.queue_families,
             logical_device: Some(logical_device),
@@ -251,16 +194,11 @@ impl VulkanContext {
             scratch_batch_ranges: Vec::new(),
             world_draw_ranges: Vec::new(),
             ui_draw_ranges: Vec::new(),
-            test_texture: Some(test_texture),
-            font_texture: Some(font_texture),
             font_atlas,
-            texture_descriptor_set_layout,
-            texture_descriptor_pool,
-            texture_descriptor_set,
-            font_descriptor_pool,
-            font_descriptor_set,
-            upload_command_pool,
-            upload_fence,
+            texture_descriptor_set_layout: Some(texture_descriptor_set_layout),
+            texture_registry,
+            upload_command_pool: Some(upload_command_pool),
+            upload_fence: Some(upload_fence),
             swapchain,
             swapchain_image_views,
             sprite_pipeline,
@@ -269,6 +207,7 @@ impl VulkanContext {
             current_frame: 0,
             swapchain_recreate_request: None,
             last_swapchain_recreate: None,
+            last_frame_timing_log: Instant::now(),
         })
     }
 
@@ -286,6 +225,15 @@ impl VulkanContext {
         self.swapchain_recreate_request = Some(SwapchainRecreateReason::SurfaceOutOfDate);
     }
 
+    /// Handle of the texture descriptor set layout. Present for the whole life of
+    /// the context (only cleared during `Drop`), so this never fails in practice.
+    fn descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
+        self.texture_descriptor_set_layout
+            .as_ref()
+            .expect("texture descriptor set layout present until drop")
+            .handle()
+    }
+
     fn clear_sprite_batches(&mut self) {
         self.world_sprite_batch.clear();
         self.ui_sprite_batch.clear();
@@ -301,9 +249,9 @@ impl VulkanContext {
         }
 
         let support = swapchain::query_swapchain_support(
-            &self.surface.loader,
+            self.surface.loader(),
             self.physical_device,
-            self.surface.handle,
+            self.surface.handle(),
         )?;
 
         Ok(Some(swapchain::choose_extent(
@@ -363,77 +311,45 @@ impl VulkanContext {
 
         let old_swapchain = self.swapchain.handle;
         let new_swapchain = swapchain::Swapchain::new(
-            &self.instance,
+            self.instance.handle(),
             device,
             self.physical_device,
-            &self.surface.loader,
-            self.surface.handle,
+            self.surface.loader(),
+            self.surface.handle(),
             self.queue_families,
             (width, height),
             old_swapchain,
         )?;
         let format_changed = new_swapchain.format != self.swapchain.format;
-        let new_swapchain_image_views = match swapchain::SwapchainImageViews::new(
+        let new_swapchain_image_views = swapchain::SwapchainImageViews::new(
             device,
             &new_swapchain.images,
             new_swapchain.format,
-        ) {
-            Ok(views) => views,
-            Err(err) => {
-                unsafe {
-                    new_swapchain.destroy();
-                }
-                return Err(err);
-            }
-        };
+        )?;
         let new_sprite_pipeline = if format_changed {
-            match pipeline::GraphicsPipeline::new_sprite(
+            Some(pipeline::GraphicsPipeline::new_sprite(
                 device,
                 new_swapchain.format,
-                self.texture_descriptor_set_layout,
-            ) {
-                Ok(pipeline) => Some(pipeline),
-                Err(err) => {
-                    unsafe {
-                        new_swapchain_image_views.destroy(device);
-                        new_swapchain.destroy();
-                    }
-                    return Err(err);
-                }
-            }
+                self.descriptor_set_layout(),
+            )?)
         } else {
             None
         };
         let new_image_render_finished =
-            match create_image_render_finished_semaphores(device, new_swapchain.images.len()) {
-                Ok(semaphores) => semaphores,
-                Err(err) => {
-                    unsafe {
-                        if let Some(new_sprite_pipeline) = &new_sprite_pipeline {
-                            new_sprite_pipeline.destroy(device);
-                        }
-                        new_swapchain_image_views.destroy(device);
-                        new_swapchain.destroy();
-                    }
-                    return Err(err);
-                }
-            };
+            create_image_render_finished_semaphores(device, new_swapchain.images.len())?;
 
-        unsafe {
-            for &semaphore in &self.image_render_finished {
-                device.destroy_semaphore(semaphore, None);
-            }
-
-            if let Some(new_sprite_pipeline) = new_sprite_pipeline {
-                self.sprite_pipeline.destroy(device);
-                self.sprite_pipeline = new_sprite_pipeline;
-            }
-            self.swapchain_image_views.destroy(device);
-            self.swapchain.destroy();
+        if let Some(new_sprite_pipeline) = new_sprite_pipeline {
+            self.sprite_pipeline.destroy();
+            self.sprite_pipeline = new_sprite_pipeline;
         }
+
+        self.swapchain_image_views.destroy();
+        self.swapchain.destroy();
 
         self.swapchain = new_swapchain;
         self.swapchain_image_views = new_swapchain_image_views;
+        // Replacing the vector drops the previous owned semaphores here, which is
+        // safe because `device_wait_idle` above guaranteed no frame is using them.
         self.image_render_finished = new_image_render_finished;
         self.swapchain_recreate_request = None;
         self.last_swapchain_recreate = Some(Instant::now());
@@ -483,6 +399,8 @@ impl VulkanContext {
             }
         }
 
+        let frame_start = Instant::now();
+
         let Some(logical_device) = self.logical_device.as_ref() else {
             anyhow::bail!("cannot render after logical device has been destroyed");
         };
@@ -492,9 +410,9 @@ impl VulkanContext {
 
         let frame_index = self.current_frame;
         let frame = &self.frames[frame_index];
-        let command_buffer = frame.command_buffer;
-        let image_available = frame.image_available;
-        let in_flight = frame.in_flight;
+        let command_buffer = frame.command_buffer();
+        let image_available = frame.image_available();
+        let in_flight = frame.in_flight();
 
         // Assemble sprite geometry into reusable scratch buffers before touching
         // the GPU, overlapping this CPU work with the previous frame's fence
@@ -503,8 +421,6 @@ impl VulkanContext {
         self.sprite_vertices.clear();
         self.world_draw_ranges.clear();
         self.ui_draw_ranges.clear();
-        let test_set = self.texture_descriptor_set;
-        let font_set = self.font_descriptor_set;
 
         self.scratch_batch_ranges.clear();
         self.world_sprite_batch
@@ -512,8 +428,7 @@ impl VulkanContext {
         resolve_draw_ranges(
             &self.scratch_batch_ranges,
             &mut self.world_draw_ranges,
-            test_set,
-            font_set,
+            &self.texture_registry,
         )?;
 
         self.scratch_batch_ranges.clear();
@@ -522,21 +437,43 @@ impl VulkanContext {
         resolve_draw_ranges(
             &self.scratch_batch_ranges,
             &mut self.ui_draw_ranges,
-            test_set,
-            font_set,
+            &self.texture_registry,
         )?;
 
         self.clear_sprite_batches();
 
         unsafe {
+            let wait_start = Instant::now();
             device.wait_for_fences(std::slice::from_ref(&in_flight), true, u64::MAX)?;
+            let wait_duration = wait_start.elapsed();
 
+            // Upload this frame's vertices before acquiring a swapchain image, so a
+            // fallible allocation/copy fails here rather than after we already hold
+            // an acquired image and a signaled acquire semaphore (which would leave
+            // the frame's sync in an awkward, half-used state). Overwriting the
+            // buffer is safe now because the fence wait above — not the acquire —
+            // is what guarantees the GPU finished this frame's previous use of it.
+            let allocator = self
+                .allocator
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("allocator has been destroyed"))?;
+            let vertex_start = Instant::now();
+            let sprite_vertex_buffer = upload_sprite_vertices(
+                &device,
+                allocator,
+                &mut self.dynamic_sprite_buffers[frame_index],
+                &self.sprite_vertices,
+            )?;
+            let vertex_duration = vertex_start.elapsed();
+
+            let acquire_start = Instant::now();
             let acquire_result = self.swapchain.loader.acquire_next_image(
                 self.swapchain.handle,
                 u64::MAX,
                 image_available,
                 vk::Fence::null(),
             );
+            let acquire_duration = acquire_start.elapsed();
 
             let (image_index, suboptimal) = match acquire_result {
                 Ok(result) => result,
@@ -550,23 +487,10 @@ impl VulkanContext {
             let mut recreate_after_present =
                 suboptimal && !self.swapchain_extent_matches_window(window)?;
 
-            // Overwriting this frame's vertex buffer is only safe now that the
-            // fence wait above has guaranteed the GPU finished its previous use.
-            let allocator = self
-                .allocator
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("allocator has been destroyed"))?;
-            let sprite_vertex_buffer = upload_sprite_vertices(
-                &device,
-                allocator,
-                &mut self.dynamic_sprite_buffers[frame_index],
-                &self.sprite_vertices,
-            )?;
-
             device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
 
             let image_index_usize = image_index as usize;
-            let render_finished = self.image_render_finished[image_index_usize];
+            let render_finished = self.image_render_finished[image_index_usize].handle();
             let world_projection = camera
                 .view_projection(
                     self.swapchain.extent.width as f32,
@@ -585,6 +509,7 @@ impl VulkanContext {
                 },
             ];
 
+            let record_start = Instant::now();
             record_sprite_commands(
                 &device,
                 command_buffer,
@@ -596,7 +521,9 @@ impl VulkanContext {
                 sprite_vertex_buffer,
                 &render_batches,
             )?;
+            let record_duration = record_start.elapsed();
 
+            let submit_start = Instant::now();
             let submit_result = submit_frame(
                 &device,
                 graphics_queue,
@@ -609,6 +536,7 @@ impl VulkanContext {
                 render_finished,
                 image_index,
             );
+            let submit_present_duration = submit_start.elapsed();
 
             let present_suboptimal = match submit_result {
                 Ok(suboptimal) => suboptimal,
@@ -628,6 +556,20 @@ impl VulkanContext {
 
             if recreate_after_present {
                 self.request_soft_swapchain_recreate();
+            }
+
+            if self.last_frame_timing_log.elapsed() >= FRAME_TIMING_LOG_INTERVAL {
+                let total_duration = frame_start.elapsed();
+                log::info!(
+                    "frame timings: total={:.3}ms fence={:.3}ms acquire={:.3}ms vertex={:.3}ms record={:.3}ms submit_present={:.3}ms",
+                    duration_ms(total_duration),
+                    duration_ms(wait_duration),
+                    duration_ms(acquire_duration),
+                    duration_ms(vertex_duration),
+                    duration_ms(record_duration),
+                    duration_ms(submit_present_duration),
+                );
+                self.last_frame_timing_log = Instant::now();
             }
         }
 
@@ -662,28 +604,15 @@ impl Drop for VulkanContext {
             if let Some(logical_device) = self.logical_device.as_ref() {
                 let _ = logical_device.device.device_wait_idle();
 
-                self.sprite_pipeline.destroy(&logical_device.device);
+                self.sprite_pipeline.destroy();
 
-                logical_device
-                    .device
-                    .destroy_descriptor_pool(self.texture_descriptor_pool, None);
-                logical_device
-                    .device
-                    .destroy_descriptor_pool(self.font_descriptor_pool, None);
-
-                if let (Some(texture), Some(allocator)) =
-                    (self.test_texture.take(), self.allocator.as_mut())
-                {
-                    texture.destroy(&logical_device.device, allocator);
-                }
-
-                if let (Some(texture), Some(allocator)) =
-                    (self.font_texture.take(), self.allocator.as_mut())
-                {
-                    texture.destroy(&logical_device.device, allocator);
-                }
-
+                // Textures and buffers free both a Vulkan handle and an allocator
+                // allocation, so they keep explicit destroy(device, allocator)
+                // calls — a Drop impl cannot reach the externally-owned allocator.
                 if let Some(allocator) = self.allocator.as_mut() {
+                    self.texture_registry
+                        .destroy(&logical_device.device, allocator);
+
                     for vertex_buffer in &mut self.dynamic_sprite_buffers {
                         if let Some(vertex_buffer) = vertex_buffer.take() {
                             vertex_buffer.destroy(&logical_device.device, allocator);
@@ -691,24 +620,17 @@ impl Drop for VulkanContext {
                     }
                 }
 
-                logical_device
-                    .device
-                    .destroy_descriptor_set_layout(self.texture_descriptor_set_layout, None);
+                // Release every device-child RAII handle now, while the logical
+                // device is still alive. Each owned wrapper destroys its handle on
+                // drop; clearing the collections and taking the `Option`s forces
+                // those drops to run here rather than after the device is gone.
+                self.frames.clear();
+                self.image_render_finished.clear();
+                self.texture_descriptor_set_layout = None;
+                self.upload_fence = None;
+                self.upload_command_pool = None;
 
-                logical_device.device.destroy_fence(self.upload_fence, None);
-                logical_device
-                    .device
-                    .destroy_command_pool(self.upload_command_pool, None);
-
-                for &semaphore in &self.image_render_finished {
-                    logical_device.device.destroy_semaphore(semaphore, None);
-                }
-
-                for frame in &self.frames {
-                    frame.destroy(&logical_device.device);
-                }
-
-                self.swapchain_image_views.destroy(&logical_device.device);
+                self.swapchain_image_views.destroy();
             }
 
             if let Some(allocator) = self.allocator.take() {
@@ -720,14 +642,6 @@ impl Drop for VulkanContext {
             if let Some(logical_device) = self.logical_device.take() {
                 drop(logical_device);
             }
-
-            self.surface.destroy();
-
-            if let (Some(debug_utils), Some(messenger)) = (&self.debug_utils, self.debug_messenger)
-            {
-                debug_utils.destroy_debug_utils_messenger(messenger, None);
-            }
-            self.instance.destroy_instance(None);
         }
     }
 }
@@ -755,501 +669,16 @@ fn create_upload_fence(device: &ash::Device) -> anyhow::Result<vk::Fence> {
 fn create_image_render_finished_semaphores(
     device: &ash::Device,
     image_count: usize,
-) -> anyhow::Result<Vec<vk::Semaphore>> {
-    let semaphore_info = vk::SemaphoreCreateInfo::default();
+) -> anyhow::Result<Vec<OwnedSemaphore>> {
+    // RAII makes the failure path trivial: if any semaphore creation fails, the
+    // partially-filled vector drops, destroying every semaphore created so far.
     let mut semaphores = Vec::with_capacity(image_count);
-
     for _ in 0..image_count {
-        match unsafe { device.create_semaphore(&semaphore_info, None) } {
-            Ok(semaphore) => semaphores.push(semaphore),
-            Err(err) => {
-                for &semaphore in &semaphores {
-                    unsafe {
-                        device.destroy_semaphore(semaphore, None);
-                    }
-                }
-                return Err(err.into());
-            }
-        }
+        semaphores.push(OwnedSemaphore::new(device)?);
     }
-
     Ok(semaphores)
-}
-
-struct RenderSpriteRange {
-    descriptor_set: vk::DescriptorSet,
-    first_vertex: u32,
-    vertex_count: u32,
-}
-
-struct RenderSpriteBatch<'a> {
-    projection: [f32; 16],
-    ranges: &'a [RenderSpriteRange],
-}
-
-/// Why a swapchain recreation is pending.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SwapchainRecreateReason {
-    /// Soft request from a resize or `SUBOPTIMAL_KHR`. May be skipped if the
-    /// current swapchain extent already matches the window, and is subject to
-    /// the resize debounce / recreate rate-limit.
-    ResizeOrSuboptimal,
-    /// Hard request from `ERROR_OUT_OF_DATE_KHR`. The current swapchain can no
-    /// longer be used, so this must recreate as soon as a nonzero drawable
-    /// extent is available, regardless of extent match or rate-limit.
-    SurfaceOutOfDate,
-}
-
-/// The action the top-of-render gate should take for a pending recreate request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SwapchainRecreateAction {
-    /// Drop the request and render this frame normally (extent already matches).
-    ClearRequest,
-    /// Skip rendering this frame and keep the request pending.
-    Wait,
-    /// Recreate the swapchain now.
-    Recreate,
-}
-
-/// Pure decision policy for a pending swapchain recreate request. Kept free of
-/// Vulkan/SDL state so it can be unit-tested directly.
-///
-/// Hard `SurfaceOutOfDate` requests recreate as soon as the drawable extent is
-/// nonzero — they ignore both the extent-match short-circuit and the soft
-/// rate-limit, since continuing to use an out-of-date swapchain is never valid.
-fn swapchain_recreate_action(
-    reason: SwapchainRecreateReason,
-    has_nonzero_extent: bool,
-    extent_matches: bool,
-    soft_recreate_ready: bool,
-) -> SwapchainRecreateAction {
-    if !has_nonzero_extent {
-        return SwapchainRecreateAction::Wait;
-    }
-
-    match reason {
-        SwapchainRecreateReason::SurfaceOutOfDate => SwapchainRecreateAction::Recreate,
-        SwapchainRecreateReason::ResizeOrSuboptimal if extent_matches => {
-            SwapchainRecreateAction::ClearRequest
-        }
-        SwapchainRecreateReason::ResizeOrSuboptimal if soft_recreate_ready => {
-            SwapchainRecreateAction::Recreate
-        }
-        SwapchainRecreateReason::ResizeOrSuboptimal => SwapchainRecreateAction::Wait,
-    }
-}
-
-/// Records a soft recreate request without downgrading an already-pending hard
-/// (`SurfaceOutOfDate`) request. Free function so the priority rule is testable.
-fn request_soft_recreate(request: &mut Option<SwapchainRecreateReason>) {
-    if *request != Some(SwapchainRecreateReason::SurfaceOutOfDate) {
-        *request = Some(SwapchainRecreateReason::ResizeOrSuboptimal);
-    }
 }
 
 fn duration_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
-}
-
-/// Resolves each batch range's texture id to its descriptor set, appending the
-/// GPU-ready draw ranges to `out`. `out` is appended to (never cleared) so the
-/// caller controls buffer reuse across frames.
-fn resolve_draw_ranges(
-    batch_ranges: &[SpriteBatchRange],
-    out: &mut Vec<RenderSpriteRange>,
-    test_descriptor_set: vk::DescriptorSet,
-    font_descriptor_set: vk::DescriptorSet,
-) -> anyhow::Result<()> {
-    out.reserve(batch_ranges.len());
-    for range in batch_ranges {
-        let descriptor_set = if range.texture == TEST_TEXTURE_ID {
-            test_descriptor_set
-        } else if range.texture == FONT_TEXTURE_ID {
-            font_descriptor_set
-        } else {
-            anyhow::bail!("unknown texture id {:?}", range.texture);
-        };
-
-        out.push(RenderSpriteRange {
-            descriptor_set,
-            first_vertex: range.first_vertex,
-            vertex_count: range.vertex_count,
-        });
-    }
-
-    Ok(())
-}
-
-/// Uploads `vertices` into this frame's dynamic vertex buffer, growing (and
-/// reallocating) it only when the existing capacity is too small. Returns the
-/// buffer handle to bind, or `None` when there is nothing to draw.
-fn upload_sprite_vertices(
-    device: &ash::Device,
-    allocator: &mut gpu_allocator::vulkan::Allocator,
-    buffer_slot: &mut Option<buffer::Buffer>,
-    vertices: &[SpriteVertex],
-) -> anyhow::Result<Option<vk::Buffer>> {
-    if vertices.is_empty() {
-        return Ok(None);
-    }
-
-    let required_bytes = std::mem::size_of_val(vertices) as vk::DeviceSize;
-    let should_recreate = match buffer_slot {
-        Some(buffer) => buffer.size < required_bytes,
-        None => true,
-    };
-
-    if should_recreate {
-        if let Some(old_buffer) = buffer_slot.take() {
-            unsafe {
-                old_buffer.destroy(device, allocator);
-            }
-        }
-
-        let capacity = sprite_vertex_buffer_capacity(required_bytes);
-        let buffer = buffer::Buffer::new(
-            device,
-            allocator,
-            capacity,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-            MemoryLocation::CpuToGpu,
-            "dynamic sprite vertex buffer",
-        )?;
-        *buffer_slot = Some(buffer);
-    }
-
-    let buffer = buffer_slot
-        .as_mut()
-        .expect("dynamic sprite buffer exists after creation");
-    buffer.copy_from_slice(vertices)?;
-    Ok(Some(buffer.handle))
-}
-
-#[allow(clippy::too_many_arguments)]
-unsafe fn record_sprite_commands(
-    device: &ash::Device,
-    cmd: vk::CommandBuffer,
-    image: vk::Image,
-    image_view: vk::ImageView,
-    extent: vk::Extent2D,
-    sprite_pipeline_layout: vk::PipelineLayout,
-    sprite_pipeline: vk::Pipeline,
-    sprite_vertex_buffer: Option<vk::Buffer>,
-    render_batches: &[RenderSpriteBatch<'_>],
-) -> anyhow::Result<()> {
-    let begin_info = vk::CommandBufferBeginInfo::default();
-    unsafe {
-        device.begin_command_buffer(cmd, &begin_info)?;
-    }
-
-    unsafe {
-        crate::renderer::texture::transition_image(
-            device,
-            cmd,
-            image,
-            vk::ImageLayout::UNDEFINED,
-            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            vk::AccessFlags2::empty(),
-            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-        );
-    }
-
-    let clear = vk::ClearValue {
-        color: vk::ClearColorValue {
-            float32: [0.02, 0.02, 0.04, 1.0],
-        },
-    };
-
-    let color_attachment = vk::RenderingAttachmentInfo::default()
-        .image_view(image_view)
-        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        .load_op(vk::AttachmentLoadOp::CLEAR)
-        .store_op(vk::AttachmentStoreOp::STORE)
-        .clear_value(clear);
-
-    let render_area = vk::Rect2D {
-        offset: vk::Offset2D { x: 0, y: 0 },
-        extent,
-    };
-
-    let rendering_info = vk::RenderingInfo::default()
-        .render_area(render_area)
-        .layer_count(1)
-        .color_attachments(std::slice::from_ref(&color_attachment));
-
-    unsafe {
-        device.cmd_begin_rendering(cmd, &rendering_info);
-
-        let viewport = vk::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: extent.width as f32,
-            height: extent.height as f32,
-            min_depth: 0.0,
-            max_depth: 1.0,
-        };
-
-        let scissor = vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent,
-        };
-
-        device.cmd_set_viewport(cmd, 0, std::slice::from_ref(&viewport));
-        device.cmd_set_scissor(cmd, 0, std::slice::from_ref(&scissor));
-
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, sprite_pipeline);
-
-        if let Some(sprite_vertex_buffer) = sprite_vertex_buffer {
-            let vertex_buffers = [sprite_vertex_buffer];
-            let offsets = [0_u64];
-            device.cmd_bind_vertex_buffers(cmd, 0, &vertex_buffers, &offsets);
-
-            for batch in render_batches {
-                if batch.ranges.is_empty() {
-                    continue;
-                }
-
-                device.cmd_push_constants(
-                    cmd,
-                    sprite_pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0,
-                    bytemuck::bytes_of(&batch.projection),
-                );
-
-                for range in batch.ranges {
-                    let descriptor_sets = [range.descriptor_set];
-                    device.cmd_bind_descriptor_sets(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        sprite_pipeline_layout,
-                        0,
-                        &descriptor_sets,
-                        &[],
-                    );
-                    device.cmd_draw(cmd, range.vertex_count, 1, range.first_vertex, 0);
-                }
-            }
-        }
-
-        device.cmd_end_rendering(cmd);
-
-        crate::renderer::texture::transition_image(
-            device,
-            cmd,
-            image,
-            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            vk::ImageLayout::PRESENT_SRC_KHR,
-            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-            vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
-            vk::AccessFlags2::empty(),
-        );
-
-        device.end_command_buffer(cmd)?;
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-unsafe fn submit_frame(
-    device: &ash::Device,
-    graphics_queue: vk::Queue,
-    present_queue: vk::Queue,
-    swapchain_loader: &ash::khr::swapchain::Device,
-    swapchain: vk::SwapchainKHR,
-    image_available: vk::Semaphore,
-    command_buffer: vk::CommandBuffer,
-    in_flight: vk::Fence,
-    render_finished: vk::Semaphore,
-    image_index: u32,
-) -> Result<bool, vk::Result> {
-    let wait_info = vk::SemaphoreSubmitInfo::default()
-        .semaphore(image_available)
-        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
-
-    let cmd_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
-
-    let signal_info = vk::SemaphoreSubmitInfo::default()
-        .semaphore(render_finished)
-        .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS);
-
-    let submit_info = vk::SubmitInfo2::default()
-        .wait_semaphore_infos(std::slice::from_ref(&wait_info))
-        .command_buffer_infos(std::slice::from_ref(&cmd_info))
-        .signal_semaphore_infos(std::slice::from_ref(&signal_info));
-
-    unsafe {
-        device.reset_fences(std::slice::from_ref(&in_flight))?;
-        device.queue_submit2(
-            graphics_queue,
-            std::slice::from_ref(&submit_info),
-            in_flight,
-        )?;
-    }
-
-    let wait_semaphores = [render_finished];
-    let swapchains = [swapchain];
-    let image_indices = [image_index];
-
-    let present_info = vk::PresentInfoKHR::default()
-        .wait_semaphores(&wait_semaphores)
-        .swapchains(&swapchains)
-        .image_indices(&image_indices);
-
-    unsafe {
-        let suboptimal = swapchain_loader.queue_present(present_queue, &present_info)?;
-        Ok(suboptimal)
-    }
-}
-
-fn asset_path(relative: &str) -> PathBuf {
-    // Prefer assets shipped next to the executable (the installed/distributed
-    // layout). Fall back to the crate manifest dir so `cargo run` works from a
-    // source checkout where assets live in the repo root.
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(exe_dir) = exe.parent()
-    {
-        let candidate = exe_dir.join(relative);
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
-}
-
-fn sprite_vertex_buffer_capacity(required_bytes: vk::DeviceSize) -> vk::DeviceSize {
-    let mut capacity = INITIAL_SPRITE_VERTEX_BUFFER_BYTES;
-    while capacity < required_bytes {
-        capacity *= 2;
-    }
-    capacity
-}
-
-fn ui_projection(extent: vk::Extent2D) -> glam::Mat4 {
-    glam::Mat4::orthographic_rh(
-        0.0,
-        extent.width as f32,
-        0.0,
-        extent.height as f32,
-        -1.0,
-        1.0,
-    )
-}
-
-fn validation_layer_available(entry: &Entry) -> anyhow::Result<bool> {
-    let layers = unsafe { entry.enumerate_instance_layer_properties()? };
-    Ok(layers.iter().any(|layer| {
-        let name = unsafe { CStr::from_ptr(layer.layer_name.as_ptr()) };
-        name == debug::VALIDATION_LAYER
-    }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        SwapchainRecreateAction, SwapchainRecreateReason, request_soft_recreate,
-        swapchain_recreate_action,
-    };
-
-    #[test]
-    fn soft_recreate_clears_when_extent_matches() {
-        assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::ResizeOrSuboptimal,
-                true,
-                true,
-                false,
-            ),
-            SwapchainRecreateAction::ClearRequest
-        );
-    }
-
-    #[test]
-    fn soft_recreate_waits_when_extent_differs_but_rate_limited() {
-        assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::ResizeOrSuboptimal,
-                true,
-                false,
-                false,
-            ),
-            SwapchainRecreateAction::Wait
-        );
-    }
-
-    #[test]
-    fn soft_recreate_recreates_when_extent_differs_and_ready() {
-        assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::ResizeOrSuboptimal,
-                true,
-                false,
-                true,
-            ),
-            SwapchainRecreateAction::Recreate
-        );
-    }
-
-    #[test]
-    fn soft_recreate_waits_for_zero_size() {
-        assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::ResizeOrSuboptimal,
-                false,
-                false,
-                true,
-            ),
-            SwapchainRecreateAction::Wait
-        );
-    }
-
-    #[test]
-    fn out_of_date_recreates_even_when_extent_matches() {
-        assert_eq!(
-            swapchain_recreate_action(SwapchainRecreateReason::SurfaceOutOfDate, true, true, false,),
-            SwapchainRecreateAction::Recreate
-        );
-    }
-
-    #[test]
-    fn out_of_date_ignores_soft_rate_limit() {
-        // Hard requests must recreate regardless of the soft rate-limit.
-        assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::SurfaceOutOfDate,
-                true,
-                false,
-                false,
-            ),
-            SwapchainRecreateAction::Recreate
-        );
-    }
-
-    #[test]
-    fn out_of_date_waits_only_for_zero_size() {
-        assert_eq!(
-            swapchain_recreate_action(SwapchainRecreateReason::SurfaceOutOfDate, false, true, true,),
-            SwapchainRecreateAction::Wait
-        );
-    }
-
-    #[test]
-    fn soft_request_sets_resize_reason_when_idle() {
-        let mut request = None;
-        request_soft_recreate(&mut request);
-        assert_eq!(request, Some(SwapchainRecreateReason::ResizeOrSuboptimal));
-    }
-
-    #[test]
-    fn soft_request_does_not_downgrade_out_of_date_request() {
-        // The key regression guard: a benign soft request (resize/suboptimal)
-        // must never clear a pending mandatory out-of-date recreate.
-        let mut request = Some(SwapchainRecreateReason::SurfaceOutOfDate);
-        request_soft_recreate(&mut request);
-        assert_eq!(request, Some(SwapchainRecreateReason::SurfaceOutOfDate));
-    }
 }

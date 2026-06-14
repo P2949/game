@@ -39,10 +39,18 @@ impl SpriteBatch {
         vertices: &mut Vec<SpriteVertex>,
         ranges: &mut Vec<SpriteBatchRange>,
     ) {
-        // Layer is the primary ordering key so gameplay/UI code can keep
-        // transparent sprites predictable. Texture is only a secondary key to
-        // reduce descriptor binds inside a layer; use distinct layers when
-        // overlapping transparent sprites require strict front-to-back order.
+        // Ordering contract:
+        //   * Sprites are sorted by `layer` first, then by `texture` (to group
+        //     same-texture draws and reduce descriptor binds within a layer).
+        //   * Layer order therefore always wins over texture grouping: a sprite
+        //     on a higher layer draws after (on top of) lower layers regardless
+        //     of texture.
+        //   * Within a single layer, cross-texture draw order is NOT preserved —
+        //     it follows texture id, not submission order. So overlapping
+        //     transparent sprites that need a strict front-to-back order must be
+        //     placed on distinct layers, not left to submission order.
+        // The sort is stable, so same-(layer, texture) sprites keep submission
+        // order relative to each other.
         self.sprites
             .sort_by_key(|sprite| (sprite.layer, sprite.texture.0));
 
@@ -198,6 +206,23 @@ mod tests {
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[1].first_vertex, 6);
         assert_eq!(ranges[1].vertex_count, 6);
+    }
+
+    #[test]
+    fn build_into_layer_order_wins_over_texture_id() {
+        // FONT (texture id 1) on layer 0 must draw before TEST (texture id 0) on
+        // layer 5: layer ordering dominates the texture secondary key.
+        let mut batch = SpriteBatch::new();
+        batch.push(sprite(TEST_TEXTURE_ID, 5));
+        batch.push(sprite(FONT_TEXTURE_ID, 0));
+
+        let mut vertices = Vec::new();
+        let mut ranges = Vec::new();
+        batch.build_into(&mut vertices, &mut ranges);
+
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0].texture, FONT_TEXTURE_ID);
+        assert_eq!(ranges[1].texture, TEST_TEXTURE_ID);
     }
 
     #[test]

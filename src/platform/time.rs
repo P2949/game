@@ -53,3 +53,79 @@ impl FixedTimestep {
         (self.accumulator / self.dt).clamp(0.0, 1.0) as f32
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FixedTimestep;
+
+    fn step(sim_hz: f64, accumulator: f64) -> FixedTimestep {
+        // Build a timestep and inject an explicit accumulator so the pure
+        // step/alpha/discard logic can be tested without real elapsed time.
+        let mut ts = FixedTimestep::new(sim_hz);
+        ts.accumulator = accumulator;
+        ts
+    }
+
+    #[test]
+    #[should_panic(expected = "finite and positive")]
+    fn new_panics_on_zero_sim_hz() {
+        FixedTimestep::new(0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "finite and positive")]
+    fn new_panics_on_negative_sim_hz() {
+        FixedTimestep::new(-120.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "finite and positive")]
+    fn new_panics_on_non_finite_sim_hz() {
+        FixedTimestep::new(f64::NAN);
+    }
+
+    #[test]
+    fn reset_after_pause_clears_accumulator() {
+        let mut ts = step(120.0, 5.0);
+        assert!(ts.step_ready());
+        ts.reset_after_pause();
+        assert_eq!(ts.accumulator, 0.0);
+        assert!(!ts.step_ready());
+    }
+
+    #[test]
+    fn accumulator_produces_expected_number_of_steps() {
+        let dt = 1.0 / 120.0;
+        let mut ts = step(120.0, dt * 3.5);
+
+        let mut steps = 0;
+        while ts.step_ready() {
+            let consumed = ts.consume_step();
+            assert!((consumed - dt as f32).abs() < 1e-6);
+            steps += 1;
+        }
+
+        assert_eq!(steps, 3);
+        // Just under one step of lag remains.
+        assert!(ts.accumulator < dt);
+        assert!((ts.accumulator - dt * 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn discard_lag_leaves_less_than_one_step() {
+        let dt = 1.0 / 120.0;
+        let mut ts = step(120.0, dt * 5.5);
+        ts.discard_lag();
+        assert!(ts.accumulator < dt);
+        assert!((ts.accumulator - dt * 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn alpha_clamps_to_unit_range() {
+        let dt = 1.0 / 120.0;
+        assert_eq!(step(120.0, 0.0).alpha(), 0.0);
+        assert!((step(120.0, dt * 0.5).alpha() - 0.5).abs() < 1e-6);
+        // More than a full step of accumulated time still reports alpha 1.0.
+        assert_eq!(step(120.0, dt * 2.0).alpha(), 1.0);
+    }
+}

@@ -85,6 +85,23 @@ pub fn supports_required_extensions(
 
     Ok(true)
 }
+/// Returns true only if the device exposes at least one surface format and one
+/// present mode for the given surface. Without this check, later swapchain
+/// creation could index an empty format list and panic.
+pub fn supports_adequate_swapchain(
+    surface_loader: &ash::khr::surface::Instance,
+    surface: vk::SurfaceKHR,
+    physical_device: vk::PhysicalDevice,
+) -> anyhow::Result<bool> {
+    let formats =
+        unsafe { surface_loader.get_physical_device_surface_formats(physical_device, surface)? };
+    let present_modes = unsafe {
+        surface_loader.get_physical_device_surface_present_modes(physical_device, surface)?
+    };
+
+    Ok(!formats.is_empty() && !present_modes.is_empty())
+}
+
 pub fn supports_vulkan13_features(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
@@ -134,6 +151,11 @@ pub fn select_physical_device(
 
         if !supports_vulkan13_features(instance, physical_device) {
             log::info!("Skipping {name}: missing Vulkan 1.3 dynamic rendering/sync2 features");
+            continue;
+        }
+
+        if !supports_adequate_swapchain(surface_loader, surface, physical_device)? {
+            log::info!("Skipping {name}: no usable surface formats or present modes");
             continue;
         }
 
