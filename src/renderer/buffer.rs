@@ -21,6 +21,13 @@ pub fn create_allocator(
     })?)
 }
 
+/// # Safety
+///
+/// `queue`, `command_pool`, and `fence` must belong to `device`. The command
+/// pool must support primary command buffers submitted to `queue`, and no other
+/// thread may concurrently reset or use `command_pool`/`fence` for the duration
+/// of this call. The closure must record commands valid for the supplied command
+/// buffer and must not end or free that command buffer itself.
 pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer) -> anyhow::Result<()>>(
     device: &ash::Device,
     queue: vk::Queue,
@@ -129,9 +136,9 @@ pub(crate) fn free_allocation(allocator: &mut Allocator, allocation: Allocation,
 }
 
 pub struct Buffer {
-    pub handle: vk::Buffer,
-    pub allocation: Option<Allocation>,
-    pub size: vk::DeviceSize,
+    handle: vk::Buffer,
+    allocation: Option<Allocation>,
+    size: vk::DeviceSize,
 }
 
 impl Buffer {
@@ -213,6 +220,14 @@ impl Buffer {
         })
     }
 
+    pub fn handle(&self) -> vk::Buffer {
+        self.handle
+    }
+
+    pub fn size(&self) -> vk::DeviceSize {
+        self.size
+    }
+
     pub fn copy_from_bytes(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         let byte_count = bytes.len() as vk::DeviceSize;
         if byte_count > self.size {
@@ -256,6 +271,12 @@ impl Buffer {
         self.copy_from_bytes(bytemuck::cast_slice(data))
     }
 
+    /// # Safety
+    ///
+    /// `device` and `allocator` must be the same logical device/allocator pair
+    /// used to create this buffer. The GPU must no longer be using the buffer.
+    /// After this call, the buffer handle and allocation are destroyed and must
+    /// not be used.
     pub unsafe fn destroy(mut self, device: &ash::Device, allocator: &mut Allocator) {
         // Destroy the Vulkan buffer before freeing its backing memory, matching
         // `Texture::destroy` and the conventional "object before its memory"

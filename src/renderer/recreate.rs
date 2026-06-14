@@ -24,10 +24,16 @@ pub enum SwapchainRecreateReason {
 /// The action the top-of-render gate should take for a pending recreate request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwapchainRecreateAction {
-    /// Drop the request and render this frame normally (extent already matches).
+    /// Drop the request and render normally.
     ClearRequest,
-    /// Skip rendering this frame and keep the request pending.
-    Wait,
+
+    /// Rendering is not valid this frame, usually because the drawable extent is zero
+    /// or the current swapchain is mandatory-out-of-date and cannot be used.
+    SkipFrame,
+
+    /// Keep the request pending but render this frame using the current swapchain.
+    DeferAndRender,
+
     /// Recreate the swapchain now.
     Recreate,
 }
@@ -44,18 +50,18 @@ pub fn swapchain_recreate_action(
     soft_recreate_ready: bool,
 ) -> SwapchainRecreateAction {
     if !has_nonzero_extent {
-        return SwapchainRecreateAction::Wait;
+        return SwapchainRecreateAction::SkipFrame;
     }
 
     match reason {
         SwapchainRecreateReason::SurfaceOutOfDate => SwapchainRecreateAction::Recreate,
+        SwapchainRecreateReason::Resize if extent_matches => SwapchainRecreateAction::ClearRequest,
+        SwapchainRecreateReason::Resize if soft_recreate_ready => SwapchainRecreateAction::Recreate,
+        SwapchainRecreateReason::Resize => SwapchainRecreateAction::DeferAndRender,
         SwapchainRecreateReason::Suboptimal if soft_recreate_ready => {
             SwapchainRecreateAction::Recreate
         }
-        SwapchainRecreateReason::Suboptimal => SwapchainRecreateAction::Wait,
-        SwapchainRecreateReason::Resize if extent_matches => SwapchainRecreateAction::ClearRequest,
-        SwapchainRecreateReason::Resize if soft_recreate_ready => SwapchainRecreateAction::Recreate,
-        SwapchainRecreateReason::Resize => SwapchainRecreateAction::Wait,
+        SwapchainRecreateReason::Suboptimal => SwapchainRecreateAction::DeferAndRender,
     }
 }
 
@@ -83,7 +89,7 @@ mod tests {
     };
 
     #[test]
-    fn soft_recreate_clears_when_extent_matches() {
+    fn resize_extent_matches_clears_request() {
         assert_eq!(
             swapchain_recreate_action(SwapchainRecreateReason::Resize, true, true, false,),
             SwapchainRecreateAction::ClearRequest
@@ -91,15 +97,23 @@ mod tests {
     }
 
     #[test]
-    fn soft_recreate_waits_when_extent_differs_but_rate_limited() {
+    fn resize_rate_limited_defers_and_renders() {
         assert_eq!(
             swapchain_recreate_action(SwapchainRecreateReason::Resize, true, false, false,),
-            SwapchainRecreateAction::Wait
+            SwapchainRecreateAction::DeferAndRender
         );
     }
 
     #[test]
-    fn soft_recreate_recreates_when_extent_differs_and_ready() {
+    fn soft_resize_defers_without_skipping_render_when_rate_limited() {
+        assert_eq!(
+            swapchain_recreate_action(SwapchainRecreateReason::Resize, true, false, false),
+            SwapchainRecreateAction::DeferAndRender
+        );
+    }
+
+    #[test]
+    fn resize_ready_recreates() {
         assert_eq!(
             swapchain_recreate_action(SwapchainRecreateReason::Resize, true, false, true,),
             SwapchainRecreateAction::Recreate
@@ -107,10 +121,26 @@ mod tests {
     }
 
     #[test]
-    fn soft_recreate_waits_for_zero_size() {
+    fn resize_zero_extent_skips_frame() {
         assert_eq!(
             swapchain_recreate_action(SwapchainRecreateReason::Resize, false, false, true,),
-            SwapchainRecreateAction::Wait
+            SwapchainRecreateAction::SkipFrame
+        );
+    }
+
+    #[test]
+    fn suboptimal_zero_extent_skips_frame() {
+        assert_eq!(
+            swapchain_recreate_action(SwapchainRecreateReason::Suboptimal, false, false, true),
+            SwapchainRecreateAction::SkipFrame
+        );
+    }
+
+    #[test]
+    fn out_of_date_zero_extent_skips_frame() {
+        assert_eq!(
+            swapchain_recreate_action(SwapchainRecreateReason::SurfaceOutOfDate, false, true, true),
+            SwapchainRecreateAction::SkipFrame
         );
     }
 
@@ -123,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn out_of_date_ignores_soft_rate_limit() {
+    fn out_of_date_recreates_even_when_rate_limited() {
         // Hard requests must recreate regardless of the soft rate-limit.
         assert_eq!(
             swapchain_recreate_action(
@@ -137,10 +167,18 @@ mod tests {
     }
 
     #[test]
-    fn out_of_date_waits_only_for_zero_size() {
+    fn suboptimal_rate_limited_defers_and_renders() {
         assert_eq!(
-            swapchain_recreate_action(SwapchainRecreateReason::SurfaceOutOfDate, false, true, true),
-            SwapchainRecreateAction::Wait
+            swapchain_recreate_action(SwapchainRecreateReason::Suboptimal, true, true, false),
+            SwapchainRecreateAction::DeferAndRender
+        );
+    }
+
+    #[test]
+    fn suboptimal_ready_recreates_even_when_extent_matches() {
+        assert_eq!(
+            swapchain_recreate_action(SwapchainRecreateReason::Suboptimal, true, true, true),
+            SwapchainRecreateAction::Recreate
         );
     }
 
@@ -161,9 +199,9 @@ mod tests {
     }
 
     #[test]
-    fn suboptimal_recreate_does_not_clear_when_extent_matches() {
+    fn suboptimal_ready_recreates_when_extent_differs() {
         assert_eq!(
-            swapchain_recreate_action(SwapchainRecreateReason::Suboptimal, true, true, true),
+            swapchain_recreate_action(SwapchainRecreateReason::Suboptimal, true, false, true),
             SwapchainRecreateAction::Recreate
         );
     }

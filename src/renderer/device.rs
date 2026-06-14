@@ -122,6 +122,15 @@ pub struct PhysicalDeviceSelection {
     pub queue_families: QueueFamilies,
 }
 
+struct DeviceCandidate {
+    index: usize,
+    score: i32,
+    physical_device: vk::PhysicalDevice,
+    queue_families: QueueFamilies,
+    name: String,
+    device_type: vk::PhysicalDeviceType,
+}
+
 pub fn select_physical_device(
     instance: &ash::Instance,
     surface_loader: &ash::khr::surface::Instance,
@@ -131,7 +140,7 @@ pub fn select_physical_device(
 
     let mut candidates = Vec::new();
 
-    for physical_device in devices {
+    for (index, physical_device) in devices.into_iter().enumerate() {
         let props = unsafe { instance.get_physical_device_properties(physical_device) };
         let name = unsafe { CStr::from_ptr(props.device_name.as_ptr()) }
             .to_string_lossy()
@@ -174,21 +183,78 @@ pub fn select_physical_device(
             props.device_type,
             queue_families.unique_indices()
         );
-        candidates.push((score, physical_device, queue_families, name));
+        candidates.push(DeviceCandidate {
+            index,
+            score,
+            physical_device,
+            queue_families,
+            name,
+            device_type: props.device_type,
+        });
     }
 
-    candidates.sort_by_key(|(score, _, _, _)| *score);
+    let selected = select_device_candidate(candidates)?;
 
-    let Some((_score, physical_device, queue_families, name)) = candidates.pop() else {
-        anyhow::bail!("No suitable Vulkan physical device found");
-    };
-
-    log::info!("Selected GPU: {name}");
+    log::info!(
+        "Selected GPU: {} (index={}, type={:?}, score={})",
+        selected.name,
+        selected.index,
+        selected.device_type,
+        selected.score
+    );
 
     Ok(PhysicalDeviceSelection {
-        physical_device,
-        queue_families,
+        physical_device: selected.physical_device,
+        queue_families: selected.queue_families,
     })
+}
+
+fn select_device_candidate(
+    mut candidates: Vec<DeviceCandidate>,
+) -> anyhow::Result<DeviceCandidate> {
+    if candidates.is_empty() {
+        anyhow::bail!("No suitable Vulkan physical device found");
+    }
+
+    candidates.sort_by_key(|candidate| candidate.score);
+
+    let Some(filter) = device_name_filter() else {
+        return Ok(candidates.pop().expect("candidates is non-empty"));
+    };
+
+    let Some(index) = candidates
+        .iter()
+        .rposition(|candidate| device_name_matches(&candidate.name, &filter))
+    else {
+        let available = candidates
+            .iter()
+            .map(|candidate| format!("- {}", candidate.name))
+            .collect::<Vec<_>>()
+            .join("\n");
+        anyhow::bail!(
+            "GAME_VK_DEVICE_NAME={filter:?} did not match any suitable GPU.\n\
+             Suitable candidates:\n{available}"
+        );
+    };
+
+    let selected = candidates.remove(index);
+    log::info!(
+        "GAME_VK_DEVICE_NAME={filter:?} matched candidate GPU: {}",
+        selected.name
+    );
+    Ok(selected)
+}
+
+fn device_name_filter() -> Option<String> {
+    std::env::var("GAME_VK_DEVICE_NAME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn device_name_matches(device_name: &str, filter: &str) -> bool {
+    device_name
+        .to_ascii_lowercase()
+        .contains(&filter.to_ascii_lowercase())
 }
 
 pub struct LogicalDevice {
@@ -250,5 +316,26 @@ impl Drop for LogicalDevice {
         unsafe {
             self.device.destroy_device(None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::device_name_matches;
+
+    #[test]
+    fn device_name_filter_is_case_insensitive() {
+        assert!(device_name_matches("AMD Radeon RX 6800", "radeon"));
+        assert!(device_name_matches("Intel(R) UHD Graphics", "INTEL"));
+    }
+
+    #[test]
+    fn device_name_filter_matches_substrings() {
+        assert!(device_name_matches("NVIDIA GeForce RTX 4080", "Force RTX"));
+    }
+
+    #[test]
+    fn device_name_filter_rejects_non_matches() {
+        assert!(!device_name_matches("llvmpipe", "Radeon"));
     }
 }

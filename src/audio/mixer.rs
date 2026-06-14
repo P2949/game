@@ -35,6 +35,8 @@ impl Sound {
     }
 }
 
+// Voices are created only by Mixer::play after sound_id validation, so mix_into
+// can index self.sounds by voice.sound_id without revalidating every sample.
 pub struct Voice {
     sound_id: SoundId,
     cursor: usize,
@@ -186,8 +188,8 @@ impl Mixer {
     pub fn mix_into(&mut self, out: &mut [f32]) {
         out.fill(0.0);
 
-        // Sanitize once per mix so a poisoned `master_volume` field (set directly
-        // on this public struct) can never produce invalid or exploding gain.
+        // Sanitize once per mix as a final defense against internal misuse or
+        // tests that bypass set_master_volume.
         let master_volume = sanitize_volume(self.master_volume);
 
         for voice in &mut self.voices {

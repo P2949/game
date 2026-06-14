@@ -180,15 +180,16 @@ impl VulkanContext {
         )?;
         let swapchain_image_views = swapchain::SwapchainImageViews::new(
             &logical_device.device,
-            &swapchain.images,
-            swapchain.format,
+            swapchain.images(),
+            swapchain.format(),
         )?;
         let sprite_pipeline = pipeline::GraphicsPipeline::new_sprite(
             &logical_device.device,
-            swapchain.format,
+            swapchain.format(),
             texture_descriptor_set_layout.handle(),
         )?;
-        let swapchain_sync = SwapchainSync::new(&logical_device.device, swapchain.images.len(), 0)?;
+        let swapchain_sync =
+            SwapchainSync::new(&logical_device.device, swapchain.image_count(), 0)?;
 
         let frames: Vec<_> = (0..frame::MAX_FRAMES_IN_FLIGHT)
             .map(|_| {
@@ -328,7 +329,7 @@ impl VulkanContext {
             device.device_wait_idle()?;
         }
 
-        let old_swapchain = self.swapchain.handle;
+        let old_swapchain = self.swapchain.handle();
         let new_swapchain = swapchain::Swapchain::new(
             self.instance.handle(),
             device,
@@ -339,16 +340,16 @@ impl VulkanContext {
             (width, height),
             old_swapchain,
         )?;
-        let format_changed = new_swapchain.format != self.swapchain.format;
+        let format_changed = new_swapchain.format() != self.swapchain.format();
         let new_swapchain_image_views = swapchain::SwapchainImageViews::new(
             device,
-            &new_swapchain.images,
-            new_swapchain.format,
+            new_swapchain.images(),
+            new_swapchain.format(),
         )?;
         let new_sprite_pipeline = if format_changed {
             Some(pipeline::GraphicsPipeline::new_sprite(
                 device,
-                new_swapchain.format,
+                new_swapchain.format(),
                 self.descriptor_set_layout(),
             )?)
         } else {
@@ -356,7 +357,7 @@ impl VulkanContext {
         };
         let new_swapchain_sync = SwapchainSync::new(
             device,
-            new_swapchain.images.len(),
+            new_swapchain.image_count(),
             self.swapchain_sync.generation + 1,
         )?;
 
@@ -394,7 +395,7 @@ impl VulkanContext {
         if let Some(reason) = self.swapchain_recreate_request {
             let desired_extent = self.desired_swapchain_extent(window)?;
             let has_nonzero_extent = desired_extent.is_some();
-            let extent_matches = desired_extent == Some(self.swapchain.extent);
+            let extent_matches = desired_extent == Some(self.swapchain.extent());
             let soft_recreate_ready = self.swapchain_recreate_ready(window)?;
 
             match swapchain_recreate_action(
@@ -406,9 +407,12 @@ impl VulkanContext {
                 SwapchainRecreateAction::ClearRequest => {
                     self.swapchain_recreate_request = None;
                 }
-                SwapchainRecreateAction::Wait => {
+                SwapchainRecreateAction::SkipFrame => {
                     self.clear_sprite_batches();
                     return Ok(());
+                }
+                SwapchainRecreateAction::DeferAndRender => {
+                    // Keep the request pending and continue into normal rendering.
                 }
                 SwapchainRecreateAction::Recreate => {
                     self.recreate_swapchain(window)?;
@@ -519,8 +523,8 @@ impl VulkanContext {
             device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
 
             let acquire_start = Instant::now();
-            let acquire_result = self.swapchain.loader.acquire_next_image(
-                self.swapchain.handle,
+            let acquire_result = self.swapchain.loader().acquire_next_image(
+                self.swapchain.handle(),
                 u64::MAX,
                 image_available,
                 vk::Fence::null(),
@@ -544,13 +548,14 @@ impl VulkanContext {
             }
 
             let render_finished = self.swapchain_sync.render_finished(image_index_usize);
+            let swapchain_extent = self.swapchain.extent();
             let world_projection = camera
                 .view_projection(
-                    self.swapchain.extent.width as f32,
-                    self.swapchain.extent.height as f32,
+                    swapchain_extent.width as f32,
+                    swapchain_extent.height as f32,
                 )
                 .to_cols_array();
-            let ui_projection = ui_projection(self.swapchain.extent).to_cols_array();
+            let ui_projection = ui_projection(swapchain_extent).to_cols_array();
             let render_batches = [
                 RenderSpriteBatch {
                     projection: world_projection,
@@ -566,9 +571,9 @@ impl VulkanContext {
             if let Err(err) = record_sprite_commands(
                 &device,
                 command_buffer,
-                self.swapchain.images[image_index_usize],
-                self.swapchain_image_views.views[image_index_usize],
-                self.swapchain.extent,
+                self.swapchain.image(image_index_usize),
+                self.swapchain_image_views.view(image_index_usize),
+                swapchain_extent,
                 self.sprite_pipeline.layout,
                 self.sprite_pipeline.pipeline,
                 sprite_vertex_buffer,
@@ -584,20 +589,23 @@ impl VulkanContext {
             let record_duration = record_start.elapsed();
 
             let submit_start = Instant::now();
-            submit_frame(
+            if let Err(err) = submit_frame(
                 &device,
                 graphics_queue,
                 image_available,
                 command_buffer,
                 in_flight,
                 render_finished,
-            )?;
+            ) {
+                let _ = device.device_wait_idle();
+                return Err(err.into());
+            }
             self.swapchain_sync
                 .mark_image_in_flight(image_index_usize, in_flight);
             let present_result = present_frame(
-                &self.swapchain.loader,
+                self.swapchain.loader(),
                 present_queue,
-                self.swapchain.handle,
+                self.swapchain.handle(),
                 render_finished,
                 image_index,
             );
@@ -654,7 +662,7 @@ impl DrawCommands for VulkanContext {
     }
 
     fn draw_ui_text(&mut self, text: &str, pos: glam::Vec2, color: glam::Vec4) {
-        text::draw_text(
+        let stats = text::draw_text(
             &mut self.ui_sprite_batch,
             &self.font_atlas,
             text,
@@ -662,6 +670,12 @@ impl DrawCommands for VulkanContext {
             color,
             UI_TEXT_LAYER,
         );
+        if stats.glyphs_dropped > 0 {
+            log::debug!(
+                "dropped {} invalid text glyph sprite(s)",
+                stats.glyphs_dropped
+            );
+        }
     }
 }
 

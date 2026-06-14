@@ -204,7 +204,7 @@ impl Game {
             let avg_ms = self.frame_graph.average_recent(120).unwrap_or(0.0);
             let fps = if avg_ms > 0.001 { 1000.0 / avg_ms } else { 0.0 };
             let hud = format!(
-                "FPS: {fps:.0}\nSprites: {}\nP pause  R reset  K test death",
+                "FPS: {fps:.0}\nWorld sprites: {}\nP pause  R reset  K test death",
                 self.world_sprite_count()
             );
             renderer.draw_ui_text(
@@ -269,10 +269,15 @@ impl Game {
 
 #[derive(Default)]
 pub struct Shake {
-    pub trauma: f32,
+    trauma: f32,
 }
 
 impl Shake {
+    #[allow(dead_code)]
+    pub fn trauma(&self) -> f32 {
+        self.trauma
+    }
+
     pub fn add(&mut self, amount: f32) {
         // `add` is public; ignore a non-finite amount so a stray NaN/Inf cannot
         // poison trauma (and through it the camera offset) for the rest of the run.
@@ -283,11 +288,22 @@ impl Shake {
     }
 
     pub fn update(&mut self, dt: f32) {
-        self.trauma = (self.trauma - dt * 1.8).max(0.0);
+        if !dt.is_finite() || dt <= 0.0 {
+            return;
+        }
+
+        self.trauma = (self.trauma - dt * 1.8).clamp(0.0, 1.0);
     }
 
     pub fn offset(&self, time: f32) -> glam::Vec2 {
-        let amount = self.trauma * self.trauma;
+        let trauma = if self.trauma.is_finite() {
+            self.trauma.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let time = if time.is_finite() { time } else { 0.0 };
+        let amount = trauma * trauma;
+
         glam::vec2(
             (time * 71.0).sin() * 8.0 * amount,
             (time * 53.0).cos() * 8.0 * amount,
@@ -511,7 +527,44 @@ mod tests {
         shake.add(f32::NAN);
         shake.add(f32::INFINITY);
         shake.add(f32::NEG_INFINITY);
-        assert_eq!(shake.trauma, 0.5);
+        assert_eq!(shake.trauma(), 0.5);
+    }
+
+    #[test]
+    fn shake_update_ignores_non_finite_dt() {
+        let mut shake = Shake::default();
+        shake.add(0.5);
+        shake.update(f32::NAN);
+        shake.update(f32::INFINITY);
+
+        assert_eq!(shake.trauma(), 0.5);
+    }
+
+    #[test]
+    fn shake_update_ignores_negative_dt() {
+        let mut shake = Shake::default();
+        shake.add(0.5);
+        shake.update(-1.0);
+
+        assert_eq!(shake.trauma(), 0.5);
+    }
+
+    #[test]
+    fn shake_update_clamps_trauma() {
+        let mut shake = Shake::default();
+        shake.add(1.0);
+        shake.update(10.0);
+
+        assert_eq!(shake.trauma(), 0.0);
+    }
+
+    #[test]
+    fn shake_offset_is_finite_for_non_finite_time() {
+        let mut shake = Shake::default();
+        shake.add(0.5);
+
+        assert!(shake.offset(f32::NAN).is_finite());
+        assert!(shake.offset(f32::INFINITY).is_finite());
     }
 
     #[test]

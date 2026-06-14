@@ -90,14 +90,21 @@ jobs:
       - name: Audit dependencies
         run: cargo audit
 
-  # Optional headless runtime smoke test. The binary supports GAME_SMOKE_FRAMES=N,
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check dependency policy
+        run: cargo deny check advisories licenses sources
+
+  # Headless runtime smoke test. The binary supports GAME_SMOKE_FRAMES=N,
   # which renders N frames and then exits cleanly through full teardown — so this
   # exercises startup, rendering, swapchain handling, and (with validation layers
   # enabled in a debug build) resource lifetime/teardown checks at Drop. (The
   # validation layers catch many lifetime/teardown mistakes but do not by
-  # themselves prove allocator leak-freedom.) It needs a software Vulkan ICD (Mesa
-  # lavapipe) plus a virtual display, neither of which is guaranteed stable across
-  # runner images, so it is left disabled by default. Enable by removing `if: false`.
+  # themselves prove allocator leak-freedom.) The smoke job is enabled but
+  # non-blocking while lavapipe/xvfb stability is proven on GitHub runners.
+  # Remove `continue-on-error: true` once it has passed reliably across several
+  # runs.
   smoke:
     runs-on: ubuntu-latest
     needs: rust

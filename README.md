@@ -28,6 +28,13 @@ cargo run            # debug build (validation layers enabled)
 cargo run --release  # optimized build (LTO, single codegen unit)
 ```
 
+Debug builds require Vulkan validation layers by default. On systems without
+the layer installed, disable that requirement explicitly:
+
+```bash
+GAME_DISABLE_VALIDATION=1 cargo run
+```
+
 Assets are discovered in this order:
 
 1. `GAME_ASSET_DIR`, if set
@@ -43,11 +50,13 @@ Release packages should not rely on the source-tree fallback.
 | `GAME_SMOKE_FRAMES` | If set to `N`, initializes normally, renders exactly `N` frames, then exits. `0` exits after initialization before rendering. Invalid values fail early. |
 | `GAME_ASSET_DIR` | Overrides runtime asset root discovery. |
 | `GAME_PRESENT_MODE` | `fifo` (default), `mailbox`, or `immediate`; unavailable opt-in modes fall back to FIFO. |
+| `GAME_VK_DEVICE_NAME` | Selects a suitable Vulkan GPU whose device name contains the given substring. |
 | `GAME_FRAME_TIMINGS` | Set to `1`, `true`, `yes`, or `on` to emit periodic debug frame timing logs. |
 | `GAME_REQUIRE_VALIDATION` | Set to `1` to require Vulkan validation layers in any build. |
 | `GAME_DISABLE_VALIDATION` | Set to `1` to disable Vulkan validation layers in any build. |
 | `RUST_LOG` | Controls Rust logging via `env_logger`; defaults to `info`. |
 | `GLSLC` | Overrides the shader compiler path used by `build.rs`. |
+| `SPIRV_VAL` | Overrides the optional SPIR-V validator path used by `build.rs`; if unset, `spirv-val` on `PATH` is used when available. |
 
 ## Packaging
 
@@ -100,6 +109,7 @@ cargo fmt --all -- --check
 cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
+GAME_SMOKE_FRAMES=120 cargo run --locked
 ```
 
 These commands use your system SDL3 development libraries. CI instead builds
@@ -111,6 +121,7 @@ the CI build exactly, pass that feature:
 cargo test --locked --features ci-build-sdl3
 cargo clippy --all-targets --locked --features ci-build-sdl3 -- -D warnings
 cargo build --release --locked --features ci-build-sdl3
+GAME_SMOKE_FRAMES=120 cargo run --locked --features ci-build-sdl3
 ```
 
 ## Known limitations

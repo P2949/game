@@ -31,9 +31,14 @@ impl Aabb {
     }
 
     pub fn from_pos_size(pos: glam::Vec2, size: glam::Vec2) -> Self {
-        Self::new(pos, size).unwrap_or(Self {
-            min: glam::Vec2::ZERO,
-            max: glam::Vec2::ONE,
+        Self::try_from_pos_size(pos, size).expect("AABB geometry must be finite and positive")
+    }
+
+    pub fn try_from_pos_size(pos: glam::Vec2, size: glam::Vec2) -> anyhow::Result<Self> {
+        Self::new(pos, size).ok_or_else(|| {
+            anyhow::anyhow!(
+                "AABB geometry must be finite and positive, got pos={pos:?}, size={size:?}"
+            )
         })
     }
 
@@ -139,6 +144,24 @@ mod tests {
         assert!(Aabb::new(glam::Vec2::ZERO, glam::vec2(0.0, 1.0)).is_none());
         assert!(Aabb::new(glam::Vec2::ZERO, glam::vec2(1.0, -1.0)).is_none());
         assert!(Aabb::new(glam::Vec2::ZERO, glam::Vec2::ONE).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "AABB geometry must be finite and positive")]
+    fn from_pos_size_panics_on_invalid_geometry() {
+        Aabb::from_pos_size(glam::Vec2::ZERO, glam::vec2(0.0, 1.0));
+    }
+
+    #[test]
+    fn try_from_pos_size_reports_invalid_geometry() {
+        let err = Aabb::try_from_pos_size(glam::Vec2::ZERO, glam::vec2(0.0, 1.0))
+            .expect_err("zero width must be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("AABB geometry must be finite and positive"),
+            "{err}"
+        );
     }
 
     #[test]

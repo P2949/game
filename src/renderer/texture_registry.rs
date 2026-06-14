@@ -161,6 +161,13 @@ impl TextureRegistry {
     /// Destroys every registered texture and descriptor pool. Must be called
     /// while the logical device is still alive (the owned descriptor pools drop
     /// here, and texture teardown needs the device and allocator).
+    ///
+    /// # Safety
+    ///
+    /// `device` and `allocator` must outlive all registered textures and must
+    /// match the objects used to create them. The device should be idle, or
+    /// callers must otherwise guarantee no in-flight command buffer can access
+    /// registered descriptor sets or texture resources.
     pub unsafe fn destroy(&mut self, device: &ash::Device, allocator: &mut Allocator) {
         for entry in self.entries.drain(..) {
             let TextureEntry {

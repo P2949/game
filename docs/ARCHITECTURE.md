@@ -25,11 +25,21 @@ resources, dynamic sprite buffers, pipelines, textures, and frame resources.
 Frame-owned sync lives in `FrameData`; swapchain-image-owned present sync lives
 in `SwapchainSync` and is recreated with the swapchain.
 
+Vulkan physical-device selection filters for required queues, extensions,
+features, and swapchain support, then scores suitable candidates. Set
+`GAME_VK_DEVICE_NAME` to a case-insensitive device-name substring to choose the
+highest-scoring suitable match on multi-GPU systems.
+
 ## Swapchain Recreation
 
 Resize, suboptimal, and out-of-date paths request recreation through
 `renderer::recreate`. Out-of-date requests are mandatory. Swapchain-generation
 resources are replaced only after `device_wait_idle`.
+
+Hard out-of-date requests skip rendering until a nonzero extent can be
+recreated. Soft resize/suboptimal requests remain pending while the renderer
+continues to draw with the current swapchain until debounce/rate-limit
+conditions allow recreation.
 
 ## Asset Loading
 

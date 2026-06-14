@@ -21,6 +21,36 @@ impl Entity {
     }
 
     pub fn new(pos: glam::Vec2, size: glam::Vec2, sprite: crate::renderer::TextureId) -> Self {
+        Self::try_new(pos, size, sprite).expect("entity position/size must be valid")
+    }
+
+    pub fn try_new(
+        pos: glam::Vec2,
+        size: glam::Vec2,
+        sprite: crate::renderer::TextureId,
+    ) -> anyhow::Result<Self> {
+        if !pos.is_finite() {
+            anyhow::bail!("entity position must be finite, got {pos:?}");
+        }
+        if !size.is_finite() || size.x <= 0.0 || size.y <= 0.0 {
+            anyhow::bail!("entity size must be finite and positive, got {size:?}");
+        }
+
+        Ok(Self {
+            pos,
+            prev_pos: pos,
+            vel: glam::Vec2::ZERO,
+            size,
+            sprite,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn new_sanitized(
+        pos: glam::Vec2,
+        size: glam::Vec2,
+        sprite: crate::renderer::TextureId,
+    ) -> Self {
         let pos = sanitize_vec2(pos, glam::Vec2::ZERO);
         let size = sanitize_size(size, glam::Vec2::ONE);
         Self {
@@ -70,7 +100,15 @@ impl Entity {
     }
 
     pub fn interpolated_pos(&self, alpha: f32) -> glam::Vec2 {
-        self.prev_pos.lerp(self.pos, alpha)
+        self.prev_pos.lerp(self.pos, sanitize_alpha(alpha))
+    }
+}
+
+fn sanitize_alpha(alpha: f32) -> f32 {
+    if alpha.is_finite() {
+        alpha.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -78,6 +116,7 @@ fn sanitize_vec2(value: glam::Vec2, fallback: glam::Vec2) -> glam::Vec2 {
     if value.is_finite() { value } else { fallback }
 }
 
+#[allow(dead_code)]
 fn sanitize_size(size: glam::Vec2, fallback: glam::Vec2) -> glam::Vec2 {
     if size.is_finite() && size.x > 0.0 && size.y > 0.0 {
         size
@@ -91,8 +130,32 @@ mod tests {
     use super::Entity;
 
     #[test]
-    fn constructor_sanitizes_invalid_position_and_size() {
-        let entity = Entity::new_solid(glam::vec2(f32::NAN, 1.0), glam::vec2(-10.0, f32::INFINITY));
+    fn try_new_rejects_invalid_position_and_size() {
+        assert!(
+            Entity::try_new(
+                glam::vec2(f32::NAN, 1.0),
+                glam::Vec2::ONE,
+                crate::renderer::TEST_TEXTURE_ID,
+            )
+            .is_err()
+        );
+        assert!(
+            Entity::try_new(
+                glam::Vec2::ZERO,
+                glam::vec2(-10.0, f32::INFINITY),
+                crate::renderer::TEST_TEXTURE_ID,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn new_sanitized_repairs_invalid_position_and_size() {
+        let entity = Entity::new_sanitized(
+            glam::vec2(f32::NAN, 1.0),
+            glam::vec2(-10.0, f32::INFINITY),
+            crate::renderer::TEST_TEXTURE_ID,
+        );
 
         assert_eq!(entity.position(), glam::Vec2::ZERO);
         assert_eq!(entity.previous_position(), glam::Vec2::ZERO);
@@ -116,5 +179,29 @@ mod tests {
         entity.begin_step();
 
         assert_eq!(entity.previous_position(), entity.position());
+    }
+
+    #[test]
+    fn interpolated_pos_clamps_alpha_below_zero() {
+        let mut entity = Entity::new_player(glam::Vec2::ZERO);
+        entity.set_position(glam::vec2(10.0, 20.0));
+
+        assert_eq!(entity.interpolated_pos(-1.0), glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn interpolated_pos_clamps_alpha_above_one() {
+        let mut entity = Entity::new_player(glam::Vec2::ZERO);
+        entity.set_position(glam::vec2(10.0, 20.0));
+
+        assert_eq!(entity.interpolated_pos(2.0), entity.position());
+    }
+
+    #[test]
+    fn interpolated_pos_treats_nan_as_zero() {
+        let mut entity = Entity::new_player(glam::Vec2::ZERO);
+        entity.set_position(glam::vec2(10.0, 20.0));
+
+        assert_eq!(entity.interpolated_pos(f32::NAN), glam::Vec2::ZERO);
     }
 }

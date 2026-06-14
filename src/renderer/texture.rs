@@ -58,10 +58,10 @@ fn validate_rgba8_texture(
 }
 
 pub struct Texture {
-    pub image: vk::Image,
-    pub allocation: Option<Allocation>,
-    pub view: vk::ImageView,
-    pub sampler: vk::Sampler,
+    image: vk::Image,
+    allocation: Option<Allocation>,
+    view: vk::ImageView,
+    sampler: vk::Sampler,
 }
 
 pub struct TextureUpload<'a> {
@@ -80,6 +80,8 @@ impl Texture {
         name: &str,
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
+        // Bundled assets are trusted. Before accepting user/mod textures, inspect
+        // dimensions or configure decoder limits before full RGBA allocation.
         let rgba = image::open(path)
             .with_context(|| format!("failed to open texture {}", path.display()))?
             .to_rgba8();
@@ -209,7 +211,7 @@ impl Texture {
 
                         upload.device.cmd_copy_buffer_to_image(
                             cmd,
-                            staging.handle,
+                            staging.handle(),
                             image,
                             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                             std::slice::from_ref(&region),
@@ -295,6 +297,20 @@ impl Texture {
         }
     }
 
+    pub fn view(&self) -> vk::ImageView {
+        self.view
+    }
+
+    pub fn sampler(&self) -> vk::Sampler {
+        self.sampler
+    }
+
+    /// # Safety
+    ///
+    /// `device` and `allocator` must match the objects used to create this
+    /// texture. The GPU must no longer access the image, image view, or sampler.
+    /// Descriptor sets referring to this texture must not be used after
+    /// destruction.
     pub unsafe fn destroy(mut self, device: &ash::Device, allocator: &mut Allocator) {
         unsafe {
             device.destroy_sampler(self.sampler, None);
@@ -354,8 +370,8 @@ pub fn create_texture_descriptor_set(
     };
 
     let image_info = vk::DescriptorImageInfo::default()
-        .sampler(texture.sampler)
-        .image_view(texture.view)
+        .sampler(texture.sampler())
+        .image_view(texture.view())
         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     let write = vk::WriteDescriptorSet::default()
@@ -374,6 +390,12 @@ pub fn create_texture_descriptor_set(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// # Safety
+///
+/// `cmd` must be recording, `image` must be valid for `device`, and the supplied
+/// layouts/access masks/stages must correctly describe the image's actual usage
+/// before and after the barrier. The image subresource range is fixed to color
+/// aspect, mip 0, layer 0.
 pub unsafe fn transition_image(
     device: &ash::Device,
     cmd: vk::CommandBuffer,

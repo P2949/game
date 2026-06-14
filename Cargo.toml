@@ -13,7 +13,7 @@ ash = "0.38"
 gpu-allocator = "0.28"
 glam = "0.33.1"
 
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png"] }
 fontdue = "0.9"
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-queue = "0.3"

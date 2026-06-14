@@ -140,6 +140,12 @@ pub struct FontAtlasImage {
     pub height: u32,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TextDrawStats {
+    pub glyphs_submitted: usize,
+    pub glyphs_dropped: usize,
+}
+
 pub fn build_ascii_atlas(
     path: impl AsRef<Path>,
     texture: TextureId,
@@ -232,7 +238,8 @@ pub fn draw_text(
     mut pos: glam::Vec2,
     color: glam::Vec4,
     layer: i16,
-) {
+) -> TextDrawStats {
+    let mut stats = TextDrawStats::default();
     let start_x = pos.x;
 
     for ch in text.chars() {
@@ -252,7 +259,7 @@ pub fn draw_text(
         if glyph.size.x > 0.0 && glyph.size.y > 0.0 {
             let glyph_pos = glam::vec2(pos.x + glyph.bearing.x, pos.y + glyph.bearing.y);
 
-            batch.push(SpriteDraw {
+            let sprite = SpriteDraw {
                 texture: atlas.texture,
                 layer,
                 position: glyph_pos,
@@ -260,17 +267,26 @@ pub fn draw_text(
                 uv_min: glyph.uv_min,
                 uv_max: glyph.uv_max,
                 color,
-            });
+            };
+
+            if batch.push(sprite) {
+                stats.glyphs_submitted += 1;
+            } else {
+                stats.glyphs_dropped += 1;
+            }
         }
 
         pos.x += glyph.advance;
     }
+
+    stats
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FontAtlas, GlyphInfo};
+    use super::{FontAtlas, GlyphInfo, draw_text};
     use crate::renderer::FONT_TEXTURE_ID;
+    use crate::renderer::sprite_batch::SpriteBatch;
     use std::collections::HashMap;
 
     fn glyph(advance: f32) -> GlyphInfo {
@@ -321,5 +337,48 @@ mod tests {
         assert_eq!(atlas.wrap_text("A A A", 25.0), vec!["A A", "A"]);
         // Existing newlines are preserved as hard breaks.
         assert_eq!(atlas.wrap_text("A\nB", 100.0), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn draw_text_reports_submitted_glyphs() {
+        let atlas = test_atlas();
+        let mut batch = SpriteBatch::new();
+
+        let stats = draw_text(
+            &mut batch,
+            &atlas,
+            "AB",
+            glam::Vec2::ZERO,
+            glam::Vec4::ONE,
+            0,
+        );
+
+        assert_eq!(stats.glyphs_submitted, 2);
+        assert_eq!(stats.glyphs_dropped, 0);
+    }
+
+    #[test]
+    fn draw_text_reports_dropped_invalid_glyph_sprites() {
+        let mut atlas = test_atlas();
+        atlas.glyphs.insert(
+            'A',
+            GlyphInfo {
+                bearing: glam::vec2(f32::NAN, 0.0),
+                ..glyph(10.0)
+            },
+        );
+        let mut batch = SpriteBatch::new();
+
+        let stats = draw_text(
+            &mut batch,
+            &atlas,
+            "A",
+            glam::Vec2::ZERO,
+            glam::Vec4::ONE,
+            0,
+        );
+
+        assert_eq!(stats.glyphs_submitted, 0);
+        assert_eq!(stats.glyphs_dropped, 1);
     }
 }

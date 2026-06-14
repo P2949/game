@@ -167,12 +167,20 @@ pub fn choose_extent(
         ),
     }
 }
-pub struct Swapchain {
-    pub loader: ash::khr::swapchain::Device,
-    pub handle: vk::SwapchainKHR,
-    pub format: vk::Format,
-    pub extent: vk::Extent2D,
-    pub images: Vec<vk::Image>,
+
+fn validate_extent(extent: vk::Extent2D) -> anyhow::Result<()> {
+    if extent.width == 0 || extent.height == 0 {
+        anyhow::bail!("swapchain extent is zero");
+    }
+    Ok(())
+}
+
+pub(crate) struct Swapchain {
+    loader: ash::khr::swapchain::Device,
+    handle: vk::SwapchainKHR,
+    format: vk::Format,
+    extent: vk::Extent2D,
+    images: Vec<vk::Image>,
 }
 
 impl Swapchain {
@@ -191,6 +199,7 @@ impl Swapchain {
         let surface_format = choose_surface_format(&support.formats)?;
         let present_mode = choose_present_mode(&support.present_modes)?;
         let extent = choose_extent(support.capabilities, window_size);
+        validate_extent(extent)?;
         let composite_alpha =
             choose_composite_alpha(support.capabilities.supported_composite_alpha)?;
 
@@ -200,13 +209,9 @@ impl Swapchain {
         }
 
         let queue_indices = [queue_families.graphics, queue_families.present];
-        let sharing_mode = if queue_families.graphics != queue_families.present {
-            vk::SharingMode::CONCURRENT
-        } else {
-            vk::SharingMode::EXCLUSIVE
-        };
+        let concurrent = queue_families.graphics != queue_families.present;
 
-        let info = vk::SwapchainCreateInfoKHR::default()
+        let mut info = vk::SwapchainCreateInfoKHR::default()
             .surface(surface)
             .min_image_count(image_count)
             .image_format(surface_format.format)
@@ -214,13 +219,20 @@ impl Swapchain {
             .image_extent(extent)
             .image_array_layers(1)
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-            .image_sharing_mode(sharing_mode)
-            .queue_family_indices(&queue_indices)
+            .image_sharing_mode(if concurrent {
+                vk::SharingMode::CONCURRENT
+            } else {
+                vk::SharingMode::EXCLUSIVE
+            })
             .pre_transform(support.capabilities.current_transform)
             .composite_alpha(composite_alpha)
             .present_mode(present_mode)
             .clipped(true)
             .old_swapchain(old_swapchain);
+
+        if concurrent {
+            info = info.queue_family_indices(&queue_indices);
+        }
 
         let loader = ash::khr::swapchain::Device::new(instance, device);
         let handle = unsafe { loader.create_swapchain(&info, None)? };
@@ -235,11 +247,12 @@ impl Swapchain {
         };
 
         log::info!(
-            "created Vulkan swapchain: images={}, format={:?}, extent={}x{}",
+            "created Vulkan swapchain: images={}, format={:?}, extent={}x{}, present_mode={:?}",
             images.len(),
             surface_format.format,
             extent.width,
-            extent.height
+            extent.height,
+            present_mode
         );
 
         Ok(Self {
@@ -249,6 +262,34 @@ impl Swapchain {
             extent,
             images,
         })
+    }
+
+    pub fn loader(&self) -> &ash::khr::swapchain::Device {
+        &self.loader
+    }
+
+    pub fn handle(&self) -> vk::SwapchainKHR {
+        self.handle
+    }
+
+    pub fn format(&self) -> vk::Format {
+        self.format
+    }
+
+    pub fn extent(&self) -> vk::Extent2D {
+        self.extent
+    }
+
+    pub fn images(&self) -> &[vk::Image] {
+        &self.images
+    }
+
+    pub fn image(&self, index: usize) -> vk::Image {
+        self.images[index]
+    }
+
+    pub fn image_count(&self) -> usize {
+        self.images.len()
     }
 
     pub fn destroy(&mut self) {
@@ -271,7 +312,7 @@ impl Drop for Swapchain {
 
 pub struct SwapchainImageViews {
     device: ash::Device,
-    pub views: Vec<vk::ImageView>,
+    views: Vec<vk::ImageView>,
 }
 
 impl SwapchainImageViews {
@@ -318,6 +359,10 @@ impl SwapchainImageViews {
         })
     }
 
+    pub fn view(&self, index: usize) -> vk::ImageView {
+        self.views[index]
+    }
+
     pub fn destroy(&mut self) {
         for view in self.views.drain(..) {
             unsafe {
@@ -337,7 +382,7 @@ impl Drop for SwapchainImageViews {
 mod tests {
     use super::{
         PresentModePreference, choose_composite_alpha, choose_present_mode_for_request,
-        choose_surface_format, parse_present_mode,
+        choose_surface_format, parse_present_mode, validate_extent,
     };
     use ash::vk;
 
@@ -490,6 +535,39 @@ mod tests {
         assert_eq!(
             choose_present_mode_for_request(&modes, PresentModePreference::Immediate).unwrap(),
             vk::PresentModeKHR::FIFO
+        );
+    }
+
+    #[test]
+    fn zero_width_extent_is_rejected() {
+        assert!(
+            validate_extent(vk::Extent2D {
+                width: 0,
+                height: 1
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn zero_height_extent_is_rejected() {
+        assert!(
+            validate_extent(vk::Extent2D {
+                width: 1,
+                height: 0
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn nonzero_extent_is_accepted() {
+        assert!(
+            validate_extent(vk::Extent2D {
+                width: 1,
+                height: 1
+            })
+            .is_ok()
         );
     }
 }

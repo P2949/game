@@ -61,7 +61,7 @@ pub fn upload_sprite_vertices(
 
     let required_bytes = std::mem::size_of_val(vertices) as vk::DeviceSize;
     let should_recreate = match buffer_slot {
-        Some(buffer) => buffer.size < required_bytes,
+        Some(buffer) => buffer.size() < required_bytes,
         None => true,
     };
 
@@ -88,7 +88,7 @@ pub fn upload_sprite_vertices(
         .as_mut()
         .expect("dynamic sprite buffer exists after creation");
     buffer.copy_from_slice(vertices)?;
-    Ok(Some(buffer.handle))
+    Ok(Some(buffer.handle()))
 }
 
 fn sprite_vertex_buffer_capacity(required_bytes: vk::DeviceSize) -> anyhow::Result<vk::DeviceSize> {
@@ -260,6 +260,10 @@ pub unsafe fn record_sprite_commands(
 /// belong to `device`. The command buffer must have been recorded for the
 /// swapchain image associated with the signaled acquire semaphore, and
 /// `in_flight` must not already be associated with outstanding work.
+///
+/// If submission fails after the fence is reset, the fence may remain unsignaled.
+/// Callers must treat that failure as fatal for the frame/device path and must
+/// not attempt to wait on the same fence later as though no submission happened.
 pub unsafe fn submit_frame(
     device: &ash::Device,
     graphics_queue: vk::Queue,

@@ -54,7 +54,7 @@ allocator lock just to make `Drop` possible for textures and buffers.
 | Graphics pipeline layout | `GraphicsPipeline::new_sprite` | `GraphicsPipeline::Drop`; `VulkanContext` also calls idempotent `destroy()` before device teardown/replacement | logical device, descriptor set layout | Covered by RAII owner during construction; explicit early destroy preserves device drop order | `GraphicsPipeline::Drop` |
 | Graphics pipeline | `GraphicsPipeline::new_sprite` | `GraphicsPipeline::Drop`; `VulkanContext` also calls idempotent `destroy()` before device teardown/replacement | logical device, pipeline layout, swapchain format | Covered by RAII owner during construction; explicit early destroy preserves pipeline-before-layout order | `GraphicsPipeline::Drop` |
 | Shader modules | `create_sprite_shader_modules` | Destroyed immediately after pipeline creation attempt | logical device | Covered by local cleanup in constructor | Local construction cleanup |
-| Per-image render-finished semaphores | `create_image_render_finished_semaphores` | `OwnedSemaphore::Drop`, vector cleared before device teardown | logical device | Low after adoption; partially-filled vectors clean themselves | `OwnedSemaphore` |
+| SwapchainSync present semaphores | `SwapchainSync::new` | `swapchain_sync.clear()` before device teardown; replaced during swapchain recreation | logical device, swapchain image count | Recreated per swapchain generation after `device_wait_idle` | `SwapchainSync` |
 | Per-frame command pools | `FrameData::new`, adopted by `OwnedCommandPool` | `FrameData::Drop`, vector cleared before device teardown | logical device | Low after adoption | `FrameData` |
 | Per-frame command buffers | allocated from per-frame command pool | Freed when command pool is destroyed | command pool | No standalone destruction | `OwnedCommandPool` inside `FrameData` |
 | Per-frame image-available semaphores | `FrameData::new`, adopted by `OwnedSemaphore` | `FrameData::Drop` | logical device | Low after adoption | `FrameData` |
@@ -78,7 +78,8 @@ While the logical device is alive:
 4. Dynamic sprite vertex buffers (`Buffer::destroy`), while the allocator is alive.
 5. Per-frame resources — command pools, image-available semaphores, in-flight
    fences (`frames.clear()`).
-6. Per-image render-finished semaphores (`image_render_finished.clear()`).
+6. Swapchain-generation sync (`swapchain_sync.clear()`), including per-image
+   render-finished semaphores and image-in-flight fence tracking.
 7. Texture descriptor set layout (`OwnedDescriptorSetLayout` → `None`).
 8. Upload fence (`OwnedFence` → `None`).
 9. Upload command pool (`OwnedCommandPool` → `None`).
