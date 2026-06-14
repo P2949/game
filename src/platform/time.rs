@@ -58,6 +58,7 @@ impl FixedTimestep {
         self.accumulator = 0.0;
     }
 
+    #[allow(dead_code)]
     pub fn alpha(&self) -> f32 {
         (self.accumulator / self.dt).clamp(0.0, 1.0) as f32
     }

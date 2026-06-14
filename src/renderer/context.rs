@@ -403,7 +403,7 @@ impl VulkanContext {
     pub fn render(
         &mut self,
         window: &sdl3::video::Window,
-        camera: crate::game::camera::Camera2D,
+        camera: crate::engine::camera::Camera2D,
     ) -> anyhow::Result<RenderOutcome> {
         if let Some(reason) = self.swapchain_recreate_request {
             let desired_extent = self.desired_swapchain_extent(window)?;

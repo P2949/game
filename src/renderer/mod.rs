@@ -46,6 +46,7 @@ pub struct SpriteDraw {
     pub color: glam::Vec4,
 }
 
+#[allow(dead_code)]
 pub trait DrawCommands {
     fn draw_world_sprite(&mut self, sprite: SpriteDraw);
     fn draw_ui_sprite(&mut self, sprite: SpriteDraw);
