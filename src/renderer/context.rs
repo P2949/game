@@ -59,7 +59,7 @@ pub struct VulkanContext {
     pub image_render_finished: Vec<vk::Semaphore>,
     pub frames: Vec<frame::FrameData>,
     pub current_frame: usize,
-    pub needs_swapchain_recreate: bool,
+    swapchain_recreate_request: Option<SwapchainRecreateReason>,
     last_swapchain_recreate: Option<Instant>,
 }
 
@@ -267,13 +267,23 @@ impl VulkanContext {
             image_render_finished,
             frames,
             current_frame: 0,
-            needs_swapchain_recreate: false,
+            swapchain_recreate_request: None,
             last_swapchain_recreate: None,
         })
     }
 
+    /// Public entry point for callers outside the renderer (e.g. the main loop
+    /// reacting to a window resize). These are always soft requests.
     pub fn request_swapchain_recreate(&mut self) {
-        self.needs_swapchain_recreate = true;
+        self.request_soft_swapchain_recreate();
+    }
+
+    fn request_soft_swapchain_recreate(&mut self) {
+        request_soft_recreate(&mut self.swapchain_recreate_request);
+    }
+
+    fn request_mandatory_swapchain_recreate(&mut self) {
+        self.swapchain_recreate_request = Some(SwapchainRecreateReason::SurfaceOutOfDate);
     }
 
     fn clear_sprite_batches(&mut self) {
@@ -334,7 +344,10 @@ impl VulkanContext {
         let recreate_start = Instant::now();
         let (width, height) = window.size_in_pixels();
         if width == 0 || height == 0 {
-            self.needs_swapchain_recreate = true;
+            // Keep a request pending so we recreate once the window has a size
+            // again, but never downgrade an already-pending hard request.
+            self.swapchain_recreate_request
+                .get_or_insert(SwapchainRecreateReason::ResizeOrSuboptimal);
             return Ok(());
         }
 
@@ -422,7 +435,7 @@ impl VulkanContext {
         self.swapchain = new_swapchain;
         self.swapchain_image_views = new_swapchain_image_views;
         self.image_render_finished = new_image_render_finished;
-        self.needs_swapchain_recreate = false;
+        self.swapchain_recreate_request = None;
         self.last_swapchain_recreate = Some(Instant::now());
 
         log::info!(
@@ -438,18 +451,34 @@ impl VulkanContext {
         window: &sdl3::video::Window,
         camera: crate::game::camera::Camera2D,
     ) -> anyhow::Result<()> {
-        if self.needs_swapchain_recreate {
-            if self.swapchain_extent_matches_window(window)? {
-                self.needs_swapchain_recreate = false;
-            } else if !self.swapchain_recreate_ready(window)? {
-                self.clear_sprite_batches();
-                return Ok(());
-            } else {
-                self.recreate_swapchain(window)?;
+        if let Some(reason) = self.swapchain_recreate_request {
+            let desired_extent = self.desired_swapchain_extent(window)?;
+            let has_nonzero_extent = desired_extent.is_some();
+            let extent_matches = desired_extent == Some(self.swapchain.extent);
+            let soft_recreate_ready = self.swapchain_recreate_ready(window)?;
 
-                if self.needs_swapchain_recreate {
+            match swapchain_recreate_action(
+                reason,
+                has_nonzero_extent,
+                extent_matches,
+                soft_recreate_ready,
+            ) {
+                SwapchainRecreateAction::ClearRequest => {
+                    self.swapchain_recreate_request = None;
+                }
+                SwapchainRecreateAction::Wait => {
                     self.clear_sprite_batches();
                     return Ok(());
+                }
+                SwapchainRecreateAction::Recreate => {
+                    self.recreate_swapchain(window)?;
+
+                    // A window that went zero-size during recreate leaves the
+                    // request pending; skip this frame and retry next time.
+                    if self.swapchain_recreate_request.is_some() {
+                        self.clear_sprite_batches();
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -512,7 +541,7 @@ impl VulkanContext {
             let (image_index, suboptimal) = match acquire_result {
                 Ok(result) => result,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    self.request_swapchain_recreate();
+                    self.request_mandatory_swapchain_recreate();
                     return Ok(());
                 }
                 Err(err) => return Err(err.into()),
@@ -585,7 +614,7 @@ impl VulkanContext {
                 Ok(suboptimal) => suboptimal,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
-                    self.request_swapchain_recreate();
+                    self.request_mandatory_swapchain_recreate();
                     return Ok(());
                 }
                 Err(err) => return Err(err.into()),
@@ -598,7 +627,7 @@ impl VulkanContext {
             self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
 
             if recreate_after_present {
-                self.needs_swapchain_recreate = true;
+                self.request_soft_swapchain_recreate();
             }
         }
 
@@ -756,6 +785,66 @@ struct RenderSpriteRange {
 struct RenderSpriteBatch<'a> {
     projection: [f32; 16],
     ranges: &'a [RenderSpriteRange],
+}
+
+/// Why a swapchain recreation is pending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwapchainRecreateReason {
+    /// Soft request from a resize or `SUBOPTIMAL_KHR`. May be skipped if the
+    /// current swapchain extent already matches the window, and is subject to
+    /// the resize debounce / recreate rate-limit.
+    ResizeOrSuboptimal,
+    /// Hard request from `ERROR_OUT_OF_DATE_KHR`. The current swapchain can no
+    /// longer be used, so this must recreate as soon as a nonzero drawable
+    /// extent is available, regardless of extent match or rate-limit.
+    SurfaceOutOfDate,
+}
+
+/// The action the top-of-render gate should take for a pending recreate request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwapchainRecreateAction {
+    /// Drop the request and render this frame normally (extent already matches).
+    ClearRequest,
+    /// Skip rendering this frame and keep the request pending.
+    Wait,
+    /// Recreate the swapchain now.
+    Recreate,
+}
+
+/// Pure decision policy for a pending swapchain recreate request. Kept free of
+/// Vulkan/SDL state so it can be unit-tested directly.
+///
+/// Hard `SurfaceOutOfDate` requests recreate as soon as the drawable extent is
+/// nonzero — they ignore both the extent-match short-circuit and the soft
+/// rate-limit, since continuing to use an out-of-date swapchain is never valid.
+fn swapchain_recreate_action(
+    reason: SwapchainRecreateReason,
+    has_nonzero_extent: bool,
+    extent_matches: bool,
+    soft_recreate_ready: bool,
+) -> SwapchainRecreateAction {
+    if !has_nonzero_extent {
+        return SwapchainRecreateAction::Wait;
+    }
+
+    match reason {
+        SwapchainRecreateReason::SurfaceOutOfDate => SwapchainRecreateAction::Recreate,
+        SwapchainRecreateReason::ResizeOrSuboptimal if extent_matches => {
+            SwapchainRecreateAction::ClearRequest
+        }
+        SwapchainRecreateReason::ResizeOrSuboptimal if soft_recreate_ready => {
+            SwapchainRecreateAction::Recreate
+        }
+        SwapchainRecreateReason::ResizeOrSuboptimal => SwapchainRecreateAction::Wait,
+    }
+}
+
+/// Records a soft recreate request without downgrading an already-pending hard
+/// (`SurfaceOutOfDate`) request. Free function so the priority rule is testable.
+fn request_soft_recreate(request: &mut Option<SwapchainRecreateReason>) {
+    if *request != Some(SwapchainRecreateReason::SurfaceOutOfDate) {
+        *request = Some(SwapchainRecreateReason::ResizeOrSuboptimal);
+    }
 }
 
 fn duration_ms(duration: Duration) -> f64 {
@@ -1057,4 +1146,110 @@ fn validation_layer_available(entry: &Entry) -> anyhow::Result<bool> {
         let name = unsafe { CStr::from_ptr(layer.layer_name.as_ptr()) };
         name == debug::VALIDATION_LAYER
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        SwapchainRecreateAction, SwapchainRecreateReason, request_soft_recreate,
+        swapchain_recreate_action,
+    };
+
+    #[test]
+    fn soft_recreate_clears_when_extent_matches() {
+        assert_eq!(
+            swapchain_recreate_action(
+                SwapchainRecreateReason::ResizeOrSuboptimal,
+                true,
+                true,
+                false,
+            ),
+            SwapchainRecreateAction::ClearRequest
+        );
+    }
+
+    #[test]
+    fn soft_recreate_waits_when_extent_differs_but_rate_limited() {
+        assert_eq!(
+            swapchain_recreate_action(
+                SwapchainRecreateReason::ResizeOrSuboptimal,
+                true,
+                false,
+                false,
+            ),
+            SwapchainRecreateAction::Wait
+        );
+    }
+
+    #[test]
+    fn soft_recreate_recreates_when_extent_differs_and_ready() {
+        assert_eq!(
+            swapchain_recreate_action(
+                SwapchainRecreateReason::ResizeOrSuboptimal,
+                true,
+                false,
+                true,
+            ),
+            SwapchainRecreateAction::Recreate
+        );
+    }
+
+    #[test]
+    fn soft_recreate_waits_for_zero_size() {
+        assert_eq!(
+            swapchain_recreate_action(
+                SwapchainRecreateReason::ResizeOrSuboptimal,
+                false,
+                false,
+                true,
+            ),
+            SwapchainRecreateAction::Wait
+        );
+    }
+
+    #[test]
+    fn out_of_date_recreates_even_when_extent_matches() {
+        assert_eq!(
+            swapchain_recreate_action(SwapchainRecreateReason::SurfaceOutOfDate, true, true, false,),
+            SwapchainRecreateAction::Recreate
+        );
+    }
+
+    #[test]
+    fn out_of_date_ignores_soft_rate_limit() {
+        // Hard requests must recreate regardless of the soft rate-limit.
+        assert_eq!(
+            swapchain_recreate_action(
+                SwapchainRecreateReason::SurfaceOutOfDate,
+                true,
+                false,
+                false,
+            ),
+            SwapchainRecreateAction::Recreate
+        );
+    }
+
+    #[test]
+    fn out_of_date_waits_only_for_zero_size() {
+        assert_eq!(
+            swapchain_recreate_action(SwapchainRecreateReason::SurfaceOutOfDate, false, true, true,),
+            SwapchainRecreateAction::Wait
+        );
+    }
+
+    #[test]
+    fn soft_request_sets_resize_reason_when_idle() {
+        let mut request = None;
+        request_soft_recreate(&mut request);
+        assert_eq!(request, Some(SwapchainRecreateReason::ResizeOrSuboptimal));
+    }
+
+    #[test]
+    fn soft_request_does_not_downgrade_out_of_date_request() {
+        // The key regression guard: a benign soft request (resize/suboptimal)
+        // must never clear a pending mandatory out-of-date recreate.
+        let mut request = Some(SwapchainRecreateReason::SurfaceOutOfDate);
+        request_soft_recreate(&mut request);
+        assert_eq!(request, Some(SwapchainRecreateReason::SurfaceOutOfDate));
+    }
 }
