@@ -68,6 +68,15 @@ pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer)>(
     result
 }
 
+/// Validates a requested buffer size before any Vulkan call. Vulkan forbids
+/// zero-sized buffers, so reject that case up front with a named error.
+fn validate_buffer_size(size: vk::DeviceSize, name: &str) -> anyhow::Result<()> {
+    if size == 0 {
+        anyhow::bail!("cannot create zero-sized Vulkan buffer '{name}'");
+    }
+    Ok(())
+}
+
 pub struct Buffer {
     pub handle: vk::Buffer,
     pub allocation: Option<Allocation>,
@@ -83,6 +92,10 @@ impl Buffer {
         location: MemoryLocation,
         name: &str,
     ) -> anyhow::Result<Self> {
+        // Vulkan requires a nonzero buffer size; creating a zero-sized buffer is
+        // a validation error. Reject it here with a clear message instead.
+        validate_buffer_size(size, name)?;
+
         let info = vk::BufferCreateInfo::default()
             .size(size)
             .usage(usage)
@@ -145,9 +158,21 @@ impl Buffer {
             .mapped_ptr()
             .ok_or_else(|| anyhow::anyhow!("buffer allocation is not CPU mapped"))?;
 
-        // gpu-allocator's CpuToGpu allocations are expected to be host-visible
-        // and mapped for this desktop renderer path. If this is ported to
-        // non-coherent memory, writes need an explicit flush before GPU use.
+        // This is a plain memcpy with no explicit flush, which is only correct on
+        // HOST_COHERENT memory. gpu-allocator's CpuToGpu allocations are
+        // host-visible and coherent on the desktop drivers this renderer targets;
+        // enforce it so a future port to non-coherent memory fails loudly here
+        // instead of silently presenting stale vertex data.
+        if !allocation
+            .memory_properties()
+            .contains(vk::MemoryPropertyFlags::HOST_COHERENT)
+        {
+            anyhow::bail!(
+                "buffer copy target is not HOST_COHERENT; mapped writes require an explicit \
+                 vkFlushMappedMemoryRanges before GPU use"
+            );
+        }
+
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.as_ptr() as *mut u8, bytes.len());
         }
@@ -167,5 +192,21 @@ impl Buffer {
         unsafe {
             device.destroy_buffer(self.handle, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_buffer_size;
+
+    #[test]
+    fn zero_sized_buffer_is_rejected() {
+        assert!(validate_buffer_size(0, "test buffer").is_err());
+    }
+
+    #[test]
+    fn nonzero_sized_buffer_is_accepted() {
+        assert!(validate_buffer_size(1, "test buffer").is_ok());
+        assert!(validate_buffer_size(1024, "test buffer").is_ok());
     }
 }

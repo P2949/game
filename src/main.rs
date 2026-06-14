@@ -32,6 +32,15 @@ fn main() -> anyhow::Result<()> {
     let mut pending_actions = FrameActions::default();
     let mut previous_frame = Instant::now();
 
+    // Optional smoke-test hook: when GAME_SMOKE_FRAMES=N is set, render N frames
+    // then quit cleanly (running normal teardown). Lets CI / a headless run
+    // exercise startup, rendering, and shutdown — including validation-layer
+    // resource-leak checks at Drop — without a human closing the window.
+    let smoke_frames: Option<u64> = std::env::var("GAME_SMOKE_FRAMES")
+        .ok()
+        .and_then(|value| value.parse().ok());
+    let mut rendered_frames: u64 = 0;
+
     while !platform.should_quit {
         platform.pump_events();
 
@@ -87,6 +96,14 @@ fn main() -> anyhow::Result<()> {
         let alpha = timestep.alpha();
         game.render(alpha, &mut vk);
         vk.render(&platform.window, game.camera())?;
+
+        rendered_frames += 1;
+        if let Some(limit) = smoke_frames
+            && rendered_frames >= limit
+        {
+            log::info!("GAME_SMOKE_FRAMES={limit} reached; exiting cleanly");
+            platform.should_quit = true;
+        }
     }
 
     Ok(())

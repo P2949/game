@@ -68,13 +68,17 @@ impl Mixer {
         self.voices.push(Voice {
             sound_id,
             cursor: 0,
-            volume,
+            volume: sanitize_volume(volume),
             looping,
         });
     }
 
     pub fn mix_into(&mut self, out: &mut [f32]) {
         out.fill(0.0);
+
+        // Sanitize once per mix so a poisoned `master_volume` field (set directly
+        // on this public struct) can never produce invalid or exploding gain.
+        let master_volume = sanitize_volume(self.master_volume);
 
         for voice in &mut self.voices {
             let sound = &self.sounds[voice.sound_id];
@@ -87,7 +91,7 @@ impl Mixer {
                     }
                 }
 
-                *sample += sound.samples[voice.cursor] * voice.volume * self.master_volume;
+                *sample += sound.samples[voice.cursor] * voice.volume * master_volume;
                 voice.cursor += 1;
             }
         }
@@ -194,6 +198,11 @@ impl AudioCallback<f32> for MixerCallback {
     fn callback(&mut self, stream: &mut AudioStream, requested: i32) {
         self.drain_commands();
 
+        // `requested` is already a per-`Channel` sample count, NOT a byte count:
+        // the sdl3 callback shim divides SDL's byte amount by `size_of::<Channel>()`
+        // before calling us (sdl3 audio.rs: `len / size_of::<Channel>()`). Do not
+        // add a bytes->samples conversion here. `put_data_f32` below likewise
+        // consumes f32 samples, keeping the whole path in sample units.
         let mut remaining = requested.max(0) as usize;
 
         while remaining > 0 {
@@ -205,6 +214,17 @@ impl AudioCallback<f32> for MixerCallback {
 
             remaining -= chunk_len;
         }
+    }
+}
+
+/// Clamps a gain multiplier into the valid `0.0..=1.0` range, mapping any
+/// non-finite value (NaN/inf) to silence. Keeps the mixer from producing
+/// invalid or runaway gain from public volume inputs.
+fn sanitize_volume(volume: f32) -> f32 {
+    if volume.is_finite() {
+        volume.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -234,7 +254,52 @@ mod tests {
 
     use crossbeam_queue::ArrayQueue;
 
-    use super::{AudioCommand, Mixer, MixerCallback, Sound};
+    use super::{AudioCommand, Mixer, MixerCallback, Sound, sanitize_volume};
+
+    #[test]
+    fn sanitize_volume_clamps_and_neutralizes_non_finite() {
+        assert_eq!(sanitize_volume(0.5), 0.5);
+        assert_eq!(sanitize_volume(0.0), 0.0);
+        assert_eq!(sanitize_volume(1.0), 1.0);
+        assert_eq!(sanitize_volume(-1.0), 0.0);
+        assert_eq!(sanitize_volume(2.0), 1.0);
+        assert_eq!(sanitize_volume(f32::NAN), 0.0);
+        assert_eq!(sanitize_volume(f32::INFINITY), 0.0);
+        assert_eq!(sanitize_volume(f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn play_sanitizes_voice_volume() {
+        let mut mixer = Mixer::new();
+        let sound_id = mixer.add_sound(Sound {
+            samples: vec![1.0],
+            channels: 1,
+            sample_rate: 48_000,
+        });
+
+        mixer.play(sound_id, f32::NAN, true);
+
+        assert_eq!(mixer.voices.len(), 1);
+        assert_eq!(mixer.voices[0].volume, 0.0);
+    }
+
+    #[test]
+    fn mix_into_ignores_non_finite_master_volume() {
+        let mut mixer = Mixer::new();
+        mixer.master_volume = f32::NAN;
+        let sound_id = mixer.add_sound(Sound {
+            samples: vec![0.5, 0.5],
+            channels: 1,
+            sample_rate: 48_000,
+        });
+        mixer.play(sound_id, 1.0, false);
+
+        let mut out = [0.0; 2];
+        mixer.mix_into(&mut out);
+
+        // NaN master volume is neutralized to 0.0 gain, not propagated into output.
+        assert_eq!(&out, &[0.0, 0.0]);
+    }
 
     #[test]
     fn mixer_preallocates_voice_capacity() {

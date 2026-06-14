@@ -21,7 +21,6 @@ impl FrameActions {
 pub struct InputState {
     pub move_x: f32,
     pub move_y: f32,
-    pub action: bool,
     pub action_pressed: bool,
     pub pause_pressed: bool,
     pub reset_pressed: bool,
@@ -64,12 +63,9 @@ impl InputState {
             Keycode::Right | Keycode::D => self.right = pressed,
             Keycode::Up | Keycode::W => self.up = pressed,
             Keycode::Down | Keycode::S => self.down = pressed,
-            Keycode::Space | Keycode::Return => {
-                self.action = pressed;
-                if pressed {
-                    self.action_pressed = true;
-                }
-            }
+            // Action is purely edge-triggered (press → one-shot); there is no
+            // held-action state to track.
+            Keycode::Space | Keycode::Return if pressed => self.action_pressed = true,
             Keycode::P if pressed => self.pause_pressed = true,
             Keycode::R if pressed => self.reset_pressed = true,
             Keycode::K if pressed => self.debug_die_pressed = true,

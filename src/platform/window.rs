@@ -2,12 +2,10 @@ use anyhow::Context;
 use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::Keycode;
 use sdl3::video::Window;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::platform::input::InputState;
-
-const RESIZE_DEBOUNCE: Duration = Duration::from_millis(750);
-const MIN_RESIZE_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
+use crate::platform::resize::ResizePolicy;
 
 pub struct Platform {
     // Keep the SDL context alive for the lifetime of the window and event pump.
@@ -19,8 +17,7 @@ pub struct Platform {
     pub input: InputState,
     last_drawable_size: (u32, u32),
     pending_drawable_resize: bool,
-    last_resize_event: Option<Instant>,
-    last_resize_recreate: Option<Instant>,
+    resize_policy: ResizePolicy,
 }
 
 impl Platform {
@@ -72,8 +69,7 @@ impl Platform {
             input: InputState::default(),
             last_drawable_size,
             pending_drawable_resize: false,
-            last_resize_event: None,
-            last_resize_recreate: None,
+            resize_policy: ResizePolicy::default(),
         })
     }
 
@@ -122,40 +118,21 @@ impl Platform {
         }
 
         let now = Instant::now();
-        if !self.resize_recreate_ready(now) {
+        let drawable_size = self.window.size_in_pixels();
+        if !self.resize_policy.recreate_ready(now, drawable_size) {
             return false;
         }
 
         self.pending_drawable_resize = false;
-        self.last_resize_recreate = Some(now);
+        self.resize_policy.note_recreate(now);
         true
     }
 
     pub fn resize_pending(&self) -> bool {
-        self.pending_drawable_resize && !self.resize_recreate_ready(Instant::now())
-    }
-
-    fn resize_recreate_ready(&self, now: Instant) -> bool {
-        // Zero-size (minimized) windows are special-cased by the caller in the
-        // main loop, which skips rendering before reaching this. We deliberately
-        // do not gate on a minimum size here: doing so would leave a small but
-        // nonzero window stuck with `pending_drawable_resize` forever, freezing
-        // rendering until the user happened to resize back above the threshold.
-        let Some(last_resize_event) = self.last_resize_event else {
-            return true;
-        };
-
-        if now.duration_since(last_resize_event) < RESIZE_DEBOUNCE {
-            return false;
-        }
-
-        if let Some(last_recreate) = self.last_resize_recreate
-            && now.duration_since(last_recreate) < MIN_RESIZE_RECREATE_INTERVAL
-        {
-            return false;
-        }
-
-        true
+        self.pending_drawable_resize
+            && !self
+                .resize_policy
+                .recreate_ready(Instant::now(), self.window.size_in_pixels())
     }
 
     fn track_drawable_size_change(&mut self) {
@@ -166,7 +143,7 @@ impl Platform {
 
         self.last_drawable_size = drawable_size;
         self.pending_drawable_resize = true;
-        self.last_resize_event = Some(Instant::now());
+        self.resize_policy.note_resize(Instant::now());
     }
 
     pub fn drawable_size(&self) -> (u32, u32) {

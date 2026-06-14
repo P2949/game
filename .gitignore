@@ -1,3 +1,19 @@
+# Rust build output
 /target
+
+# Editor/IDE
 /.idea
 /.vscode
+*.swp
+*.swo
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local environment
+.env
+.env.local

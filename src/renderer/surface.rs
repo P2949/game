@@ -2,8 +2,8 @@ use ash::vk;
 use ash::vk::Handle;
 
 pub struct Surface {
-    pub loader: ash::khr::surface::Instance,
-    pub handle: vk::SurfaceKHR,
+    loader: ash::khr::surface::Instance,
+    handle: vk::SurfaceKHR,
 }
 
 impl Surface {
@@ -28,7 +28,17 @@ impl Surface {
         Ok(Self { loader, handle })
     }
 
-    pub unsafe fn destroy(&self) {
+    pub fn loader(&self) -> &ash::khr::surface::Instance {
+        &self.loader
+    }
+
+    pub fn handle(&self) -> vk::SurfaceKHR {
+        self.handle
+    }
+}
+
+impl Drop for Surface {
+    fn drop(&mut self) {
         unsafe {
             self.loader.destroy_surface(self.handle, None);
         }

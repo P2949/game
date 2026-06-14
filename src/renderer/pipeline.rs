@@ -33,6 +33,7 @@ pub fn create_sprite_shader_modules(
 }
 
 pub struct GraphicsPipeline {
+    device: ash::Device,
     pub layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
 }
@@ -60,11 +61,24 @@ impl GraphicsPipeline {
         result
     }
 
-    pub unsafe fn destroy(&self, device: &ash::Device) {
+    pub fn destroy(&mut self) {
         unsafe {
-            device.destroy_pipeline(self.pipeline, None);
-            device.destroy_pipeline_layout(self.layout, None);
+            if self.pipeline != vk::Pipeline::null() {
+                self.device.destroy_pipeline(self.pipeline, None);
+                self.pipeline = vk::Pipeline::null();
+            }
+
+            if self.layout != vk::PipelineLayout::null() {
+                self.device.destroy_pipeline_layout(self.layout, None);
+                self.layout = vk::PipelineLayout::null();
+            }
         }
+    }
+}
+
+impl Drop for GraphicsPipeline {
+    fn drop(&mut self) {
+        self.destroy();
     }
 }
 
@@ -186,6 +200,7 @@ fn create_sprite_graphics_pipeline(
     );
 
     Ok(GraphicsPipeline {
+        device: device.clone(),
         layout: pipeline_layout,
         pipeline,
     })

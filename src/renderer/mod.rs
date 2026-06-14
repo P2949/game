@@ -1,19 +1,29 @@
+pub mod assets;
 pub mod buffer;
+pub mod commands;
 pub mod context;
 pub mod debug;
 pub mod device;
 pub mod frame;
+pub mod instance;
+pub mod owned;
 pub mod pipeline;
+pub mod recreate;
 pub mod sprite_batch;
 pub mod surface;
 pub mod swapchain;
 pub mod text;
 pub mod texture;
+pub mod texture_registry;
 pub mod vertex;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
 
+// Built-in texture handles. These are the first two registrations in the
+// renderer's `TextureRegistry`, so the ids are stable and can be referenced as
+// constants from gameplay code. Registration order in `VulkanContext::new` must
+// match these values (debug-asserted there).
 pub const TEST_TEXTURE_ID: TextureId = TextureId(0);
 pub const FONT_TEXTURE_ID: TextureId = TextureId(1);
 

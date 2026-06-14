@@ -20,6 +20,34 @@ impl TextureColorSpace {
     }
 }
 
+/// Validates RGBA8 texture inputs before any Vulkan image is created. Rejects
+/// zero extents, dimension arithmetic that would overflow `usize`, and pixel
+/// buffers whose length does not match `width * height * 4`. Returns the
+/// expected byte length on success.
+fn validate_rgba8_texture(
+    name: &str,
+    width: u32,
+    height: u32,
+    pixels_len: usize,
+) -> anyhow::Result<usize> {
+    if width == 0 || height == 0 {
+        anyhow::bail!("texture '{name}' has zero extent ({width}x{height})");
+    }
+
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| {
+            anyhow::anyhow!("texture '{name}' dimensions overflow ({width}x{height})")
+        })?;
+
+    if pixels_len != expected_len {
+        anyhow::bail!("texture '{name}' has {pixels_len} bytes, expected {expected_len}");
+    }
+
+    Ok(expected_len)
+}
+
 pub struct Texture {
     pub image: vk::Image,
     pub allocation: Option<Allocation>,
@@ -57,13 +85,7 @@ impl Texture {
         color_space: TextureColorSpace,
         name: &str,
     ) -> anyhow::Result<Self> {
-        let expected_len = width as usize * height as usize * 4;
-        if pixels.len() != expected_len {
-            anyhow::bail!(
-                "texture '{name}' has {} bytes, expected {expected_len}",
-                pixels.len()
-            );
-        }
+        validate_rgba8_texture(name, width, height, pixels.len())?;
 
         let image_size = pixels.len() as vk::DeviceSize;
         let format = color_space.format();
@@ -271,6 +293,7 @@ impl Texture {
         }
     }
 }
+
 pub fn create_texture_descriptor_set_layout(
     device: &ash::Device,
 ) -> anyhow::Result<vk::DescriptorSetLayout> {
@@ -370,5 +393,37 @@ pub unsafe fn transition_image(
 
     unsafe {
         device.cmd_pipeline_barrier2(cmd, &dependency);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_rgba8_texture;
+
+    #[test]
+    fn zero_extent_is_rejected() {
+        assert!(validate_rgba8_texture("t", 0, 1, 0).is_err());
+        assert!(validate_rgba8_texture("t", 1, 0, 0).is_err());
+        assert!(validate_rgba8_texture("t", 0, 0, 0).is_err());
+    }
+
+    #[test]
+    fn overflowing_dimensions_are_rejected() {
+        // width * height * 4 cannot fit in usize.
+        assert!(validate_rgba8_texture("t", u32::MAX, u32::MAX, 0).is_err());
+    }
+
+    #[test]
+    fn mismatched_pixel_length_is_rejected() {
+        // 1x1 RGBA8 needs exactly 4 bytes.
+        assert!(validate_rgba8_texture("t", 1, 1, 3).is_err());
+        assert!(validate_rgba8_texture("t", 1, 1, 5).is_err());
+    }
+
+    #[test]
+    fn valid_textures_return_expected_byte_length() {
+        assert_eq!(validate_rgba8_texture("t", 1, 1, 4).unwrap(), 4);
+        assert_eq!(validate_rgba8_texture("t", 2, 2, 16).unwrap(), 16);
+        assert_eq!(validate_rgba8_texture("t", 4, 3, 48).unwrap(), 48);
     }
 }

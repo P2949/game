@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            glslc \
+            libasound2-dev \
+            libdbus-1-dev \
+            libegl1-mesa-dev \
+            libudev-dev \
+            libvulkan-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            ninja-build \
+            pkg-config \
+            vulkan-validationlayers \
+            wayland-protocols
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Test
+        run: cargo test --locked --features ci-build-sdl3
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked --features ci-build-sdl3 -- -D warnings
+
+      - name: Release build
+        run: cargo build --release --locked --features ci-build-sdl3

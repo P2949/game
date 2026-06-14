@@ -1,15 +1,25 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const SHADER_ROOT: &str = "shaders";
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=shaders");
+    println!("cargo:rerun-if-changed={SHADER_ROOT}");
+    // Allow overriding the compiler, and rebuild shaders if that override changes.
+    println!("cargo:rerun-if-env-changed=GLSLC");
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    let glslc = std::env::var("GLSLC").unwrap_or_else(|_| "glslc".to_owned());
 
-    for entry in walkdir::WalkDir::new("shaders") {
+    for entry in walkdir::WalkDir::new(SHADER_ROOT) {
         let entry = entry.expect("walk shader directory");
         let path = entry.path();
+
+        if path.is_dir() {
+            println!("cargo:rerun-if-changed={}", path.display());
+            continue;
+        }
 
         if !path.is_file() {
             continue;
@@ -24,22 +34,64 @@ fn main() {
         }
 
         println!("cargo:rerun-if-changed={}", path.display());
-        compile_shader(path, &out_dir);
+        compile_shader(&glslc, path, &out_dir);
     }
 }
 
-fn compile_shader(path: &Path, out_dir: &Path) {
-    let file_name = path.file_name().expect("shader path has a file name");
-    let output = out_dir.join(format!("{}.spv", file_name.to_string_lossy()));
+fn compile_shader(glslc: &str, path: &Path, out_dir: &Path) {
+    // Mirror the shader's path *relative to the shader root* into OUT_DIR, so two
+    // shaders with the same file name in different subdirectories (e.g.
+    // `ui/sprite.vert` and `world/sprite.vert`) compile to distinct outputs
+    // instead of silently clobbering each other. Top-level shaders keep their
+    // existing `<name>.<stage>.spv` output name, so `include_bytes!` paths in the
+    // renderer stay valid.
+    let relative = path
+        .strip_prefix(SHADER_ROOT)
+        .expect("shader path is under the shader root");
+    let mut output = out_dir.join(relative);
+    let spv_name = format!(
+        "{}.spv",
+        output
+            .file_name()
+            .expect("shader path has a file name")
+            .to_string_lossy()
+    );
+    output.set_file_name(spv_name);
 
-    let status = Command::new("glslc")
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).unwrap_or_else(|err| {
+            panic!(
+                "failed to create shader output directory {}: {err}",
+                parent.display()
+            )
+        });
+    }
+
+    let result = Command::new(glslc)
         .arg(path)
         .arg("-o")
         .arg(&output)
-        .status()
-        .expect("failed to run glslc; install shaderc or adjust build.rs");
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run shader compiler '{glslc}' for {}: {err}\n\
+                 install glslc (shaderc / the Vulkan SDK) or set GLSLC=/path/to/glslc",
+                path.display()
+            )
+        });
 
-    if !status.success() {
-        panic!("glslc failed for {}", path.display());
+    if !result.status.success() {
+        panic!(
+            "shader compilation failed\n  \
+             compiler: {glslc}\n  \
+             source:   {}\n  \
+             output:   {}\n  \
+             status:   {}\n  \
+             stderr:\n{}",
+            path.display(),
+            output.display(),
+            result.status,
+            String::from_utf8_lossy(&result.stderr),
+        );
     }
 }

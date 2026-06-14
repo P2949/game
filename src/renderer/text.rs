@@ -3,6 +3,13 @@ use std::path::Path;
 
 use crate::renderer::{SpriteDraw, TextureId};
 
+// The atlas is a fixed grid of equally-sized cells covering printable ASCII.
+// These values are tuned for the bundled DejaVu Sans at FONT_SIZE: every glyph in
+// `FIRST_ASCII..=LAST_ASCII` must fit within CELL_SIZE (minus padding), which
+// `build_ascii_atlas` asserts. Changing the font or font size may require
+// retuning CELL_SIZE / the grid; a future dynamic (measured + packed) atlas would
+// remove this fixed-cell assumption. Non-ASCII characters are not in the atlas
+// and render via a fallback glyph at draw time (see `glyph_or_fallback`).
 const FIRST_ASCII: u8 = 32;
 const LAST_ASCII: u8 = 126;
 const ATLAS_COLUMNS: u32 = 16;
@@ -10,6 +17,10 @@ const ATLAS_ROWS: u32 = 6;
 const CELL_SIZE: u32 = 48;
 const CELL_PADDING: u32 = 4;
 const FONT_SIZE: f32 = 32.0;
+
+/// Glyph substituted for any character not present in the atlas, so unsupported
+/// text degrades to visible placeholders instead of silently collapsing.
+const FALLBACK_CHAR: char = '?';
 
 pub struct GlyphInfo {
     pub uv_min: glam::Vec2,
@@ -23,6 +34,95 @@ pub struct FontAtlas {
     pub texture: TextureId,
     pub glyphs: HashMap<char, GlyphInfo>,
     pub line_height: f32,
+}
+
+impl FontAtlas {
+    /// Returns the glyph for `ch`, falling back to [`FALLBACK_CHAR`] for any
+    /// character the atlas does not contain. `None` only if even the fallback is
+    /// missing (an atlas built without `?`).
+    fn glyph_or_fallback(&self, ch: char) -> Option<&GlyphInfo> {
+        self.glyphs
+            .get(&ch)
+            .or_else(|| self.glyphs.get(&FALLBACK_CHAR))
+    }
+
+    /// Horizontal advance used when no glyph (not even the fallback) is available,
+    /// so layout still progresses. Prefers the fallback glyph's advance, then the
+    /// space glyph's, then zero.
+    fn missing_glyph_advance(&self) -> f32 {
+        self.glyphs
+            .get(&FALLBACK_CHAR)
+            .or_else(|| self.glyphs.get(&' '))
+            .map(|glyph| glyph.advance)
+            .unwrap_or(0.0)
+    }
+
+    /// Per-character horizontal advance, accounting for the fallback glyph.
+    fn advance_for(&self, ch: char) -> f32 {
+        self.glyph_or_fallback(ch)
+            .map(|glyph| glyph.advance)
+            .unwrap_or_else(|| self.missing_glyph_advance())
+    }
+
+    /// Measures the pixel size of `text` as it would be laid out by
+    /// [`draw_text`], honoring embedded newlines and the fallback glyph. Returns
+    /// `(max line width, total height)`. Provided for UI layout (alignment,
+    /// centering); not yet wired into gameplay rendering.
+    #[allow(dead_code)]
+    pub fn measure_text(&self, text: &str) -> glam::Vec2 {
+        let mut max_width = 0.0_f32;
+        let mut line_width = 0.0_f32;
+        let mut lines = 1_u32;
+
+        for ch in text.chars() {
+            if ch == '\n' {
+                max_width = max_width.max(line_width);
+                line_width = 0.0;
+                lines += 1;
+                continue;
+            }
+            line_width += self.advance_for(ch);
+        }
+        max_width = max_width.max(line_width);
+
+        glam::vec2(max_width, lines as f32 * self.line_height)
+    }
+
+    /// Greedily word-wraps `text` so each produced line fits within `max_width`
+    /// pixels, preserving existing newlines. Whitespace is the only break point;
+    /// a single word longer than `max_width` is left on its own (over-long) line.
+    /// Provided for UI layout; not yet wired into gameplay rendering.
+    #[allow(dead_code)]
+    pub fn wrap_text(&self, text: &str, max_width: f32) -> Vec<String> {
+        let space_advance = self.advance_for(' ');
+        let mut lines = Vec::new();
+
+        for raw_line in text.split('\n') {
+            let mut current = String::new();
+            let mut current_width = 0.0_f32;
+
+            for word in raw_line.split_whitespace() {
+                let word_width: f32 = word.chars().map(|ch| self.advance_for(ch)).sum();
+
+                if current.is_empty() {
+                    current.push_str(word);
+                    current_width = word_width;
+                } else if current_width + space_advance + word_width <= max_width {
+                    current.push(' ');
+                    current.push_str(word);
+                    current_width += space_advance + word_width;
+                } else {
+                    lines.push(std::mem::take(&mut current));
+                    current.push_str(word);
+                    current_width = word_width;
+                }
+            }
+
+            lines.push(current);
+        }
+
+        lines
+    }
 }
 
 pub struct FontAtlasImage {
@@ -132,7 +232,10 @@ pub fn draw_text(
             continue;
         }
 
-        let Some(glyph) = atlas.glyphs.get(&ch) else {
+        let Some(glyph) = atlas.glyph_or_fallback(ch) else {
+            // No glyph and no fallback available: advance so layout still
+            // progresses instead of stacking subsequent glyphs on top.
+            pos.x += atlas.missing_glyph_advance();
             continue;
         };
 
@@ -151,5 +254,62 @@ pub fn draw_text(
         }
 
         pos.x += glyph.advance;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FontAtlas, GlyphInfo};
+    use crate::renderer::FONT_TEXTURE_ID;
+    use std::collections::HashMap;
+
+    fn glyph(advance: f32) -> GlyphInfo {
+        GlyphInfo {
+            uv_min: glam::Vec2::ZERO,
+            uv_max: glam::Vec2::ONE,
+            size: glam::vec2(advance, 10.0),
+            bearing: glam::Vec2::ZERO,
+            advance,
+        }
+    }
+
+    fn test_atlas() -> FontAtlas {
+        let mut glyphs = HashMap::new();
+        glyphs.insert('A', glyph(10.0));
+        glyphs.insert('B', glyph(10.0));
+        glyphs.insert(' ', glyph(5.0));
+        glyphs.insert('?', glyph(8.0));
+        FontAtlas {
+            texture: FONT_TEXTURE_ID,
+            glyphs,
+            line_height: 12.0,
+        }
+    }
+
+    #[test]
+    fn measure_text_sums_advances_and_counts_lines() {
+        let atlas = test_atlas();
+        assert_eq!(atlas.measure_text("AB"), glam::vec2(20.0, 12.0));
+        assert_eq!(atlas.measure_text("A\nB"), glam::vec2(10.0, 24.0));
+    }
+
+    #[test]
+    fn measure_empty_text_is_one_line_high_and_zero_wide() {
+        assert_eq!(test_atlas().measure_text(""), glam::vec2(0.0, 12.0));
+    }
+
+    #[test]
+    fn unsupported_character_uses_fallback_advance() {
+        // '€' is not in the atlas, so it measures as the fallback '?' (advance 8).
+        assert_eq!(test_atlas().measure_text("€"), glam::vec2(8.0, 12.0));
+    }
+
+    #[test]
+    fn wrap_text_breaks_on_width_and_preserves_newlines() {
+        let atlas = test_atlas();
+        // Each 'A' is 10 wide, space is 5: "A A" = 25 fits, a third word overflows.
+        assert_eq!(atlas.wrap_text("A A A", 25.0), vec!["A A", "A"]);
+        // Existing newlines are preserved as hard breaks.
+        assert_eq!(atlas.wrap_text("A\nB", 100.0), vec!["A", "B"]);
     }
 }

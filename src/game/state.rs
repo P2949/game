@@ -219,13 +219,16 @@ impl Game {
 
     fn update_camera_zoom(&mut self, dt: f32, input: InputState) {
         let zoom_step = 1.0 + 2.0 * dt;
+        let mut zoom = self.camera.zoom;
         if input.zoom_in {
-            self.camera.zoom *= zoom_step;
+            zoom *= zoom_step;
         }
         if input.zoom_out {
-            self.camera.zoom /= zoom_step;
+            zoom /= zoom_step;
         }
-        self.camera.zoom = self.camera.zoom.clamp(0.25, 6.0);
+        // Route through `set_zoom` so the gameplay clamp and the camera's own
+        // validity guard are applied together.
+        self.camera.set_zoom(zoom.clamp(0.25, 6.0));
     }
 
     fn render_frame_graph(&self, renderer: &mut impl DrawCommands, origin: glam::Vec2) {
@@ -334,10 +337,7 @@ fn new_world() -> (Camera2D, Entity, Vec<Aabb>) {
         size: glam::vec2(48.0, 48.0),
         sprite: renderer::TEST_TEXTURE_ID,
     };
-    let camera = Camera2D {
-        center: player.pos + player.size * 0.5,
-        zoom: 1.0,
-    };
+    let camera = Camera2D::new(player.pos + player.size * 0.5, 1.0);
 
     (camera, player, test_room_solids())
 }
@@ -355,5 +355,164 @@ fn test_room_solids() -> Vec<Aabb> {
 impl Default for Game {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FrameGraph, Game, GameMode};
+    use crate::platform::input::{FrameActions, InputState};
+
+    const DT: f32 = 1.0 / 120.0;
+    // Player start position + half-size, matching `new_world`.
+    const START_CAMERA_CENTER: glam::Vec2 = glam::Vec2::new(444.0, 144.0);
+
+    fn playing_game() -> Game {
+        let mut game = Game::new();
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                action_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode, GameMode::Playing);
+        game
+    }
+
+    #[test]
+    fn main_menu_starts_playing_on_action() {
+        let mut game = Game::new();
+        assert_eq!(game.mode, GameMode::MainMenu);
+
+        game.update(DT, InputState::default(), FrameActions::default());
+        assert_eq!(game.mode, GameMode::MainMenu, "no action keeps the menu");
+
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                action_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode, GameMode::Playing);
+    }
+
+    #[test]
+    fn playing_pauses_and_resumes() {
+        let mut game = playing_game();
+
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                pause_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode, GameMode::Paused);
+
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                pause_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode, GameMode::Playing);
+    }
+
+    #[test]
+    fn playing_transitions_to_dead_then_restarts() {
+        let mut game = playing_game();
+
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                debug_die_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode, GameMode::Dead);
+
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                action_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode, GameMode::Playing);
+    }
+
+    #[test]
+    fn camera_follows_player_movement() {
+        let mut game = playing_game();
+        let start = game.camera().center;
+        assert_eq!(start, START_CAMERA_CENTER);
+
+        let mut input = InputState::default();
+        input.move_x = 1.0;
+        game.update(DT, input, FrameActions::default());
+
+        let after = game.camera().center;
+        assert!(
+            after.x > start.x,
+            "camera should track the player moving right"
+        );
+        assert_eq!(after.y, start.y);
+    }
+
+    #[test]
+    fn reset_returns_player_to_start() {
+        let mut game = playing_game();
+
+        let mut input = InputState::default();
+        input.move_x = 1.0;
+        for _ in 0..10 {
+            game.update(DT, input, FrameActions::default());
+        }
+        assert!(game.camera().center.x > START_CAMERA_CENTER.x);
+
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                reset_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode, GameMode::Playing);
+        assert_eq!(game.camera().center, START_CAMERA_CENTER);
+    }
+
+    #[test]
+    fn frame_graph_orders_and_averages_recent_samples() {
+        let mut graph = FrameGraph::default();
+        assert_eq!(graph.average_recent(10), None);
+
+        graph.push(10.0);
+        graph.push(20.0);
+        graph.push(30.0);
+
+        let recent: Vec<f32> = graph.recent(10).collect();
+        assert_eq!(recent, vec![10.0, 20.0, 30.0]);
+        assert_eq!(graph.average_recent(10), Some(20.0));
+    }
+
+    #[test]
+    fn frame_graph_recent_is_bounded_by_request_and_wraps() {
+        let mut graph = FrameGraph::default();
+        for i in 0..300 {
+            graph.push(i as f32);
+        }
+        // Only the most recent 5 samples, in chronological order.
+        let recent: Vec<f32> = graph.recent(5).collect();
+        assert_eq!(recent, vec![295.0, 296.0, 297.0, 298.0, 299.0]);
     }
 }

@@ -22,25 +22,43 @@ pub fn query_swapchain_support(
         })
     }
 }
-pub fn choose_surface_format(formats: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
-    formats
+pub fn choose_surface_format(
+    formats: &[vk::SurfaceFormatKHR],
+) -> anyhow::Result<vk::SurfaceFormatKHR> {
+    // Device selection rejects surfaces with no formats, but guard here too so a
+    // direct caller can never index an empty slice and panic.
+    if formats.is_empty() {
+        anyhow::bail!("no surface formats available for swapchain creation");
+    }
+
+    Ok(formats
         .iter()
         .copied()
         .find(|format| {
             format.format == vk::Format::B8G8R8A8_SRGB
                 && format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
         })
-        .unwrap_or(formats[0])
+        .unwrap_or(formats[0]))
 }
 
-pub fn choose_present_mode(modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
+pub fn choose_present_mode(modes: &[vk::PresentModeKHR]) -> anyhow::Result<vk::PresentModeKHR> {
     // FIFO is guaranteed by Vulkan WSI and is the safest default.
     // MAILBOX is good for low-latency uncapped rendering if available.
-    modes
+    if modes.is_empty() {
+        anyhow::bail!("no present modes available for swapchain creation");
+    }
+
+    Ok(modes
         .iter()
         .copied()
         .find(|mode| *mode == vk::PresentModeKHR::MAILBOX)
-        .unwrap_or(vk::PresentModeKHR::FIFO)
+        .or_else(|| {
+            modes
+                .iter()
+                .copied()
+                .find(|mode| *mode == vk::PresentModeKHR::FIFO)
+        })
+        .unwrap_or(modes[0]))
 }
 
 pub fn choose_extent(
@@ -83,8 +101,8 @@ impl Swapchain {
         old_swapchain: vk::SwapchainKHR,
     ) -> anyhow::Result<Self> {
         let support = query_swapchain_support(surface_loader, physical_device, surface)?;
-        let surface_format = choose_surface_format(&support.formats);
-        let present_mode = choose_present_mode(&support.present_modes);
+        let surface_format = choose_surface_format(&support.formats)?;
+        let present_mode = choose_present_mode(&support.present_modes)?;
         let extent = choose_extent(support.capabilities, window_size);
 
         let mut image_count = support.capabilities.min_image_count + 1;
@@ -144,14 +162,26 @@ impl Swapchain {
         })
     }
 
-    pub unsafe fn destroy(&self) {
+    pub fn destroy(&mut self) {
+        if self.handle == vk::SwapchainKHR::null() {
+            return;
+        }
+
         unsafe {
             self.loader.destroy_swapchain(self.handle, None);
         }
+        self.handle = vk::SwapchainKHR::null();
+    }
+}
+
+impl Drop for Swapchain {
+    fn drop(&mut self) {
+        self.destroy();
     }
 }
 
 pub struct SwapchainImageViews {
+    device: ash::Device,
     pub views: Vec<vk::ImageView>,
 }
 
@@ -193,14 +223,102 @@ impl SwapchainImageViews {
 
         log::info!("created {} swapchain image views", views.len());
 
-        Ok(Self { views })
+        Ok(Self {
+            device: device.clone(),
+            views,
+        })
     }
 
-    pub unsafe fn destroy(&self, device: &ash::Device) {
-        for &view in &self.views {
+    pub fn destroy(&mut self) {
+        for view in self.views.drain(..) {
             unsafe {
-                device.destroy_image_view(view, None);
+                self.device.destroy_image_view(view, None);
             }
         }
+    }
+}
+
+impl Drop for SwapchainImageViews {
+    fn drop(&mut self) {
+        self.destroy();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{choose_present_mode, choose_surface_format};
+    use ash::vk;
+
+    fn format(format: vk::Format, color_space: vk::ColorSpaceKHR) -> vk::SurfaceFormatKHR {
+        vk::SurfaceFormatKHR {
+            format,
+            color_space,
+        }
+    }
+
+    #[test]
+    fn empty_format_list_is_an_error() {
+        assert!(choose_surface_format(&[]).is_err());
+    }
+
+    #[test]
+    fn preferred_srgb_format_is_selected_when_present() {
+        let formats = [
+            format(
+                vk::Format::R8G8B8A8_UNORM,
+                vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            ),
+            format(vk::Format::B8G8R8A8_SRGB, vk::ColorSpaceKHR::SRGB_NONLINEAR),
+        ];
+        let chosen = choose_surface_format(&formats).unwrap();
+        assert_eq!(chosen.format, vk::Format::B8G8R8A8_SRGB);
+    }
+
+    #[test]
+    fn first_format_is_used_as_fallback() {
+        let formats = [
+            format(
+                vk::Format::R8G8B8A8_UNORM,
+                vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            ),
+            format(vk::Format::R8G8B8A8_SRGB, vk::ColorSpaceKHR::SRGB_NONLINEAR),
+        ];
+        let chosen = choose_surface_format(&formats).unwrap();
+        assert_eq!(chosen.format, vk::Format::R8G8B8A8_UNORM);
+    }
+
+    #[test]
+    fn empty_present_mode_list_is_an_error() {
+        assert!(choose_present_mode(&[]).is_err());
+    }
+
+    #[test]
+    fn mailbox_present_mode_is_preferred_when_present() {
+        let modes = [vk::PresentModeKHR::FIFO, vk::PresentModeKHR::MAILBOX];
+        assert_eq!(
+            choose_present_mode(&modes).unwrap(),
+            vk::PresentModeKHR::MAILBOX
+        );
+    }
+
+    #[test]
+    fn fifo_present_mode_is_the_fallback() {
+        let modes = [vk::PresentModeKHR::FIFO, vk::PresentModeKHR::IMMEDIATE];
+        assert_eq!(
+            choose_present_mode(&modes).unwrap(),
+            vk::PresentModeKHR::FIFO
+        );
+    }
+
+    #[test]
+    fn first_advertised_present_mode_is_used_when_mailbox_and_fifo_are_absent() {
+        let modes = [
+            vk::PresentModeKHR::IMMEDIATE,
+            vk::PresentModeKHR::FIFO_RELAXED,
+        ];
+        assert_eq!(
+            choose_present_mode(&modes).unwrap(),
+            vk::PresentModeKHR::IMMEDIATE
+        );
     }
 }
