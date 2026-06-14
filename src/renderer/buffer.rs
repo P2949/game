@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use ash::vk;
 use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan::{
@@ -40,24 +42,31 @@ pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer) -> anyhow::Result<()
 
     // Free the command buffer on every exit, including an unwind out of `f`.
     // Without this guard a panicking closure would skip the cleanup and leak the
-    // buffer until the pool is reset or destroyed.
+    // buffer until the pool is reset or destroyed. The free is suppressed only in
+    // the catastrophic device-lost case below, where the buffer may still be
+    // referenced by an in-flight submission we can no longer drain.
     struct FreeOnDrop<'a> {
         device: &'a ash::Device,
         pool: vk::CommandPool,
         command_buffer: vk::CommandBuffer,
+        should_free: Cell<bool>,
     }
     impl Drop for FreeOnDrop<'_> {
         fn drop(&mut self) {
+            if !self.should_free.get() {
+                return;
+            }
             unsafe {
                 self.device
                     .free_command_buffers(self.pool, std::slice::from_ref(&self.command_buffer));
             }
         }
     }
-    let _free_guard = FreeOnDrop {
+    let free_guard = FreeOnDrop {
         device,
         pool: command_pool,
         command_buffer,
+        should_free: Cell::new(true),
     };
 
     (|| -> anyhow::Result<()> {
@@ -82,12 +91,17 @@ pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer) -> anyhow::Result<()
 
         // The submission succeeded, so the GPU may reference the command buffer
         // until `fence` signals. If the wait itself fails (typically device-lost),
-        // drain the device before returning so the `FreeOnDrop` guard never frees a
-        // command buffer that is still part of an in-flight submission.
+        // try to drain the device first so the `FreeOnDrop` guard can still safely
+        // free the command buffer. If even `device_wait_idle` fails, the buffer may
+        // remain part of an in-flight submission, so suppress the free entirely:
+        // leaking one upload command buffer during fatal teardown is safer than
+        // freeing a buffer the GPU might still read.
         if let Err(err) =
             unsafe { device.wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX) }
         {
-            let _ = unsafe { device.device_wait_idle() };
+            if unsafe { device.device_wait_idle() }.is_err() {
+                free_guard.should_free.set(false);
+            }
             return Err(err.into());
         }
 
@@ -160,10 +174,12 @@ impl Buffer {
         if let Err(err) =
             unsafe { device.bind_buffer_memory(handle, allocation.memory(), allocation.offset()) }
         {
-            free_allocation(allocator, allocation, name);
+            // Destroy the buffer before freeing its backing memory, matching
+            // `Buffer::destroy`'s "object before its memory" teardown order.
             unsafe {
                 device.destroy_buffer(handle, None);
             }
+            free_allocation(allocator, allocation, name);
             return Err(err.into());
         }
 
@@ -176,10 +192,12 @@ impl Buffer {
                 .memory_properties()
                 .contains(vk::MemoryPropertyFlags::HOST_COHERENT)
         {
-            free_allocation(allocator, allocation, name);
+            // Destroy the buffer before freeing its backing memory, matching
+            // `Buffer::destroy`'s "object before its memory" teardown order.
             unsafe {
                 device.destroy_buffer(handle, None);
             }
+            free_allocation(allocator, allocation, name);
             anyhow::bail!(
                 "buffer '{name}' requested CpuToGpu memory but the allocation is not \
                  HOST_COHERENT; mapped writes would require explicit flushing"

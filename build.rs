@@ -13,7 +13,9 @@ fn main() {
     let glslc = std::env::var("GLSLC").unwrap_or_else(|_| "glslc".to_owned());
 
     for entry in walkdir::WalkDir::new(SHADER_ROOT) {
-        let entry = entry.expect("walk shader directory");
+        let entry = entry.unwrap_or_else(|err| {
+            panic!("failed to walk shader directory '{SHADER_ROOT}': {err}");
+        });
         let path = entry.path();
 
         if path.is_dir() {

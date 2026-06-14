@@ -87,7 +87,21 @@ impl InputState {
     }
 
     pub fn movement(&self) -> glam::Vec2 {
-        let v = glam::vec2(self.move_x, self.move_y);
+        // `move_x`/`move_y` are public, so a test or future caller could set them to
+        // a non-finite value. SDL-driven input only ever writes 0/±1 via `axis`, but
+        // guard here so `movement` can never return NaN/Inf, which would otherwise
+        // poison velocity, position, and the camera downstream.
+        let x = if self.move_x.is_finite() {
+            self.move_x
+        } else {
+            0.0
+        };
+        let y = if self.move_y.is_finite() {
+            self.move_y
+        } else {
+            0.0
+        };
+        let v = glam::vec2(x, y);
         if v.length_squared() > 1.0 {
             v.normalize()
         } else {
@@ -132,6 +146,21 @@ mod tests {
         let actions = input.take_frame_actions();
         assert!(!actions.pause_pressed);
         assert!(!actions.action_pressed);
+    }
+
+    #[test]
+    fn movement_returns_zero_for_non_finite_public_state() {
+        let mut input = InputState {
+            move_x: f32::NAN,
+            move_y: f32::INFINITY,
+            ..Default::default()
+        };
+        assert_eq!(input.movement(), glam::Vec2::ZERO);
+
+        // A finite axis paired with a non-finite one keeps only the finite axis.
+        input.move_x = 1.0;
+        input.move_y = f32::NAN;
+        assert_eq!(input.movement(), glam::vec2(1.0, 0.0));
     }
 
     #[test]

@@ -31,6 +31,22 @@ Assets (`assets/textures/test.png`, `assets/fonts/DejaVuSans.ttf`) are loaded
 relative to the executable when present, falling back to the crate manifest
 directory so `cargo run` works from a source checkout.
 
+## Packaging
+
+The executable resolves assets relative to its own location first, so a packaged
+or installed build must ship the `assets/` directory next to the binary:
+
+```text
+<install dir>/
+├── game            # the executable
+└── assets/
+    ├── fonts/DejaVuSans.ttf
+    └── textures/test.png
+```
+
+The crate manifest directory is only a development fallback (used by `cargo run`
+from a source checkout); an installed build cannot rely on it.
+
 ## Controls
 
 | Action            | Keys                          |

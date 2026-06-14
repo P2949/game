@@ -72,7 +72,7 @@ pub fn upload_sprite_vertices(
             }
         }
 
-        let capacity = sprite_vertex_buffer_capacity(required_bytes);
+        let capacity = sprite_vertex_buffer_capacity(required_bytes)?;
         let buffer = buffer::Buffer::new(
             device,
             allocator,
@@ -91,12 +91,20 @@ pub fn upload_sprite_vertices(
     Ok(Some(buffer.handle))
 }
 
-fn sprite_vertex_buffer_capacity(required_bytes: vk::DeviceSize) -> vk::DeviceSize {
+fn sprite_vertex_buffer_capacity(required_bytes: vk::DeviceSize) -> anyhow::Result<vk::DeviceSize> {
     let mut capacity = INITIAL_SPRITE_VERTEX_BUFFER_BYTES;
     while capacity < required_bytes {
-        capacity *= 2;
+        // Doubling can overflow for an absurd request. It cannot happen for the
+        // current game (a frame's vertices are far below this), but check it so a
+        // bad `required_bytes` errors out instead of wrapping to a tiny capacity.
+        capacity = capacity.checked_mul(2).ok_or_else(|| {
+            anyhow::anyhow!(
+                "sprite vertex buffer capacity overflowed while growing to fit \
+                 {required_bytes} bytes"
+            )
+        })?;
     }
-    capacity
+    Ok(capacity)
 }
 
 pub fn ui_projection(extent: vk::Extent2D) -> glam::Mat4 {
@@ -287,5 +295,37 @@ pub unsafe fn submit_frame(
     unsafe {
         let suboptimal = swapchain_loader.queue_present(present_queue, &present_info)?;
         Ok(suboptimal)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{INITIAL_SPRITE_VERTEX_BUFFER_BYTES, sprite_vertex_buffer_capacity};
+    use ash::vk;
+
+    #[test]
+    fn capacity_keeps_initial_when_request_fits() {
+        let cap = sprite_vertex_buffer_capacity(INITIAL_SPRITE_VERTEX_BUFFER_BYTES / 2).unwrap();
+        assert_eq!(cap, INITIAL_SPRITE_VERTEX_BUFFER_BYTES);
+
+        let cap = sprite_vertex_buffer_capacity(INITIAL_SPRITE_VERTEX_BUFFER_BYTES).unwrap();
+        assert_eq!(cap, INITIAL_SPRITE_VERTEX_BUFFER_BYTES);
+    }
+
+    #[test]
+    fn capacity_doubles_until_request_fits() {
+        let cap = sprite_vertex_buffer_capacity(INITIAL_SPRITE_VERTEX_BUFFER_BYTES + 1).unwrap();
+        assert_eq!(cap, INITIAL_SPRITE_VERTEX_BUFFER_BYTES * 2);
+
+        let cap =
+            sprite_vertex_buffer_capacity(INITIAL_SPRITE_VERTEX_BUFFER_BYTES * 4 + 1).unwrap();
+        assert_eq!(cap, INITIAL_SPRITE_VERTEX_BUFFER_BYTES * 8);
+    }
+
+    #[test]
+    fn capacity_overflow_is_rejected() {
+        // A request near the top of the address space cannot be satisfied by
+        // power-of-two growth, so it must error rather than wrap to a tiny size.
+        assert!(sprite_vertex_buffer_capacity(vk::DeviceSize::MAX).is_err());
     }
 }

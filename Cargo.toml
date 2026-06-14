@@ -7,11 +7,10 @@ description = "Small Rust/SDL3/Vulkan game prototype"
 repository = "https://github.com/P2949/game"
 
 [dependencies]
-sdl3 = "0.18.4"            
-ash = "0.38"             
-gpu-allocator = "0.28"   
-glam = "0.33.1"            
-
+sdl3 = "0.18.4"
+ash = "0.38"
+gpu-allocator = "0.28"
+glam = "0.33.1"
 
 image = "0.25"
 fontdue = "0.9"

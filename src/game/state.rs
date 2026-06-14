@@ -274,6 +274,11 @@ pub struct Shake {
 
 impl Shake {
     pub fn add(&mut self, amount: f32) {
+        // `add` is public; ignore a non-finite amount so a stray NaN/Inf cannot
+        // poison trauma (and through it the camera offset) for the rest of the run.
+        if !amount.is_finite() {
+            return;
+        }
         self.trauma = (self.trauma + amount).clamp(0.0, 1.0);
     }
 
@@ -372,7 +377,7 @@ impl Default for Game {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameGraph, Game, GameMode};
+    use super::{FrameGraph, Game, GameMode, Shake};
     use crate::platform::input::{FrameActions, InputState};
 
     const DT: f32 = 1.0 / 120.0;
@@ -501,6 +506,16 @@ mod tests {
         );
         assert_eq!(game.mode, GameMode::Playing);
         assert_eq!(game.camera().center, START_CAMERA_CENTER);
+    }
+
+    #[test]
+    fn shake_add_ignores_non_finite_amounts() {
+        let mut shake = Shake::default();
+        shake.add(0.5);
+        shake.add(f32::NAN);
+        shake.add(f32::INFINITY);
+        shake.add(f32::NEG_INFINITY);
+        assert_eq!(shake.trauma, 0.5);
     }
 
     #[test]
