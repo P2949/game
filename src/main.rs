@@ -15,6 +15,11 @@ use platform::window::Platform;
 // recreation, so the window shows frames instead of freezing.
 const RESIZE_IDLE_SLEEP: Duration = Duration::from_millis(16);
 
+// Minimum spacing between fixed-timestep "discarding lag" warnings. Under a
+// sustained stall (e.g. a long resize burst) the cap is hit every frame, so
+// rate-limit the warning to keep it from flooding the log.
+const LAG_WARNING_INTERVAL: Duration = Duration::from_secs(1);
+
 fn main() -> anyhow::Result<()> {
     // Default to `info` so startup diagnostics and warnings are visible without
     // requiring RUST_LOG; an explicit RUST_LOG still overrides this.
@@ -33,11 +38,13 @@ fn main() -> anyhow::Result<()> {
     let mut game = game::state::Game::new();
     let mut pending_actions = FrameActions::default();
     let mut previous_frame = Instant::now();
+    let mut last_lag_warning: Option<Instant> = None;
 
     // Optional smoke-test hook: when GAME_SMOKE_FRAMES=N is set, render N frames
     // then quit cleanly (running normal teardown). Lets CI / a headless run
     // exercise startup, rendering, and shutdown — including validation-layer
-    // resource-leak checks at Drop — without a human closing the window.
+    // resource lifetime/teardown checks at Drop — without a human closing the
+    // window.
     let smoke_frames: Option<u64> = std::env::var("GAME_SMOKE_FRAMES")
         .ok()
         .and_then(|value| value.parse().ok());
@@ -67,10 +74,13 @@ fn main() -> anyhow::Result<()> {
         game.record_frame_time(frame_ms);
 
         let frame_actions = platform.input.take_frame_actions();
-        if frame_actions.action_pressed
-            && let Some(audio) = &audio
-        {
-            audio.play_blip();
+        if let Some(audio) = &audio {
+            if frame_actions.action_pressed {
+                audio.play_blip();
+            }
+            // Surface any audio-output drops from the realtime callback on this
+            // (main) thread, where logging is safe.
+            audio.poll_dropped_frames();
         }
         pending_actions.merge(frame_actions);
 
@@ -89,10 +99,15 @@ fn main() -> anyhow::Result<()> {
             steps += 1;
         }
         if timestep.step_ready() {
-            log::warn!(
-                "fixed timestep hit {} steps in one frame; discarding accumulated lag",
-                platform::time::FixedTimestep::MAX_STEPS_PER_FRAME
-            );
+            let now = Instant::now();
+            if last_lag_warning.is_none_or(|last| now.duration_since(last) >= LAG_WARNING_INTERVAL)
+            {
+                log::warn!(
+                    "fixed timestep hit {} steps in one frame; discarding accumulated lag",
+                    platform::time::FixedTimestep::MAX_STEPS_PER_FRAME
+                );
+                last_lag_warning = Some(now);
+            }
             timestep.discard_lag();
         }
 

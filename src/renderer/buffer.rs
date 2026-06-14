@@ -19,7 +19,7 @@ pub fn create_allocator(
     })?)
 }
 
-pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer)>(
+pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer) -> anyhow::Result<()>>(
     device: &ash::Device,
     queue: vk::Queue,
     command_pool: vk::CommandPool,
@@ -67,7 +67,7 @@ pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer)>(
         unsafe {
             device.begin_command_buffer(command_buffer, &begin_info)?;
         }
-        f(command_buffer);
+        f(command_buffer)?;
         unsafe {
             device.end_command_buffer(command_buffer)?;
         }
@@ -78,7 +78,17 @@ pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer)>(
 
         unsafe {
             device.queue_submit2(queue, std::slice::from_ref(&submit_info), fence)?;
-            device.wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX)?;
+        }
+
+        // The submission succeeded, so the GPU may reference the command buffer
+        // until `fence` signals. If the wait itself fails (typically device-lost),
+        // drain the device before returning so the `FreeOnDrop` guard never frees a
+        // command buffer that is still part of an in-flight submission.
+        if let Err(err) =
+            unsafe { device.wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX) }
+        {
+            let _ = unsafe { device.device_wait_idle() };
+            return Err(err.into());
         }
 
         Ok(())
@@ -92,6 +102,16 @@ fn validate_buffer_size(size: vk::DeviceSize, name: &str) -> anyhow::Result<()> 
         anyhow::bail!("cannot create zero-sized Vulkan buffer '{name}'");
     }
     Ok(())
+}
+
+/// Frees an allocation, logging (never panicking) on failure. These frees run on
+/// cleanup/teardown paths — including from `Drop`, possibly while another panic is
+/// already unwinding — so a failed free must not become a second panic. A free
+/// failure here means leaked GPU memory, which is logged loudly instead.
+pub(crate) fn free_allocation(allocator: &mut Allocator, allocation: Allocation, name: &str) {
+    if let Err(err) = allocator.free(allocation) {
+        log::error!("failed to free allocation '{name}': {err}");
+    }
 }
 
 pub struct Buffer {
@@ -140,9 +160,7 @@ impl Buffer {
         if let Err(err) =
             unsafe { device.bind_buffer_memory(handle, allocation.memory(), allocation.offset()) }
         {
-            allocator
-                .free(allocation)
-                .expect("free unbound buffer allocation");
+            free_allocation(allocator, allocation, name);
             unsafe {
                 device.destroy_buffer(handle, None);
             }
@@ -158,9 +176,7 @@ impl Buffer {
                 .memory_properties()
                 .contains(vk::MemoryPropertyFlags::HOST_COHERENT)
         {
-            allocator
-                .free(allocation)
-                .expect("free non-coherent buffer allocation");
+            free_allocation(allocator, allocation, name);
             unsafe {
                 device.destroy_buffer(handle, None);
             }
@@ -233,7 +249,7 @@ impl Buffer {
         }
 
         if let Some(allocation) = self.allocation.take() {
-            allocator.free(allocation).expect("free buffer allocation");
+            free_allocation(allocator, allocation, "buffer");
         }
     }
 }

@@ -106,11 +106,13 @@ fn compile_shader(glslc: &str, path: &Path, out_dir: &Path) {
              source:   {}\n  \
              output:   {}\n  \
              status:   {}\n  \
-             stderr:\n{}",
+             stderr:\n{}\n  \
+             stdout:\n{}",
             path.display(),
             output.display(),
             result.status,
             String::from_utf8_lossy(&result.stderr),
+            String::from_utf8_lossy(&result.stdout),
         );
     }
 }

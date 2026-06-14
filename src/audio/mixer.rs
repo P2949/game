@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_queue::ArrayQueue;
 use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback};
@@ -53,10 +54,19 @@ impl Mixer {
     }
 
     /// Declares the output stream's channel count and sample rate so `add_sound`
-    /// can flag sounds that don't match. The default (0/0) disables the check.
-    pub fn set_output_format(&mut self, channels: u16, sample_rate: u32) {
+    /// can flag sounds that don't match. Rejects a zero channel count or sample
+    /// rate, which are never valid output formats. The default (0/0, set in
+    /// `new`) leaves the check disabled.
+    pub fn set_output_format(&mut self, channels: u16, sample_rate: u32) -> anyhow::Result<()> {
+        if channels == 0 {
+            anyhow::bail!("audio output channel count must be nonzero");
+        }
+        if sample_rate == 0 {
+            anyhow::bail!("audio output sample rate must be nonzero");
+        }
         self.output_channels = channels;
         self.output_sample_rate = sample_rate;
+        Ok(())
     }
 
     /// Whether `sound` matches the configured output format. Always true when the
@@ -67,8 +77,22 @@ impl Mixer {
                 && sound.sample_rate == self.output_sample_rate)
     }
 
+    /// Whether `sound`'s sample buffer is a whole number of frames — i.e. its
+    /// length is a multiple of its (nonzero) channel count. A malformed buffer
+    /// would drift across channels when looped.
+    pub fn sound_is_well_formed(sound: &Sound) -> bool {
+        sound.channels != 0 && sound.samples.len().is_multiple_of(sound.channels as usize)
+    }
+
     pub fn add_sound(&mut self, sound: Sound) -> usize {
-        if !self.sound_format_matches(&sound) {
+        if !Self::sound_is_well_formed(&sound) {
+            log::warn!(
+                "adding malformed sound: {} samples is not a whole number of {}-channel frames; \
+                 looping may drift across channels",
+                sound.samples.len(),
+                sound.channels,
+            );
+        } else if !self.sound_format_matches(&sound) {
             log::warn!(
                 "adding sound ({}ch/{}Hz) that does not match mixer output ({}ch/{}Hz); \
                  it will play at the wrong speed/pitch (the mixer does not resample)",
@@ -147,6 +171,10 @@ impl Default for Mixer {
 pub struct AudioSystem {
     commands: Arc<ArrayQueue<AudioCommand>>,
     blip_sound: usize,
+    // Shared with the audio callback, which only increments it. The main thread
+    // reads it via `poll_dropped_frames` so we never log from the callback.
+    put_failures: Arc<AtomicU64>,
+    reported_failures: AtomicU64,
     _stream: AudioStreamWithCallback<MixerCallback>,
 }
 
@@ -162,7 +190,7 @@ impl AudioSystem {
 
         let mut mixer = Mixer::new();
         mixer.master_volume = 0.3;
-        mixer.set_output_format(channels as u16, sample_rate as u32);
+        mixer.set_output_format(channels as u16, sample_rate as u32)?;
         let blip_sound =
             mixer.add_sound(sine_sound(660.0, 0.12, sample_rate as u32, channels as u16));
         let music_sound =
@@ -170,6 +198,7 @@ impl AudioSystem {
         mixer.play(music_sound, 0.08, true);
 
         let commands = Arc::new(ArrayQueue::new(AUDIO_COMMAND_QUEUE_CAPACITY));
+        let put_failures = Arc::new(AtomicU64::new(0));
         let audio = sdl.audio().map_err(anyhow::Error::msg)?;
         let stream = audio
             .open_playback_stream(
@@ -178,7 +207,7 @@ impl AudioSystem {
                     mixer,
                     commands: Arc::clone(&commands),
                     scratch: vec![0.0; AUDIO_SCRATCH_SAMPLES],
-                    put_failures: 0,
+                    put_failures: Arc::clone(&put_failures),
                 },
             )
             .map_err(anyhow::Error::msg)?;
@@ -189,6 +218,8 @@ impl AudioSystem {
         Ok(Self {
             commands,
             blip_sound,
+            put_failures,
+            reported_failures: AtomicU64::new(0),
             _stream: stream,
         })
     }
@@ -204,15 +235,56 @@ impl AudioSystem {
             log::warn!("dropping audio command because the queue is full");
         }
     }
+
+    /// Logs any newly-observed audio output drops. Call periodically from the main
+    /// thread; logging happens here, never inside the realtime audio callback
+    /// (which only bumps an atomic counter).
+    ///
+    /// A badly-behind stream fails `put_data_f32` on every callback, so a naive
+    /// "log whenever the total grew" would emit one warning per main-loop frame.
+    /// Instead we only log when the running total crosses a power of two: the very
+    /// first drop is always reported, and subsequent reports back off
+    /// exponentially (at 1, 2, 4, 8, … total drops) so a persistent fault can't
+    /// flood the log. The reported delta is measured since the last *logged*
+    /// total, so it stays meaningful across the gaps.
+    pub fn poll_dropped_frames(&self) {
+        let total = self.put_failures.load(Ordering::Relaxed);
+        let reported = self.reported_failures.load(Ordering::Relaxed);
+        if total <= reported || !crossed_power_of_two(reported, total) {
+            return;
+        }
+        self.reported_failures.store(total, Ordering::Relaxed);
+        log::warn!(
+            "audio output dropped {} buffer(s) ({total} total since start); \
+             the stream may be falling behind",
+            total - reported,
+        );
+    }
+}
+
+/// Whether some power of two lies in the half-open interval `(previous, total]`.
+/// Used to back off `poll_dropped_frames` logging: with `previous` as the
+/// last-logged total, this is true exactly when the running total has crossed
+/// the next power-of-two boundary since the last log.
+fn crossed_power_of_two(previous: u64, total: u64) -> bool {
+    if total == 0 {
+        return false;
+    }
+    // Largest power of two that is <= total. If it is greater than `previous`,
+    // it lies inside (previous, total]; otherwise every power of two <= total is
+    // also <= previous, so none is in the interval.
+    let highest = 1u64 << (u64::BITS - 1 - total.leading_zeros());
+    highest > previous
 }
 
 struct MixerCallback {
     mixer: Mixer,
     commands: Arc<ArrayQueue<AudioCommand>>,
     scratch: Vec<f32>,
-    // Counts `put_data_f32` failures so a silently-dropping stream produces some
-    // signal. Read inside the (throttled) warning in `callback`.
-    put_failures: u64,
+    // Incremented (never read) here on every `put_data_f32` failure. The main
+    // thread reads/logs it via `AudioSystem::poll_dropped_frames`, so this
+    // realtime callback never logs, locks, or allocates for diagnostics.
+    put_failures: Arc<AtomicU64>,
 }
 
 impl MixerCallback {
@@ -248,16 +320,9 @@ impl AudioCallback<f32> for MixerCallback {
 
             self.mixer.mix_into(out);
             if stream.put_data_f32(out).is_err() {
-                self.put_failures += 1;
-                // Logging from an audio callback is normally avoided, but a rare,
-                // throttled warning (first failure, then every 1000th) is worth
-                // the signal if audio output silently stops.
-                if self.put_failures == 1 || self.put_failures.is_multiple_of(1000) {
-                    log::warn!(
-                        "audio stream put_data_f32 failed ({} total); output may be dropping",
-                        self.put_failures
-                    );
-                }
+                // Realtime callback: just bump the shared counter. The main thread
+                // logs it via AudioSystem::poll_dropped_frames.
+                self.put_failures.fetch_add(1, Ordering::Relaxed);
             }
 
             remaining -= chunk_len;
@@ -299,10 +364,39 @@ fn sine_sound(freq: f32, seconds: f32, sample_rate: u32, channels: u16) -> Sound
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
 
     use crossbeam_queue::ArrayQueue;
 
-    use super::{AudioCommand, Mixer, MixerCallback, Sound, sanitize_volume};
+    use super::{AudioCommand, Mixer, MixerCallback, Sound, crossed_power_of_two, sanitize_volume};
+
+    #[test]
+    fn crossed_power_of_two_reports_each_boundary_once() {
+        // No growth, or no power-of-two boundary in (previous, total].
+        assert!(!crossed_power_of_two(0, 0));
+        assert!(!crossed_power_of_two(4, 4));
+        assert!(!crossed_power_of_two(4, 5));
+        assert!(!crossed_power_of_two(4, 7));
+        assert!(!crossed_power_of_two(8, 15));
+
+        // First drop and each later power-of-two crossing report exactly once.
+        assert!(crossed_power_of_two(0, 1));
+        assert!(crossed_power_of_two(1, 2));
+        assert!(crossed_power_of_two(2, 4));
+        assert!(crossed_power_of_two(4, 8));
+        assert!(crossed_power_of_two(8, 16));
+
+        // Stepping the total up one-at-a-time fires only on 1, 2, 4, 8, 16.
+        let mut reported = 0u64;
+        let mut fired = Vec::new();
+        for total in 1..=16u64 {
+            if total > reported && crossed_power_of_two(reported, total) {
+                fired.push(total);
+                reported = total;
+            }
+        }
+        assert_eq!(fired, vec![1, 2, 4, 8, 16]);
+    }
 
     #[test]
     fn sanitize_volume_clamps_and_neutralizes_non_finite() {
@@ -334,9 +428,39 @@ mod tests {
         assert!(mixer.sound_format_matches(&matching));
         assert!(mixer.sound_format_matches(&mismatched));
 
-        mixer.set_output_format(2, 48_000);
+        mixer.set_output_format(2, 48_000).unwrap();
         assert!(mixer.sound_format_matches(&matching));
         assert!(!mixer.sound_format_matches(&mismatched));
+    }
+
+    #[test]
+    fn set_output_format_rejects_zero_values() {
+        let mut mixer = Mixer::new();
+        assert!(mixer.set_output_format(0, 48_000).is_err());
+        assert!(mixer.set_output_format(2, 0).is_err());
+        assert!(mixer.set_output_format(2, 48_000).is_ok());
+    }
+
+    #[test]
+    fn sound_well_formed_check_requires_whole_frames() {
+        let stereo_ok = Sound {
+            samples: vec![0.0; 8],
+            channels: 2,
+            sample_rate: 48_000,
+        };
+        let stereo_bad = Sound {
+            samples: vec![0.0; 7],
+            channels: 2,
+            sample_rate: 48_000,
+        };
+        let zero_channels = Sound {
+            samples: vec![0.0; 4],
+            channels: 0,
+            sample_rate: 48_000,
+        };
+        assert!(Mixer::sound_is_well_formed(&stereo_ok));
+        assert!(!Mixer::sound_is_well_formed(&stereo_bad));
+        assert!(!Mixer::sound_is_well_formed(&zero_channels));
     }
 
     #[test]
@@ -496,7 +620,7 @@ mod tests {
             mixer,
             commands: Arc::clone(&commands),
             scratch: vec![0.0; super::AUDIO_SCRATCH_SAMPLES],
-            put_failures: 0,
+            put_failures: Arc::new(AtomicU64::new(0)),
         };
 
         callback.drain_commands();
@@ -531,7 +655,7 @@ mod tests {
             mixer,
             commands: Arc::clone(&commands),
             scratch: vec![0.0; super::AUDIO_SCRATCH_SAMPLES],
-            put_failures: 0,
+            put_failures: Arc::new(AtomicU64::new(0)),
         };
 
         callback.drain_commands();

@@ -87,9 +87,9 @@ impl<'a> PendingTexture<'a> {
 
 struct TextureEntry {
     texture: Texture,
-    // Held only to own the descriptor pool: dropping it destroys the pool (and
-    // frees `descriptor_set`). Never read after registration.
-    #[allow(dead_code)]
+    // Owns the descriptor pool; dropping it destroys the pool (and frees
+    // `descriptor_set`). Only read in `destroy`, where it is dropped before the
+    // texture's image/view/sampler.
     descriptor_pool: OwnedDescriptorPool,
     descriptor_set: vk::DescriptorSet,
     #[allow(dead_code)]
@@ -114,7 +114,13 @@ impl TextureRegistry {
 
     /// Creates a descriptor set for `texture` from `layout` and registers it,
     /// returning the assigned [`TextureId`].
-    pub fn register_texture(
+    ///
+    /// Private: the only public registration path is
+    /// [`TextureRegistryGuard::create_and_register`], which fuses creation and
+    /// registration so a freshly-built `Texture` is never held unguarded across a
+    /// fallible step. This method takes an already-built `Texture` and is only
+    /// safe to call from inside that fused path.
+    fn register_texture(
         &mut self,
         device: &ash::Device,
         allocator: &mut Allocator,
@@ -154,11 +160,19 @@ impl TextureRegistry {
     /// here, and texture teardown needs the device and allocator).
     pub unsafe fn destroy(&mut self, device: &ash::Device, allocator: &mut Allocator) {
         for entry in self.entries.drain(..) {
+            let TextureEntry {
+                texture,
+                descriptor_pool,
+                ..
+            } = entry;
+            // Destroy the descriptor pool first so the descriptor set referencing
+            // this texture's image view/sampler is gone before those resources
+            // are. Teardown runs with the device idle, so the order isn't strictly
+            // load-bearing, but it keeps the dependency direction clear.
+            drop(descriptor_pool);
             unsafe {
-                entry.texture.destroy(device, allocator);
+                texture.destroy(device, allocator);
             }
-            // `entry.descriptor_pool` (an OwnedDescriptorPool) drops here,
-            // destroying the pool while the device is still alive.
         }
     }
 }

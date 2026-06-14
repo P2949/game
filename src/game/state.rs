@@ -45,14 +45,17 @@ impl Game {
     }
 
     pub fn record_frame_time(&mut self, ms: f32) {
-        // Keep the debug frame graph well-defined: a NaN/inf would poison every
-        // average computed from it, and a negative delta is meaningless. Clamp to
-        // a non-negative finite value before recording.
-        let ms = if ms.is_finite() { ms.max(0.0) } else { 0.0 };
+        // `FrameGraph::push` sanitizes the value, so non-finite/negative deltas
+        // from any caller are handled there.
         self.frame_graph.push(ms);
     }
 
     pub fn update(&mut self, dt: f32, input: InputState, actions: FrameActions) {
+        // `FixedTimestep` already supplies a sane fixed dt, but `update` is public:
+        // guard against a non-finite or non-positive dt so a direct caller cannot
+        // push simulation state (effect clock, physics) into NaN/garbage.
+        let dt = if dt.is_finite() && dt > 0.0 { dt } else { 0.0 };
+
         // Wrap the effect clock at TAU so it stays bounded over long sessions.
         // The shake waveform uses sin(t * 71) / cos(t * 53); since 71 and 53 are
         // integers, advancing t by TAU is a whole number of cycles for both, so
@@ -112,8 +115,9 @@ impl Game {
         }
 
         self.update_camera_zoom(dt, input);
-        self.camera.center =
-            self.player.pos + self.player.size * 0.5 + self.shake.offset(self.effect_time);
+        self.camera.set_center(
+            self.player.pos + self.player.size * 0.5 + self.shake.offset(self.effect_time),
+        );
     }
 
     fn render_world(&self, alpha: f32, renderer: &mut impl DrawCommands) {
@@ -294,6 +298,10 @@ pub struct FrameGraph {
 
 impl FrameGraph {
     pub fn push(&mut self, ms: f32) {
+        // Sanitize here so every caller (this is a public method) is protected: a
+        // NaN/inf would poison every average derived from the graph, and a negative
+        // delta is meaningless. Clamp to a non-negative finite value.
+        let ms = if ms.is_finite() { ms.max(0.0) } else { 0.0 };
         self.samples_ms[self.cursor] = ms;
         self.cursor = (self.cursor + 1) % self.samples_ms.len();
         self.filled |= self.cursor == 0;

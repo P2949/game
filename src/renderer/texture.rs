@@ -214,6 +214,8 @@ impl Texture {
                             vk::PipelineStageFlags2::FRAGMENT_SHADER,
                             vk::AccessFlags2::SHADER_SAMPLED_READ,
                         );
+
+                        Ok(())
                     },
                 )?;
             }
@@ -273,10 +275,7 @@ impl Texture {
                 }
 
                 if let Some(allocation) = allocation.take() {
-                    upload
-                        .allocator
-                        .free(allocation)
-                        .expect("free failed texture allocation");
+                    buffer::free_allocation(upload.allocator, allocation, name);
                 }
 
                 Err(err)
@@ -292,7 +291,7 @@ impl Texture {
         }
 
         if let Some(allocation) = self.allocation.take() {
-            allocator.free(allocation).expect("free texture allocation");
+            buffer::free_allocation(allocator, allocation, "texture");
         }
     }
 }

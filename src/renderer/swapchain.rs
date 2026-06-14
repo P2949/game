@@ -64,10 +64,13 @@ pub fn choose_surface_format(
 
 /// Picks a composite-alpha mode from the surface's advertised set. Prefers
 /// `OPAQUE` (no blending with the desktop behind the window), then the multiplied
-/// modes, then `INHERIT`. A conformant surface always supports at least one of
-/// these; the `OPAQUE` fallback only matters if a driver advertised none, in
-/// which case swapchain creation will surface the error.
-pub fn choose_composite_alpha(supported: vk::CompositeAlphaFlagsKHR) -> vk::CompositeAlphaFlagsKHR {
+/// modes, then `INHERIT`. A conformant surface always advertises at least one
+/// mode; if none is advertised this errors rather than fabricating an unsupported
+/// `OPAQUE`, so swapchain creation fails with a clear message instead of an opaque
+/// validation error.
+pub fn choose_composite_alpha(
+    supported: vk::CompositeAlphaFlagsKHR,
+) -> anyhow::Result<vk::CompositeAlphaFlagsKHR> {
     const PREFERRED: [vk::CompositeAlphaFlagsKHR; 4] = [
         vk::CompositeAlphaFlagsKHR::OPAQUE,
         vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
@@ -78,7 +81,7 @@ pub fn choose_composite_alpha(supported: vk::CompositeAlphaFlagsKHR) -> vk::Comp
     PREFERRED
         .into_iter()
         .find(|&mode| supported.contains(mode))
-        .unwrap_or(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        .ok_or_else(|| anyhow::anyhow!("surface advertises no supported composite alpha mode"))
 }
 
 pub fn choose_present_mode(modes: &[vk::PresentModeKHR]) -> anyhow::Result<vk::PresentModeKHR> {
@@ -145,7 +148,7 @@ impl Swapchain {
         let present_mode = choose_present_mode(&support.present_modes)?;
         let extent = choose_extent(support.capabilities, window_size);
         let composite_alpha =
-            choose_composite_alpha(support.capabilities.supported_composite_alpha);
+            choose_composite_alpha(support.capabilities.supported_composite_alpha)?;
 
         let mut image_count = support.capabilities.min_image_count + 1;
         if support.capabilities.max_image_count > 0 {
@@ -369,7 +372,7 @@ mod tests {
     fn composite_alpha_prefers_opaque_when_supported() {
         let supported = vk::CompositeAlphaFlagsKHR::OPAQUE | vk::CompositeAlphaFlagsKHR::INHERIT;
         assert_eq!(
-            choose_composite_alpha(supported),
+            choose_composite_alpha(supported).unwrap(),
             vk::CompositeAlphaFlagsKHR::OPAQUE
         );
     }
@@ -380,21 +383,18 @@ mod tests {
             | vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED;
         // PRE_MULTIPLIED outranks POST_MULTIPLIED.
         assert_eq!(
-            choose_composite_alpha(supported),
+            choose_composite_alpha(supported).unwrap(),
             vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED
         );
         assert_eq!(
-            choose_composite_alpha(vk::CompositeAlphaFlagsKHR::INHERIT),
+            choose_composite_alpha(vk::CompositeAlphaFlagsKHR::INHERIT).unwrap(),
             vk::CompositeAlphaFlagsKHR::INHERIT
         );
     }
 
     #[test]
-    fn composite_alpha_defaults_to_opaque_when_none_advertised() {
-        assert_eq!(
-            choose_composite_alpha(vk::CompositeAlphaFlagsKHR::empty()),
-            vk::CompositeAlphaFlagsKHR::OPAQUE
-        );
+    fn composite_alpha_errors_when_none_advertised() {
+        assert!(choose_composite_alpha(vk::CompositeAlphaFlagsKHR::empty()).is_err());
     }
 
     #[test]

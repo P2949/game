@@ -608,15 +608,26 @@ impl Drop for VulkanContext {
                 // Textures and buffers free both a Vulkan handle and an allocator
                 // allocation, so they keep explicit destroy(device, allocator)
                 // calls — a Drop impl cannot reach the externally-owned allocator.
-                if let Some(allocator) = self.allocator.as_mut() {
-                    self.texture_registry
-                        .destroy(&logical_device.device, allocator);
+                // The allocator is only `take()`n further down in this same Drop,
+                // so it must still be present here; make that invariant explicit so
+                // a future reordering that leaks GPU memory is loud rather than
+                // silent. (We log rather than panic: panicking in Drop, possibly
+                // mid-unwind, is worse than the leak it would report.)
+                match self.allocator.as_mut() {
+                    Some(allocator) => {
+                        self.texture_registry
+                            .destroy(&logical_device.device, allocator);
 
-                    for vertex_buffer in &mut self.dynamic_sprite_buffers {
-                        if let Some(vertex_buffer) = vertex_buffer.take() {
-                            vertex_buffer.destroy(&logical_device.device, allocator);
+                        for vertex_buffer in &mut self.dynamic_sprite_buffers {
+                            if let Some(vertex_buffer) = vertex_buffer.take() {
+                                vertex_buffer.destroy(&logical_device.device, allocator);
+                            }
                         }
                     }
+                    None => log::error!(
+                        "allocator already gone during VulkanContext::drop; \
+                         texture and buffer GPU memory leaked"
+                    ),
                 }
 
                 // Release every device-child RAII handle now, while the logical

@@ -30,6 +30,16 @@ fn sanitize_dimension(value: f32) -> f32 {
     }
 }
 
+/// Maps a camera center to a finite point, falling back to the origin if either
+/// component is non-finite, so the projection bounds can never be NaN/inf.
+fn sanitize_center(center: glam::Vec2) -> glam::Vec2 {
+    if center.is_finite() {
+        center
+    } else {
+        glam::Vec2::ZERO
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Camera2D {
     pub center: glam::Vec2,
@@ -51,20 +61,26 @@ impl Camera2D {
         self.zoom = sanitize_zoom(zoom);
     }
 
+    /// Sets the center, sanitizing a non-finite point back to the origin.
+    pub fn set_center(&mut self, center: glam::Vec2) {
+        self.center = sanitize_center(center);
+    }
+
     pub fn view_projection(&self, width: f32, height: f32) -> glam::Mat4 {
         // Sanitize at the point of use as well, so even a directly-mutated public
-        // `zoom` field or a bogus viewport size can never produce a
+        // `zoom`/`center` field or a bogus viewport size can never produce a
         // divide-by-zero, degenerate, or non-finite matrix.
         let zoom = sanitize_zoom(self.zoom);
+        let center = sanitize_center(self.center);
         let width = sanitize_dimension(width);
         let height = sanitize_dimension(height);
         let half_w = width * 0.5 / zoom;
         let half_h = height * 0.5 / zoom;
 
-        let left = self.center.x - half_w;
-        let right = self.center.x + half_w;
-        let bottom = self.center.y - half_h;
-        let top = self.center.y + half_h;
+        let left = center.x - half_w;
+        let right = center.x + half_w;
+        let bottom = center.y - half_h;
+        let top = center.y + half_h;
 
         glam::Mat4::orthographic_rh(left, right, bottom, top, -1.0, 1.0)
     }
@@ -115,6 +131,27 @@ mod tests {
         // Directly poison the public field, bypassing the constructor/setter.
         let mut camera = Camera2D::new(glam::Vec2::ZERO, 1.0);
         camera.zoom = 0.0;
+        let m = camera.view_projection(1280.0, 720.0);
+        assert!(m.to_cols_array().iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn set_center_sanitizes_non_finite_points() {
+        let mut camera = Camera2D::new(glam::Vec2::ZERO, 1.0);
+        camera.set_center(glam::vec2(5.0, -3.0));
+        assert_eq!(camera.center, glam::vec2(5.0, -3.0));
+
+        camera.set_center(glam::vec2(f32::NAN, 1.0));
+        assert_eq!(camera.center, glam::Vec2::ZERO);
+
+        camera.set_center(glam::vec2(1.0, f32::INFINITY));
+        assert_eq!(camera.center, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn view_projection_is_finite_for_poisoned_center() {
+        let mut camera = Camera2D::new(glam::Vec2::ZERO, 1.0);
+        camera.center = glam::vec2(f32::NAN, f32::INFINITY);
         let m = camera.view_projection(1280.0, 720.0);
         assert!(m.to_cols_array().iter().all(|v| v.is_finite()));
     }
