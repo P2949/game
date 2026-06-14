@@ -11,6 +11,10 @@ fn main() {
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let glslc = std::env::var("GLSLC").unwrap_or_else(|_| "glslc".to_owned());
+    let shader_flag = match std::env::var("PROFILE").as_deref() {
+        Ok("release") => "-O",
+        _ => "-g",
+    };
 
     for entry in walkdir::WalkDir::new(SHADER_ROOT) {
         let entry = entry.unwrap_or_else(|err| {
@@ -55,11 +59,11 @@ fn main() {
         }
 
         println!("cargo:rerun-if-changed={}", path.display());
-        compile_shader(&glslc, path, &out_dir);
+        compile_shader(&glslc, shader_flag, path, &out_dir);
     }
 }
 
-fn compile_shader(glslc: &str, path: &Path, out_dir: &Path) {
+fn compile_shader(glslc: &str, shader_flag: &str, path: &Path, out_dir: &Path) {
     // Mirror the shader's path *relative to the shader root* into OUT_DIR, so two
     // shaders with the same file name in different subdirectories (e.g.
     // `ui/sprite.vert` and `world/sprite.vert`) compile to distinct outputs
@@ -89,6 +93,7 @@ fn compile_shader(glslc: &str, path: &Path, out_dir: &Path) {
     }
 
     let result = Command::new(glslc)
+        .arg(shader_flag)
         .arg(path)
         .arg("-o")
         .arg(&output)

@@ -137,7 +137,10 @@ impl TextureRegistry {
         let descriptor_pool = OwnedDescriptorPool::from_handle(device, pool);
         let texture = pending_texture.take();
 
-        let id = TextureId(self.entries.len() as u32);
+        let id = TextureId(
+            u32::try_from(self.entries.len())
+                .map_err(|_| anyhow::anyhow!("texture registry exceeded u32::MAX entries"))?,
+        );
         self.entries.push(TextureEntry {
             texture,
             descriptor_pool,

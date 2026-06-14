@@ -84,24 +84,68 @@ pub fn choose_composite_alpha(
         .ok_or_else(|| anyhow::anyhow!("surface advertises no supported composite alpha mode"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentModePreference {
+    Fifo,
+    Mailbox,
+    Immediate,
+}
+
+fn requested_present_mode() -> PresentModePreference {
+    match std::env::var("GAME_PRESENT_MODE") {
+        Ok(value) => match parse_present_mode(&value) {
+            Some(mode) => mode,
+            None => {
+                log::warn!("invalid GAME_PRESENT_MODE={value:?}; falling back to fifo");
+                PresentModePreference::Fifo
+            }
+        },
+        Err(_) => PresentModePreference::Fifo,
+    }
+}
+
+fn parse_present_mode(value: &str) -> Option<PresentModePreference> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "fifo" => Some(PresentModePreference::Fifo),
+        "mailbox" => Some(PresentModePreference::Mailbox),
+        "immediate" => Some(PresentModePreference::Immediate),
+        _ => None,
+    }
+}
+
 pub fn choose_present_mode(modes: &[vk::PresentModeKHR]) -> anyhow::Result<vk::PresentModeKHR> {
-    // FIFO is guaranteed by Vulkan WSI and is the safest default.
-    // MAILBOX is good for low-latency uncapped rendering if available.
+    choose_present_mode_for_request(modes, requested_present_mode())
+}
+
+fn choose_present_mode_for_request(
+    modes: &[vk::PresentModeKHR],
+    requested: PresentModePreference,
+) -> anyhow::Result<vk::PresentModeKHR> {
     if modes.is_empty() {
         anyhow::bail!("no present modes available for swapchain creation");
     }
 
-    Ok(modes
+    let requested_vk = match requested {
+        PresentModePreference::Fifo => vk::PresentModeKHR::FIFO,
+        PresentModePreference::Mailbox => vk::PresentModeKHR::MAILBOX,
+        PresentModePreference::Immediate => vk::PresentModeKHR::IMMEDIATE,
+    };
+    let fifo = modes
         .iter()
         .copied()
-        .find(|mode| *mode == vk::PresentModeKHR::MAILBOX)
-        .or_else(|| {
-            modes
-                .iter()
-                .copied()
-                .find(|mode| *mode == vk::PresentModeKHR::FIFO)
-        })
-        .unwrap_or(modes[0]))
+        .find(|mode| *mode == vk::PresentModeKHR::FIFO)
+        .unwrap_or(modes[0]);
+
+    let selected = if modes.contains(&requested_vk) {
+        requested_vk
+    } else {
+        if requested != PresentModePreference::Fifo {
+            log::warn!("requested present mode {requested:?} is unavailable; falling back to FIFO");
+        }
+        fifo
+    };
+
+    Ok(selected)
 }
 
 pub fn choose_extent(
@@ -291,7 +335,10 @@ impl Drop for SwapchainImageViews {
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_composite_alpha, choose_present_mode, choose_surface_format};
+    use super::{
+        PresentModePreference, choose_composite_alpha, choose_present_mode_for_request,
+        choose_surface_format, parse_present_mode,
+    };
     use ash::vk;
 
     fn format(format: vk::Format, color_space: vk::ColorSpaceKHR) -> vk::SurfaceFormatKHR {
@@ -399,36 +446,50 @@ mod tests {
 
     #[test]
     fn empty_present_mode_list_is_an_error() {
-        assert!(choose_present_mode(&[]).is_err());
+        assert!(choose_present_mode_for_request(&[], PresentModePreference::Fifo).is_err());
     }
 
     #[test]
-    fn mailbox_present_mode_is_preferred_when_present() {
+    fn present_mode_parser_accepts_expected_values() {
+        assert_eq!(
+            parse_present_mode("fifo"),
+            Some(PresentModePreference::Fifo)
+        );
+        assert_eq!(
+            parse_present_mode("MAILBOX"),
+            Some(PresentModePreference::Mailbox)
+        );
+        assert_eq!(
+            parse_present_mode(" immediate "),
+            Some(PresentModePreference::Immediate)
+        );
+        assert_eq!(parse_present_mode("bad"), None);
+    }
+
+    #[test]
+    fn fifo_present_mode_is_the_default_request() {
         let modes = [vk::PresentModeKHR::FIFO, vk::PresentModeKHR::MAILBOX];
         assert_eq!(
-            choose_present_mode(&modes).unwrap(),
-            vk::PresentModeKHR::MAILBOX
-        );
-    }
-
-    #[test]
-    fn fifo_present_mode_is_the_fallback() {
-        let modes = [vk::PresentModeKHR::FIFO, vk::PresentModeKHR::IMMEDIATE];
-        assert_eq!(
-            choose_present_mode(&modes).unwrap(),
+            choose_present_mode_for_request(&modes, PresentModePreference::Fifo).unwrap(),
             vk::PresentModeKHR::FIFO
         );
     }
 
     #[test]
-    fn first_advertised_present_mode_is_used_when_mailbox_and_fifo_are_absent() {
-        let modes = [
-            vk::PresentModeKHR::IMMEDIATE,
-            vk::PresentModeKHR::FIFO_RELAXED,
-        ];
+    fn requested_mailbox_is_used_when_available() {
+        let modes = [vk::PresentModeKHR::FIFO, vk::PresentModeKHR::MAILBOX];
         assert_eq!(
-            choose_present_mode(&modes).unwrap(),
-            vk::PresentModeKHR::IMMEDIATE
+            choose_present_mode_for_request(&modes, PresentModePreference::Mailbox).unwrap(),
+            vk::PresentModeKHR::MAILBOX
+        );
+    }
+
+    #[test]
+    fn requested_immediate_falls_back_to_fifo_when_unavailable() {
+        let modes = [vk::PresentModeKHR::FIFO, vk::PresentModeKHR::MAILBOX];
+        assert_eq!(
+            choose_present_mode_for_request(&modes, PresentModePreference::Immediate).unwrap(),
+            vk::PresentModeKHR::FIFO
         );
     }
 }

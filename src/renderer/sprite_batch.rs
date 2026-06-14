@@ -8,23 +8,56 @@ pub struct SpriteBatchRange {
     pub vertex_count: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpriteBatchBuildStats {
+    pub sprite_count: usize,
+    pub vertex_count: usize,
+    pub index_count: usize,
+    pub dropped_invalid_sprites: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct QueuedSprite {
+    order: u64,
+    draw: SpriteDraw,
+}
+
 pub struct SpriteBatch {
-    sprites: Vec<SpriteDraw>,
+    sprites: Vec<QueuedSprite>,
+    next_order: u64,
+    dropped_invalid_sprites: usize,
 }
 
 impl SpriteBatch {
     pub fn new() -> Self {
         Self {
             sprites: Vec::new(),
+            next_order: 0,
+            dropped_invalid_sprites: 0,
         }
     }
 
     pub fn clear(&mut self) {
         self.sprites.clear();
+        self.dropped_invalid_sprites = 0;
     }
 
-    pub fn push(&mut self, sprite: SpriteDraw) {
-        self.sprites.push(sprite);
+    pub fn push(&mut self, sprite: SpriteDraw) -> bool {
+        if !sprite_is_valid(sprite) {
+            self.dropped_invalid_sprites += 1;
+            return false;
+        }
+
+        let Some(next_order) = self.next_order.checked_add(1) else {
+            self.dropped_invalid_sprites += 1;
+            return false;
+        };
+        self.sprites.push(QueuedSprite {
+            order: self.next_order,
+            draw: sprite,
+        });
+        self.next_order = next_order;
+        true
     }
 
     /// Sorts the queued sprites in place, then appends their triangle vertices
@@ -38,7 +71,10 @@ impl SpriteBatch {
         &mut self,
         vertices: &mut Vec<SpriteVertex>,
         ranges: &mut Vec<SpriteBatchRange>,
-    ) {
+    ) -> anyhow::Result<SpriteBatchBuildStats> {
+        let initial_vertex_count = vertices.len();
+        let sprite_count = self.sprites.len();
+
         // Ordering contract:
         //   * Sprites are sorted by `layer` first, then by `texture` (to group
         //     same-texture draws and reduce descriptor binds within a layer).
@@ -49,18 +85,20 @@ impl SpriteBatch {
         //     it follows texture id, not submission order. So overlapping
         //     transparent sprites that need a strict front-to-back order must be
         //     placed on distinct layers, not left to submission order.
-        // The sort is stable, so same-(layer, texture) sprites keep submission
-        // order relative to each other.
-        self.sprites
-            .sort_by_key(|sprite| (sprite.layer, sprite.texture.0));
+        // Same-(layer, texture) sprites keep submission order through the
+        // explicit `order` key, allowing the allocation-free unstable sort.
+        self.sprites.sort_unstable_by_key(|sprite| {
+            (sprite.draw.layer, sprite.draw.texture.0, sprite.order)
+        });
 
         let mut current_texture: Option<TextureId> = None;
-        let mut current_start = vertex_index(vertices.len());
+        let mut current_start = vertex_index(vertices.len())?;
 
-        for &sprite in &self.sprites {
+        for queued in &self.sprites {
+            let sprite = queued.draw;
             if current_texture != Some(sprite.texture) {
                 if let Some(texture) = current_texture {
-                    let vertex_count = vertex_index(vertices.len()) - current_start;
+                    let vertex_count = vertex_index(vertices.len())? - current_start;
                     if vertex_count > 0 {
                         ranges.push(SpriteBatchRange {
                             texture,
@@ -71,14 +109,14 @@ impl SpriteBatch {
                 }
 
                 current_texture = Some(sprite.texture);
-                current_start = vertex_index(vertices.len());
+                current_start = vertex_index(vertices.len())?;
             }
 
             append_sprite_vertices(vertices, sprite);
         }
 
         if let Some(texture) = current_texture {
-            let vertex_count = vertex_index(vertices.len()) - current_start;
+            let vertex_count = vertex_index(vertices.len())? - current_start;
             if vertex_count > 0 {
                 ranges.push(SpriteBatchRange {
                     texture,
@@ -87,6 +125,14 @@ impl SpriteBatch {
                 });
             }
         }
+
+        let vertex_count = vertices.len() - initial_vertex_count;
+        Ok(SpriteBatchBuildStats {
+            sprite_count,
+            vertex_count,
+            index_count: vertex_count,
+            dropped_invalid_sprites: self.dropped_invalid_sprites,
+        })
     }
 }
 
@@ -96,16 +142,25 @@ impl Default for SpriteBatch {
     }
 }
 
+fn sprite_is_valid(sprite: SpriteDraw) -> bool {
+    sprite.position.is_finite()
+        && sprite.size.is_finite()
+        && sprite.size.x > 0.0
+        && sprite.size.y > 0.0
+        && sprite.uv_min.is_finite()
+        && sprite.uv_max.is_finite()
+        && sprite.color.is_finite()
+        && sprite
+            .color
+            .to_array()
+            .into_iter()
+            .all(|component| (0.0..=1.0).contains(&component))
+}
+
 /// Narrows a vertex-buffer length/offset to the `u32` that Vulkan draw calls and
-/// `SpriteBatchRange` use. Vertex counts are bounded by GPU buffer capacity far
-/// below `u32::MAX` in practice, but a `debug_assert` documents and guards the
-/// cast so an absurdly large batch trips in debug instead of silently truncating.
-fn vertex_index(len: usize) -> u32 {
-    debug_assert!(
-        len <= u32::MAX as usize,
-        "sprite vertex count {len} exceeds u32 index range"
-    );
-    len as u32
+/// `SpriteBatchRange` use.
+fn vertex_index(len: usize) -> anyhow::Result<u32> {
+    u32::try_from(len).map_err(|_| anyhow::anyhow!("sprite vertex count {len} exceeds u32::MAX"))
 }
 
 pub fn append_sprite_vertices(out: &mut Vec<SpriteVertex>, sprite: SpriteDraw) {
@@ -182,14 +237,15 @@ mod tests {
         let mut batch = SpriteBatch::new();
         // Pushed out of order and interleaved by texture; sorting by (layer,
         // texture) must group the two TEST sprites on layer 0 into one run.
-        batch.push(sprite(TEST_TEXTURE_ID, 0));
-        batch.push(sprite(FONT_TEXTURE_ID, 5));
-        batch.push(sprite(TEST_TEXTURE_ID, 0));
+        assert!(batch.push(sprite(TEST_TEXTURE_ID, 0)));
+        assert!(batch.push(sprite(FONT_TEXTURE_ID, 5)));
+        assert!(batch.push(sprite(TEST_TEXTURE_ID, 0)));
 
         let mut vertices = Vec::new();
         let mut ranges = Vec::new();
-        batch.build_into(&mut vertices, &mut ranges);
+        let stats = batch.build_into(&mut vertices, &mut ranges).unwrap();
 
+        assert_eq!(stats.sprite_count, 3);
         assert_eq!(vertices.len(), 3 * 6);
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0].texture, TEST_TEXTURE_ID);
@@ -203,16 +259,16 @@ mod tests {
     #[test]
     fn build_into_appends_with_absolute_offsets_across_batches() {
         let mut world = SpriteBatch::new();
-        world.push(sprite(TEST_TEXTURE_ID, 0));
+        assert!(world.push(sprite(TEST_TEXTURE_ID, 0)));
         let mut ui = SpriteBatch::new();
-        ui.push(sprite(FONT_TEXTURE_ID, 0));
+        assert!(ui.push(sprite(FONT_TEXTURE_ID, 0)));
 
         let mut vertices = Vec::new();
         let mut ranges = Vec::new();
-        world.build_into(&mut vertices, &mut ranges);
+        world.build_into(&mut vertices, &mut ranges).unwrap();
         // Second batch packs into the same buffers; its range offset must be
         // absolute (start at 6), not reset to 0.
-        ui.build_into(&mut vertices, &mut ranges);
+        ui.build_into(&mut vertices, &mut ranges).unwrap();
 
         assert_eq!(vertices.len(), 12);
         assert_eq!(ranges.len(), 2);
@@ -225,12 +281,12 @@ mod tests {
         // FONT (texture id 1) on layer 0 must draw before TEST (texture id 0) on
         // layer 5: layer ordering dominates the texture secondary key.
         let mut batch = SpriteBatch::new();
-        batch.push(sprite(TEST_TEXTURE_ID, 5));
-        batch.push(sprite(FONT_TEXTURE_ID, 0));
+        assert!(batch.push(sprite(TEST_TEXTURE_ID, 5)));
+        assert!(batch.push(sprite(FONT_TEXTURE_ID, 0)));
 
         let mut vertices = Vec::new();
         let mut ranges = Vec::new();
-        batch.build_into(&mut vertices, &mut ranges);
+        batch.build_into(&mut vertices, &mut ranges).unwrap();
 
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0].texture, FONT_TEXTURE_ID);
@@ -242,9 +298,52 @@ mod tests {
         let mut batch = SpriteBatch::new();
         let mut vertices = Vec::new();
         let mut ranges = Vec::new();
-        batch.build_into(&mut vertices, &mut ranges);
+        let stats = batch.build_into(&mut vertices, &mut ranges).unwrap();
 
+        assert_eq!(stats, SpriteBatchBuildStats::default());
         assert!(vertices.is_empty());
         assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn push_rejects_invalid_sprites() {
+        let mut batch = SpriteBatch::new();
+
+        let mut invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.position.x = f32::NAN;
+        assert!(!batch.push(invalid));
+
+        invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.position.x = f32::INFINITY;
+        assert!(!batch.push(invalid));
+
+        invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.size.x = -1.0;
+        assert!(!batch.push(invalid));
+
+        invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.size.y = 0.0;
+        assert!(!batch.push(invalid));
+
+        invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.uv_min.x = f32::NAN;
+        assert!(!batch.push(invalid));
+
+        invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.color.w = f32::NAN;
+        assert!(!batch.push(invalid));
+
+        invalid = sprite(TEST_TEXTURE_ID, 0);
+        invalid.color.x = 2.0;
+        assert!(!batch.push(invalid));
+
+        assert!(batch.push(sprite(TEST_TEXTURE_ID, 0)));
+
+        let mut vertices = Vec::new();
+        let mut ranges = Vec::new();
+        let stats = batch.build_into(&mut vertices, &mut ranges).unwrap();
+
+        assert_eq!(stats.sprite_count, 1);
+        assert_eq!(stats.dropped_invalid_sprites, 7);
     }
 }

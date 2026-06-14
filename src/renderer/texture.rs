@@ -3,7 +3,11 @@ use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme, Allocator};
 use std::path::Path;
 
+use anyhow::Context;
+
 use crate::renderer::buffer;
+
+const MAX_TEXTURE_DIMENSION: u32 = 16_384;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureColorSpace {
@@ -32,6 +36,11 @@ fn validate_rgba8_texture(
 ) -> anyhow::Result<usize> {
     if width == 0 || height == 0 {
         anyhow::bail!("texture '{name}' has zero extent ({width}x{height})");
+    }
+    if width > MAX_TEXTURE_DIMENSION || height > MAX_TEXTURE_DIMENSION {
+        anyhow::bail!(
+            "texture '{name}' dimensions {width}x{height} exceed maximum {MAX_TEXTURE_DIMENSION}"
+        );
     }
 
     let expected_len = (width as usize)
@@ -70,7 +79,10 @@ impl Texture {
         color_space: TextureColorSpace,
         name: &str,
     ) -> anyhow::Result<Self> {
-        let rgba = image::open(path.as_ref())?.to_rgba8();
+        let path = path.as_ref();
+        let rgba = image::open(path)
+            .with_context(|| format!("failed to open texture {}", path.display()))?
+            .to_rgba8();
         let width = rgba.width();
         let height = rgba.height();
         let pixels = rgba.into_raw();
@@ -413,6 +425,12 @@ mod tests {
     fn overflowing_dimensions_are_rejected() {
         // width * height * 4 cannot fit in usize.
         assert!(validate_rgba8_texture("t", u32::MAX, u32::MAX, 0).is_err());
+    }
+
+    #[test]
+    fn unreasonable_dimensions_are_rejected() {
+        assert!(validate_rgba8_texture("t", 16_385, 1, 16_385 * 4).is_err());
+        assert!(validate_rgba8_texture("t", 1, 16_385, 16_385 * 4).is_err());
     }
 
     #[test]

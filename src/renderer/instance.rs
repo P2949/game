@@ -22,6 +22,7 @@ pub struct VulkanInstance {
 impl VulkanInstance {
     pub fn new(window: &sdl3::video::Window) -> anyhow::Result<Self> {
         let entry = unsafe { Entry::load()? };
+        let validation_enabled = validation_enabled_from_env(cfg!(debug_assertions))?;
 
         let app_name = CString::new("sdl3-ash-demo")?;
         let engine_name = CString::new("no-engine")?;
@@ -44,17 +45,17 @@ impl VulkanInstance {
             .map(|name| CString::new(name.as_str()).expect("SDL extension name contains NUL"))
             .collect();
 
-        if cfg!(debug_assertions) {
+        if validation_enabled {
             extension_names.push(ash::ext::debug_utils::NAME.to_owned());
         }
 
         let extension_ptrs: Vec<*const i8> =
             extension_names.iter().map(|name| name.as_ptr()).collect();
 
-        let layer_names: Vec<&CStr> = if cfg!(debug_assertions) {
+        let layer_names: Vec<&CStr> = if validation_enabled {
             if !validation_layer_available(&entry)? {
                 anyhow::bail!(
-                    "debug build requested {}, but the Vulkan validation layer is not installed",
+                    "Vulkan validation was requested, but {} is not installed",
                     debug::VALIDATION_LAYER.to_string_lossy()
                 );
             }
@@ -75,7 +76,7 @@ impl VulkanInstance {
             .enabled_extension_names(&extension_ptrs)
             .enabled_layer_names(&layer_ptrs);
 
-        if cfg!(debug_assertions) {
+        if validation_enabled {
             instance_info = instance_info
                 .push_next(&mut validation_features)
                 .push_next(&mut debug_create_info);
@@ -89,7 +90,7 @@ impl VulkanInstance {
             debug_messenger: None,
         };
 
-        if cfg!(debug_assertions) {
+        if validation_enabled {
             let debug_utils = ash::ext::debug_utils::Instance::new(&owner.entry, &owner.instance);
             let messenger = unsafe {
                 debug_utils
@@ -130,4 +131,68 @@ fn validation_layer_available(entry: &Entry) -> anyhow::Result<bool> {
         let name = unsafe { CStr::from_ptr(layer.layer_name.as_ptr()) };
         name == debug::VALIDATION_LAYER
     }))
+}
+
+fn validation_enabled_from_env(debug_default: bool) -> anyhow::Result<bool> {
+    let require = env_flag("GAME_REQUIRE_VALIDATION")?;
+    let disable = env_flag("GAME_DISABLE_VALIDATION")?;
+
+    if require && disable {
+        anyhow::bail!("GAME_REQUIRE_VALIDATION and GAME_DISABLE_VALIDATION cannot both be enabled");
+    }
+    if require {
+        return Ok(true);
+    }
+    if disable {
+        return Ok(false);
+    }
+
+    Ok(debug_default)
+}
+
+fn env_flag(name: &str) -> anyhow::Result<bool> {
+    let Some(value) = std::env::var_os(name) else {
+        return Ok(false);
+    };
+    let value = value.to_string_lossy();
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => anyhow::bail!("{name} must be one of 1/0, true/false, yes/no, or on/off"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    fn validation_enabled(
+        require: bool,
+        disable: bool,
+        debug_default: bool,
+    ) -> anyhow::Result<bool> {
+        if require && disable {
+            anyhow::bail!(
+                "GAME_REQUIRE_VALIDATION and GAME_DISABLE_VALIDATION cannot both be enabled"
+            );
+        }
+        if require {
+            return Ok(true);
+        }
+        if disable {
+            return Ok(false);
+        }
+        Ok(debug_default)
+    }
+
+    #[test]
+    fn validation_policy_uses_build_defaults() {
+        assert!(validation_enabled(false, false, true).unwrap());
+        assert!(!validation_enabled(false, false, false).unwrap());
+    }
+
+    #[test]
+    fn validation_policy_honors_overrides() {
+        assert!(validation_enabled(true, false, false).unwrap());
+        assert!(!validation_enabled(false, true, true).unwrap());
+        assert!(validation_enabled(true, true, true).is_err());
+    }
 }

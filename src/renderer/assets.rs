@@ -5,8 +5,9 @@
 //! they are created, so a failure partway through can never leak an already-built
 //! texture: the guard owns everything registered so far and destroys it on drop.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use ash::vk;
 
 use crate::renderer::texture::{Texture, TextureColorSpace, TextureUpload};
@@ -27,6 +28,8 @@ pub fn load_builtin_textures(
     upload_pool: vk::CommandPool,
     upload_fence: vk::Fence,
 ) -> anyhow::Result<text::FontAtlas> {
+    let asset_root = asset_root()?;
+
     let test_id = registry_guard.create_and_register(
         descriptor_set_layout,
         "test texture",
@@ -40,7 +43,7 @@ pub fn load_builtin_textures(
             };
             Texture::from_path(
                 &mut upload,
-                asset_path("assets/textures/test.png"),
+                asset_root.join("textures/test.png"),
                 TextureColorSpace::SrgbColor,
                 "test texture",
             )
@@ -52,7 +55,7 @@ pub fn load_builtin_textures(
     );
 
     let font_atlas_image =
-        text::build_ascii_atlas(asset_path("assets/fonts/DejaVuSans.ttf"), FONT_TEXTURE_ID)?;
+        text::build_ascii_atlas(asset_root.join("fonts/DejaVuSans.ttf"), FONT_TEXTURE_ID)?;
     let font_id = registry_guard.create_and_register(
         descriptor_set_layout,
         "font atlas",
@@ -82,18 +85,62 @@ pub fn load_builtin_textures(
     Ok(font_atlas_image.atlas)
 }
 
-/// Resolves an asset path, preferring assets shipped next to the executable (the
-/// installed/distributed layout) and falling back to the crate manifest dir so
-/// `cargo run` works from a source checkout where assets live in the repo root.
-pub fn asset_path(relative: &str) -> PathBuf {
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(exe_dir) = exe.parent()
-    {
-        let candidate = exe_dir.join(relative);
-        if candidate.exists() {
-            return candidate;
+pub fn asset_root() -> anyhow::Result<PathBuf> {
+    let candidates = asset_root_candidates()?;
+
+    for candidate in &candidates {
+        if candidate.path.is_dir() {
+            log::info!("using asset root: {}", candidate.path.display());
+            if candidate.is_debug_fallback {
+                log::info!("using debug asset fallback from CARGO_MANIFEST_DIR");
+            }
+            return Ok(candidate.path.clone());
         }
     }
 
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
+    let mut message = String::from("failed to locate runtime assets\ntried:");
+    for candidate in candidates {
+        message.push_str(&format!("\n- {}", candidate.description));
+    }
+    anyhow::bail!(message)
+}
+
+struct AssetRootCandidate {
+    path: PathBuf,
+    description: String,
+    is_debug_fallback: bool,
+}
+
+fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
+    let mut candidates = Vec::new();
+
+    if let Some(path) = std::env::var_os("GAME_ASSET_DIR") {
+        let path = PathBuf::from(path);
+        candidates.push(AssetRootCandidate {
+            description: format!("GAME_ASSET_DIR={}", path.display()),
+            path,
+            is_debug_fallback: false,
+        });
+    }
+
+    let exe = std::env::current_exe().context("failed to resolve current executable path")?;
+    if let Some(exe_dir) = exe.parent() {
+        let path = exe_dir.join("assets");
+        candidates.push(AssetRootCandidate {
+            description: path.display().to_string(),
+            path,
+            is_debug_fallback: false,
+        });
+    }
+
+    if cfg!(debug_assertions) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        candidates.push(AssetRootCandidate {
+            description: format!("debug source fallback {}", path.display()),
+            path,
+            is_debug_fallback: true,
+        });
+    }
+
+    Ok(candidates)
 }

@@ -7,7 +7,8 @@ hand-written Vulkan renderer via [`ash`](https://crates.io/crates/ash).
 
 - SDL3 window, keyboard input, and a lock-free audio mixer
 - Vulkan 1.3 renderer (dynamic rendering, synchronization2) through `ash`
-- Sprite batching with per-frame-reused vertex buffers (no steady-state allocation)
+- Sprite batching reuses dynamic GPU vertex buffers after growth, avoiding
+  steady-state GPU buffer allocation for normal sprite submission
 - Fixed-timestep update loop with render interpolation
 - Bitmap (ASCII) UI text rendered from a runtime-built font atlas
 
@@ -17,8 +18,8 @@ hand-written Vulkan renderer via [`ash`](https://crates.io/crates/ash).
 - SDL3 development libraries (`libsdl3-dev` or your platform equivalent)
 - A Vulkan loader and a GPU driver with Vulkan 1.3 support
 - `glslc` (from shaderc / the Vulkan SDK) on `PATH` — shaders are compiled at build time
-- Vulkan validation layers for debug builds (debug builds require the
-  `VK_LAYER_KHRONOS_validation` layer and will refuse to start without it)
+- Vulkan validation layers for debug builds unless disabled with
+  `GAME_DISABLE_VALIDATION=1`
 
 ## Build and run
 
@@ -27,14 +28,32 @@ cargo run            # debug build (validation layers enabled)
 cargo run --release  # optimized build (LTO, single codegen unit)
 ```
 
-Assets (`assets/textures/test.png`, `assets/fonts/DejaVuSans.ttf`) are loaded
-relative to the executable when present, falling back to the crate manifest
-directory so `cargo run` works from a source checkout.
+Assets are discovered in this order:
+
+1. `GAME_ASSET_DIR`, if set
+2. `assets/` next to the executable
+3. `assets/` under the crate manifest directory in debug builds only
+
+Release packages should not rely on the source-tree fallback.
+
+## Runtime Environment Variables
+
+| Variable | Effect |
+| -------- | ------ |
+| `GAME_SMOKE_FRAMES` | If set to `N`, initializes normally, renders exactly `N` frames, then exits. `0` exits after initialization before rendering. Invalid values fail early. |
+| `GAME_ASSET_DIR` | Overrides runtime asset root discovery. |
+| `GAME_PRESENT_MODE` | `fifo` (default), `mailbox`, or `immediate`; unavailable opt-in modes fall back to FIFO. |
+| `GAME_FRAME_TIMINGS` | Set to `1`, `true`, `yes`, or `on` to emit periodic debug frame timing logs. |
+| `GAME_REQUIRE_VALIDATION` | Set to `1` to require Vulkan validation layers in any build. |
+| `GAME_DISABLE_VALIDATION` | Set to `1` to disable Vulkan validation layers in any build. |
+| `RUST_LOG` | Controls Rust logging via `env_logger`; defaults to `info`. |
+| `GLSLC` | Overrides the shader compiler path used by `build.rs`. |
 
 ## Packaging
 
-The executable resolves assets relative to its own location first, so a packaged
-or installed build must ship the `assets/` directory next to the binary:
+Runtime packages need the executable plus `assets/`. Shader source files are
+build-time inputs; compiled SPIR-V is embedded into the binary. A packaged or
+installed build should ship the `assets/` directory next to the binary:
 
 ```text
 <install dir>/
@@ -44,8 +63,23 @@ or installed build must ship the `assets/` directory next to the binary:
     └── textures/test.png
 ```
 
-The crate manifest directory is only a development fallback (used by `cargo run`
-from a source checkout); an installed build cannot rely on it.
+The crate manifest directory is only a debug development fallback (used by
+`cargo run` from a source checkout); an installed build cannot rely on it.
+
+## Renderer Scope
+
+- 2D sprite renderer
+- Dynamic rendering, no depth/stencil
+- No render graph
+- No texture atlas yet
+- No bindless descriptors
+- Simple bitmap text
+- No asset hot reload
+
+Sprites are batched by layer and texture. Layer order always wins. Within one
+layer, texture batching groups draws by texture; same-layer cross-texture
+submission order is not preserved. Use separate layers when strict ordering is
+required across textures.
 
 ## Controls
 
@@ -82,9 +116,11 @@ cargo build --release --locked --features ci-build-sdl3
 ## Known limitations
 
 - UI text is ASCII-only (unsupported characters render a fallback glyph)
-- Collision is discrete AABB and can tunnel at very high speeds
+- Collision uses discrete axis-separated AABB resolution. It does not perform
+  swept collision, so very fast movement can tunnel through thin solids.
+  Embedded spawn positions should be avoided or validated.
 - The texture set and font atlas are tuned for the bundled assets
-- Debug builds depend on the Vulkan validation layer being installed
+- Debug builds require the Vulkan validation layer by default
 
 ## License
 

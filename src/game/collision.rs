@@ -14,16 +14,39 @@ use crate::game::world::Entity;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Aabb {
-    pub min: glam::Vec2,
-    pub max: glam::Vec2,
+    min: glam::Vec2,
+    max: glam::Vec2,
 }
 
 impl Aabb {
-    pub fn from_pos_size(pos: glam::Vec2, size: glam::Vec2) -> Self {
-        Self {
+    pub fn new(pos: glam::Vec2, size: glam::Vec2) -> Option<Self> {
+        if !pos.is_finite() || !size.is_finite() || size.x <= 0.0 || size.y <= 0.0 {
+            return None;
+        }
+
+        Some(Self {
             min: pos,
             max: pos + size,
-        }
+        })
+    }
+
+    pub fn from_pos_size(pos: glam::Vec2, size: glam::Vec2) -> Self {
+        Self::new(pos, size).unwrap_or(Self {
+            min: glam::Vec2::ZERO,
+            max: glam::Vec2::ONE,
+        })
+    }
+
+    pub fn min(self) -> glam::Vec2 {
+        self.min
+    }
+
+    pub fn max(self) -> glam::Vec2 {
+        self.max
+    }
+
+    pub fn size(self) -> glam::Vec2 {
+        self.max - self.min
     }
 
     pub fn overlaps(self, other: Self) -> bool {
@@ -34,52 +57,88 @@ impl Aabb {
     }
 }
 
+pub fn validate_spawn(entity: &Entity, solids: &[Aabb]) -> anyhow::Result<()> {
+    let entity_aabb = entity.aabb();
+    if let Some(solid) = solids
+        .iter()
+        .copied()
+        .find(|solid| entity_aabb.overlaps(*solid))
+    {
+        anyhow::bail!(
+            "entity spawn {:?}..{:?} overlaps solid {:?}..{:?}",
+            entity_aabb.min(),
+            entity_aabb.max(),
+            solid.min(),
+            solid.max()
+        );
+    }
+
+    Ok(())
+}
+
 /// Integrates `entity` by one discrete step against `solids` (see the module
 /// docs for the tunneling caveat). The X and Y axes are resolved independently
 /// so an entity slides along walls instead of sticking on contact.
 pub fn move_with_collision(entity: &mut Entity, solids: &[Aabb], dt: f32) {
-    entity.prev_pos = entity.pos;
+    entity.begin_step();
 
-    entity.pos.x += entity.vel.x * dt;
+    let mut pos = entity.position();
+    let mut vel = entity.velocity();
+
+    pos.x += vel.x * dt;
+    entity.set_position(pos);
     for solid in solids {
-        let aabb = Aabb::from_pos_size(entity.pos, entity.size);
+        let aabb = entity.aabb();
         if aabb.overlaps(*solid) {
-            if entity.vel.x > 0.0 {
-                entity.pos.x = solid.min.x - entity.size.x;
-            } else if entity.vel.x < 0.0 {
-                entity.pos.x = solid.max.x;
+            pos = entity.position();
+            if vel.x > 0.0 {
+                pos.x = solid.min().x - entity.size().x;
+            } else if vel.x < 0.0 {
+                pos.x = solid.max().x;
             }
-            entity.vel.x = 0.0;
+            vel.x = 0.0;
+            entity.set_position(pos);
+            entity.set_velocity(vel);
         }
     }
 
-    entity.pos.y += entity.vel.y * dt;
+    pos = entity.position();
+    vel = entity.velocity();
+    pos.y += vel.y * dt;
+    entity.set_position(pos);
     for solid in solids {
-        let aabb = Aabb::from_pos_size(entity.pos, entity.size);
+        let aabb = entity.aabb();
         if aabb.overlaps(*solid) {
-            if entity.vel.y > 0.0 {
-                entity.pos.y = solid.min.y - entity.size.y;
-            } else if entity.vel.y < 0.0 {
-                entity.pos.y = solid.max.y;
+            pos = entity.position();
+            if vel.y > 0.0 {
+                pos.y = solid.min().y - entity.size().y;
+            } else if vel.y < 0.0 {
+                pos.y = solid.max().y;
             }
-            entity.vel.y = 0.0;
+            vel.y = 0.0;
+            entity.set_position(pos);
+            entity.set_velocity(vel);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Aabb, move_with_collision};
+    use super::{Aabb, move_with_collision, validate_spawn};
     use crate::game::world::Entity;
 
     fn entity(pos: glam::Vec2, vel: glam::Vec2, size: glam::Vec2) -> Entity {
-        Entity {
-            pos,
-            prev_pos: pos,
-            vel,
-            size,
-            sprite: crate::renderer::TEST_TEXTURE_ID,
-        }
+        let mut entity = Entity::new(pos, size, crate::renderer::TEST_TEXTURE_ID);
+        entity.set_velocity(vel);
+        entity
+    }
+
+    #[test]
+    fn aabb_new_rejects_invalid_geometry() {
+        assert!(Aabb::new(glam::vec2(f32::NAN, 0.0), glam::Vec2::ONE).is_none());
+        assert!(Aabb::new(glam::Vec2::ZERO, glam::vec2(0.0, 1.0)).is_none());
+        assert!(Aabb::new(glam::Vec2::ZERO, glam::vec2(1.0, -1.0)).is_none());
+        assert!(Aabb::new(glam::Vec2::ZERO, glam::Vec2::ONE).is_some());
     }
 
     #[test]
@@ -110,12 +169,16 @@ mod tests {
         // Drive the entity rightward in small steps; collision zeroes velocity, so
         // re-apply it each step the way the game loop does.
         for _ in 0..100 {
-            e.vel.x = 100.0;
+            e.set_velocity(glam::vec2(100.0, 0.0));
             move_with_collision(&mut e, &[wall], 0.05);
         }
 
         // Snapped flush against the wall's left edge: solid.min.x - size.x.
-        assert!((e.pos.x - 40.0).abs() < 1e-3, "got {}", e.pos.x);
+        assert!(
+            (e.position().x - 40.0).abs() < 1e-3,
+            "got {}",
+            e.position().x
+        );
     }
 
     #[test]
@@ -130,8 +193,16 @@ mod tests {
 
         move_with_collision(&mut e, &[wall], 0.1);
 
-        assert!((e.pos.x - 40.0).abs() < 1e-3, "x blocked: {}", e.pos.x);
-        assert!(e.pos.y > 0.0, "y should slide freely: {}", e.pos.y);
+        assert!(
+            (e.position().x - 40.0).abs() < 1e-3,
+            "x blocked: {}",
+            e.position().x
+        );
+        assert!(
+            e.position().y > 0.0,
+            "y should slide freely: {}",
+            e.position().y
+        );
     }
 
     #[test]
@@ -147,6 +218,52 @@ mod tests {
 
         move_with_collision(&mut e, &[wall], 0.016);
 
-        assert!(e.pos.x > 102.0, "expected tunneling, got {}", e.pos.x);
+        assert!(
+            e.position().x > 102.0,
+            "expected tunneling, got {}",
+            e.position().x
+        );
+    }
+
+    #[test]
+    fn validate_spawn_rejects_embedded_start() {
+        let wall = Aabb::from_pos_size(glam::vec2(0.0, 0.0), glam::vec2(50.0, 50.0));
+        let player = entity(
+            glam::vec2(10.0, 10.0),
+            glam::Vec2::ZERO,
+            glam::vec2(10.0, 10.0),
+        );
+
+        assert!(validate_spawn(&player, &[wall]).is_err());
+    }
+
+    #[test]
+    fn zero_velocity_overlap_remains_documented_current_behavior() {
+        let wall = Aabb::from_pos_size(glam::vec2(0.0, 0.0), glam::vec2(50.0, 50.0));
+        let mut player = entity(
+            glam::vec2(10.0, 10.0),
+            glam::Vec2::ZERO,
+            glam::vec2(10.0, 10.0),
+        );
+
+        move_with_collision(&mut player, &[wall], 0.016);
+
+        assert!(player.aabb().overlaps(wall));
+    }
+
+    #[test]
+    fn adjacent_solids_do_not_block_player_landing_between_them() {
+        let left = Aabb::from_pos_size(glam::vec2(0.0, 0.0), glam::vec2(20.0, 20.0));
+        let right = Aabb::from_pos_size(glam::vec2(30.0, 0.0), glam::vec2(20.0, 20.0));
+        let mut player = entity(
+            glam::vec2(20.0, 30.0),
+            glam::vec2(0.0, -100.0),
+            glam::vec2(10.0, 10.0),
+        );
+
+        move_with_collision(&mut player, &[left, right], 0.1);
+
+        assert_eq!(player.position().x, 20.0);
+        assert!(player.position().y >= 20.0);
     }
 }

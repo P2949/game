@@ -2,15 +2,15 @@ use ash::vk;
 use std::time::{Duration, Instant};
 
 use crate::renderer::commands::{
-    RenderSpriteBatch, RenderSpriteRange, record_sprite_commands, resolve_draw_ranges,
-    submit_frame, ui_projection, upload_sprite_vertices,
+    RenderSpriteBatch, RenderSpriteRange, present_frame, record_sprite_commands,
+    resolve_draw_ranges, submit_frame, ui_projection, upload_sprite_vertices,
 };
 use crate::renderer::owned::{
     OwnedCommandPool, OwnedDescriptorSetLayout, OwnedFence, OwnedSemaphore,
 };
 use crate::renderer::recreate::{
     SwapchainRecreateAction, SwapchainRecreateReason, request_soft_recreate,
-    swapchain_recreate_action,
+    request_suboptimal_recreate, swapchain_recreate_action,
 };
 use crate::renderer::sprite_batch::{SpriteBatch, SpriteBatchRange};
 use crate::renderer::texture_registry::{TextureRegistry, TextureRegistryGuard};
@@ -27,6 +27,46 @@ use crate::renderer::{
 const MIN_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
 const FRAME_TIMING_LOG_INTERVAL: Duration = Duration::from_secs(1);
 const UI_TEXT_LAYER: i16 = 1000;
+
+/// Synchronization resources whose lifetime is tied to one swapchain generation.
+///
+/// Per-frame resources (`FrameData`) survive swapchain recreation: command
+/// buffers, acquire semaphores, and frame fences can be reused for the next
+/// generation after the device is idle. Present wait semaphores are different:
+/// each one is associated with a swapchain image, so this bundle is recreated
+/// alongside images/views whenever the swapchain generation changes.
+struct SwapchainSync {
+    render_finished_by_image: Vec<OwnedSemaphore>,
+    image_in_flight_fences: Vec<Option<vk::Fence>>,
+    generation: u64,
+}
+
+impl SwapchainSync {
+    fn new(device: &ash::Device, image_count: usize, generation: u64) -> anyhow::Result<Self> {
+        Ok(Self {
+            render_finished_by_image: create_image_render_finished_semaphores(device, image_count)?,
+            image_in_flight_fences: vec![None; image_count],
+            generation,
+        })
+    }
+
+    fn render_finished(&self, image_index: usize) -> vk::Semaphore {
+        self.render_finished_by_image[image_index].handle()
+    }
+
+    fn in_flight_fence(&self, image_index: usize) -> Option<vk::Fence> {
+        self.image_in_flight_fences[image_index]
+    }
+
+    fn mark_image_in_flight(&mut self, image_index: usize, fence: vk::Fence) {
+        self.image_in_flight_fences[image_index] = Some(fence);
+    }
+
+    fn clear(&mut self) {
+        self.render_finished_by_image.clear();
+        self.image_in_flight_fences.clear();
+    }
+}
 
 // All fields are private. The renderer's careful Vulkan destruction order (see
 // `Drop` below and `docs/renderer-lifetime.md`) depends on no outside code
@@ -66,12 +106,13 @@ pub struct VulkanContext {
     swapchain: swapchain::Swapchain,
     swapchain_image_views: swapchain::SwapchainImageViews,
     sprite_pipeline: pipeline::GraphicsPipeline,
-    image_render_finished: Vec<OwnedSemaphore>,
+    swapchain_sync: SwapchainSync,
     frames: Vec<frame::FrameData>,
     current_frame: usize,
     swapchain_recreate_request: Option<SwapchainRecreateReason>,
     last_swapchain_recreate: Option<Instant>,
     last_frame_timing_log: Instant,
+    frame_timing_logs: bool,
 }
 
 impl VulkanContext {
@@ -147,10 +188,7 @@ impl VulkanContext {
             swapchain.format,
             texture_descriptor_set_layout.handle(),
         )?;
-        let image_render_finished = create_image_render_finished_semaphores(
-            &logical_device.device,
-            swapchain.images.len(),
-        )?;
+        let swapchain_sync = SwapchainSync::new(&logical_device.device, swapchain.images.len(), 0)?;
 
         let frames: Vec<_> = (0..frame::MAX_FRAMES_IN_FLIGHT)
             .map(|_| {
@@ -189,12 +227,13 @@ impl VulkanContext {
             swapchain,
             swapchain_image_views,
             sprite_pipeline,
-            image_render_finished,
+            swapchain_sync,
             frames,
             current_frame: 0,
             swapchain_recreate_request: None,
             last_swapchain_recreate: None,
             last_frame_timing_log: Instant::now(),
+            frame_timing_logs: frame_timing_logs_enabled(),
         })
     }
 
@@ -206,6 +245,10 @@ impl VulkanContext {
 
     fn request_soft_swapchain_recreate(&mut self) {
         request_soft_recreate(&mut self.swapchain_recreate_request);
+    }
+
+    fn request_suboptimal_swapchain_recreate(&mut self) {
+        request_suboptimal_recreate(&mut self.swapchain_recreate_request);
     }
 
     fn request_mandatory_swapchain_recreate(&mut self) {
@@ -247,17 +290,6 @@ impl VulkanContext {
         )))
     }
 
-    fn swapchain_extent_matches_window(
-        &self,
-        window: &sdl3::video::Window,
-    ) -> anyhow::Result<bool> {
-        let Some(desired_extent) = self.desired_swapchain_extent(window)? else {
-            return Ok(false);
-        };
-
-        Ok(desired_extent == self.swapchain.extent)
-    }
-
     fn swapchain_recreate_ready(&self, window: &sdl3::video::Window) -> anyhow::Result<bool> {
         // Only special-case a zero-size (minimized) window, which has no valid
         // extent to recreate for. Any nonzero size is recreatable: gating on a
@@ -282,7 +314,7 @@ impl VulkanContext {
             // Keep a request pending so we recreate once the window has a size
             // again, but never downgrade an already-pending hard request.
             self.swapchain_recreate_request
-                .get_or_insert(SwapchainRecreateReason::ResizeOrSuboptimal);
+                .get_or_insert(SwapchainRecreateReason::Resize);
             return Ok(());
         }
 
@@ -322,8 +354,11 @@ impl VulkanContext {
         } else {
             None
         };
-        let new_image_render_finished =
-            create_image_render_finished_semaphores(device, new_swapchain.images.len())?;
+        let new_swapchain_sync = SwapchainSync::new(
+            device,
+            new_swapchain.images.len(),
+            self.swapchain_sync.generation + 1,
+        )?;
 
         if let Some(new_sprite_pipeline) = new_sprite_pipeline {
             self.sprite_pipeline.destroy();
@@ -335,14 +370,16 @@ impl VulkanContext {
 
         self.swapchain = new_swapchain;
         self.swapchain_image_views = new_swapchain_image_views;
-        // Replacing the vector drops the previous owned semaphores here, which is
-        // safe because `device_wait_idle` above guaranteed no frame is using them.
-        self.image_render_finished = new_image_render_finished;
+        // Replacing the swapchain sync bundle drops the previous present wait
+        // semaphores here, which is safe because `device_wait_idle` above
+        // guaranteed no frame or failed-present path can still be using them.
+        self.swapchain_sync = new_swapchain_sync;
         self.swapchain_recreate_request = None;
         self.last_swapchain_recreate = Some(Instant::now());
 
         log::info!(
-            "recreated swapchain for drawable size {width}x{height} in {:.3}ms",
+            "recreated swapchain generation {} for drawable size {width}x{height} in {:.3}ms",
+            self.swapchain_sync.generation,
             duration_ms(recreate_start.elapsed())
         );
 
@@ -410,8 +447,9 @@ impl VulkanContext {
         self.ui_draw_ranges.clear();
 
         self.scratch_batch_ranges.clear();
-        self.world_sprite_batch
-            .build_into(&mut self.sprite_vertices, &mut self.scratch_batch_ranges);
+        let world_stats = self
+            .world_sprite_batch
+            .build_into(&mut self.sprite_vertices, &mut self.scratch_batch_ranges)?;
         resolve_draw_ranges(
             &self.scratch_batch_ranges,
             &mut self.world_draw_ranges,
@@ -419,17 +457,37 @@ impl VulkanContext {
         )?;
 
         self.scratch_batch_ranges.clear();
-        self.ui_sprite_batch
-            .build_into(&mut self.sprite_vertices, &mut self.scratch_batch_ranges);
+        let ui_stats = self
+            .ui_sprite_batch
+            .build_into(&mut self.sprite_vertices, &mut self.scratch_batch_ranges)?;
         resolve_draw_ranges(
             &self.scratch_batch_ranges,
             &mut self.ui_draw_ranges,
             &self.texture_registry,
         )?;
 
+        let dropped_invalid_sprites =
+            world_stats.dropped_invalid_sprites + ui_stats.dropped_invalid_sprites;
+        if dropped_invalid_sprites > 0 {
+            log::debug!("dropped {dropped_invalid_sprites} invalid sprite draw(s)");
+        }
+
         self.clear_sprite_batches();
 
         unsafe {
+            // Frame/swapchain synchronization lifecycle:
+            // 1. Wait for this frame's fence before reusing its command/buffer state.
+            // 2. Acquire a swapchain image, signaling the frame-owned
+            //    `image_available` semaphore.
+            // 3. Wait for any fence associated with that image from an earlier
+            //    submission.
+            // 4. Record commands for the acquired image.
+            // 5. Submit commands, waiting on `image_available`, signaling the
+            //    image-owned `render_finished` semaphore, and signaling the frame
+            //    fence.
+            // 6. Present waits on `render_finished`.
+            // 7. Advance the frame index. Swapchain-owned sync is recreated with
+            //    the swapchain after out-of-date/suboptimal present paths.
             let wait_start = Instant::now();
             device.wait_for_fences(std::slice::from_ref(&in_flight), true, u64::MAX)?;
             let wait_duration = wait_start.elapsed();
@@ -478,11 +536,14 @@ impl VulkanContext {
                 Err(err) => return Err(err.into()),
             };
 
-            let mut recreate_after_present =
-                suboptimal && !self.swapchain_extent_matches_window(window)?;
+            let mut recreate_after_present = suboptimal;
 
             let image_index_usize = image_index as usize;
-            let render_finished = self.image_render_finished[image_index_usize].handle();
+            if let Some(image_fence) = self.swapchain_sync.in_flight_fence(image_index_usize) {
+                device.wait_for_fences(std::slice::from_ref(&image_fence), true, u64::MAX)?;
+            }
+
+            let render_finished = self.swapchain_sync.render_finished(image_index_usize);
             let world_projection = camera
                 .view_projection(
                     self.swapchain.extent.width as f32,
@@ -523,21 +584,26 @@ impl VulkanContext {
             let record_duration = record_start.elapsed();
 
             let submit_start = Instant::now();
-            let submit_result = submit_frame(
+            submit_frame(
                 &device,
                 graphics_queue,
-                present_queue,
-                &self.swapchain.loader,
-                self.swapchain.handle,
                 image_available,
                 command_buffer,
                 in_flight,
+                render_finished,
+            )?;
+            self.swapchain_sync
+                .mark_image_in_flight(image_index_usize, in_flight);
+            let present_result = present_frame(
+                &self.swapchain.loader,
+                present_queue,
+                self.swapchain.handle,
                 render_finished,
                 image_index,
             );
             let submit_present_duration = submit_start.elapsed();
 
-            let present_suboptimal = match submit_result {
+            let present_suboptimal = match present_result {
                 Ok(suboptimal) => suboptimal,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
@@ -547,19 +613,21 @@ impl VulkanContext {
                 Err(err) => return Err(err.into()),
             };
 
-            if present_suboptimal && !self.swapchain_extent_matches_window(window)? {
+            if present_suboptimal {
                 recreate_after_present = true;
             }
 
             self.current_frame = (frame_index + 1) % frame::MAX_FRAMES_IN_FLIGHT;
 
             if recreate_after_present {
-                self.request_soft_swapchain_recreate();
+                self.request_suboptimal_swapchain_recreate();
             }
 
-            if self.last_frame_timing_log.elapsed() >= FRAME_TIMING_LOG_INTERVAL {
+            if self.frame_timing_logs
+                && self.last_frame_timing_log.elapsed() >= FRAME_TIMING_LOG_INTERVAL
+            {
                 let total_duration = frame_start.elapsed();
-                log::info!(
+                log::debug!(
                     "frame timings: total={:.3}ms fence={:.3}ms acquire={:.3}ms vertex={:.3}ms record={:.3}ms submit_present={:.3}ms",
                     duration_ms(total_duration),
                     duration_ms(wait_duration),
@@ -635,7 +703,7 @@ impl Drop for VulkanContext {
                 // drop; clearing the collections and taking the `Option`s forces
                 // those drops to run here rather than after the device is gone.
                 self.frames.clear();
-                self.image_render_finished.clear();
+                self.swapchain_sync.clear();
                 self.texture_descriptor_set_layout = None;
                 self.upload_fence = None;
                 self.upload_command_pool = None;
@@ -691,4 +759,11 @@ fn create_image_render_finished_semaphores(
 
 fn duration_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
+}
+
+fn frame_timing_logs_enabled() -> bool {
+    matches!(
+        std::env::var("GAME_FRAME_TIMINGS").as_deref(),
+        Ok("1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
+    )
 }

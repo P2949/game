@@ -1,5 +1,5 @@
 use crate::game::camera::Camera2D;
-use crate::game::collision::{Aabb, move_with_collision};
+use crate::game::collision::{Aabb, move_with_collision, validate_spawn};
 use crate::game::world::Entity;
 use crate::platform::input::{FrameActions, InputState};
 use crate::renderer::{self, DrawCommands, SpriteDraw};
@@ -106,17 +106,17 @@ impl Game {
     fn update_playing(&mut self, dt: f32, input: InputState) {
         let speed = 220.0;
         let desired_vel = input.movement() * speed;
-        self.player.vel = desired_vel;
+        self.player.set_velocity(desired_vel);
         move_with_collision(&mut self.player, &self.solids, dt);
         if desired_vel.length_squared() > 0.0
-            && self.player.vel.length_squared() < desired_vel.length_squared()
+            && self.player.velocity().length_squared() < desired_vel.length_squared()
         {
             self.shake.add(0.18);
         }
 
         self.update_camera_zoom(dt, input);
         self.camera.set_center(
-            self.player.pos + self.player.size * 0.5 + self.shake.offset(self.effect_time),
+            self.player.position() + self.player.size() * 0.5 + self.shake.offset(self.effect_time),
         );
     }
 
@@ -139,8 +139,8 @@ impl Game {
             renderer.draw_world_sprite(SpriteDraw {
                 texture: renderer::TEST_TEXTURE_ID,
                 layer: 5,
-                position: solid.min,
-                size: solid.max - solid.min,
+                position: solid.min(),
+                size: solid.size(),
                 uv_min: glam::Vec2::ZERO,
                 uv_max: glam::Vec2::ONE,
                 color: glam::vec4(0.35, 0.45, 0.75, 1.0),
@@ -149,10 +149,10 @@ impl Game {
 
         let player_pos = self.player.interpolated_pos(alpha);
         renderer.draw_world_sprite(SpriteDraw {
-            texture: self.player.sprite,
+            texture: self.player.sprite(),
             layer: 10,
             position: player_pos,
-            size: self.player.size,
+            size: self.player.size(),
             uv_min: glam::Vec2::ZERO,
             uv_max: glam::Vec2::ONE,
             color: glam::vec4(1.0, 0.35, 0.25, 1.0),
@@ -227,7 +227,7 @@ impl Game {
 
     fn update_camera_zoom(&mut self, dt: f32, input: InputState) {
         let zoom_step = 1.0 + 2.0 * dt;
-        let mut zoom = self.camera.zoom;
+        let mut zoom = self.camera.zoom();
         if input.zoom_in {
             zoom *= zoom_step;
         }
@@ -347,16 +347,12 @@ impl Default for FrameGraph {
 }
 
 fn new_world() -> (Camera2D, Entity, Vec<Aabb>) {
-    let player = Entity {
-        pos: glam::vec2(420.0, 120.0),
-        prev_pos: glam::vec2(420.0, 120.0),
-        vel: glam::Vec2::ZERO,
-        size: glam::vec2(48.0, 48.0),
-        sprite: renderer::TEST_TEXTURE_ID,
-    };
-    let camera = Camera2D::new(player.pos + player.size * 0.5, 1.0);
+    let player = Entity::new_player(glam::vec2(420.0, 120.0));
+    let camera = Camera2D::new(player.position() + player.size() * 0.5, 1.0);
+    let solids = test_room_solids();
+    validate_spawn(&player, &solids).expect("test room player spawn must not overlap solids");
 
-    (camera, player, test_room_solids())
+    (camera, player, solids)
 }
 
 fn test_room_solids() -> Vec<Aabb> {
@@ -470,14 +466,14 @@ mod tests {
     #[test]
     fn camera_follows_player_movement() {
         let mut game = playing_game();
-        let start = game.camera().center;
+        let start = game.camera().center();
         assert_eq!(start, START_CAMERA_CENTER);
 
         let mut input = InputState::default();
-        input.move_x = 1.0;
+        input.set_move_x(1.0);
         game.update(DT, input, FrameActions::default());
 
-        let after = game.camera().center;
+        let after = game.camera().center();
         assert!(
             after.x > start.x,
             "camera should track the player moving right"
@@ -490,11 +486,11 @@ mod tests {
         let mut game = playing_game();
 
         let mut input = InputState::default();
-        input.move_x = 1.0;
+        input.set_move_x(1.0);
         for _ in 0..10 {
             game.update(DT, input, FrameActions::default());
         }
-        assert!(game.camera().center.x > START_CAMERA_CENTER.x);
+        assert!(game.camera().center().x > START_CAMERA_CENTER.x);
 
         game.update(
             DT,
@@ -505,7 +501,7 @@ mod tests {
             },
         );
         assert_eq!(game.mode, GameMode::Playing);
-        assert_eq!(game.camera().center, START_CAMERA_CENTER);
+        assert_eq!(game.camera().center(), START_CAMERA_CENTER);
     }
 
     #[test]

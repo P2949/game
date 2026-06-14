@@ -25,6 +25,8 @@ fn main() -> anyhow::Result<()> {
     // requiring RUST_LOG; an explicit RUST_LOG still overrides this.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    let smoke_frames = parse_smoke_frames()?;
+
     let mut platform = Platform::new("SDL3 + ash demo", 1280, 720)?;
     let mut vk = renderer::context::VulkanContext::new(&platform.window)?;
     let audio = match audio::AudioSystem::new(&platform.sdl) {
@@ -40,14 +42,11 @@ fn main() -> anyhow::Result<()> {
     let mut previous_frame = Instant::now();
     let mut last_lag_warning: Option<Instant> = None;
 
-    // Optional smoke-test hook: when GAME_SMOKE_FRAMES=N is set, render N frames
-    // then quit cleanly (running normal teardown). Lets CI / a headless run
-    // exercise startup, rendering, and shutdown — including validation-layer
-    // resource lifetime/teardown checks at Drop — without a human closing the
-    // window.
-    let smoke_frames: Option<u64> = std::env::var("GAME_SMOKE_FRAMES")
-        .ok()
-        .and_then(|value| value.parse().ok());
+    if smoke_frames == Some(0) {
+        log::info!("GAME_SMOKE_FRAMES=0 requested; initialized and exiting before rendering");
+        return Ok(());
+    }
+
     let mut rendered_frames: u64 = 0;
 
     while !platform.should_quit {
@@ -125,4 +124,68 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_smoke_frames() -> anyhow::Result<Option<u64>> {
+    let Ok(raw) = std::env::var("GAME_SMOKE_FRAMES") else {
+        return Ok(None);
+    };
+
+    raw.parse::<u64>()
+        .map(Some)
+        .map_err(|_| anyhow::anyhow!("GAME_SMOKE_FRAMES must be a non-negative integer"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_smoke_frames;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    #[test]
+    fn smoke_frames_unset_means_interactive_run() {
+        let _guard = env_lock();
+        unsafe {
+            std::env::remove_var("GAME_SMOKE_FRAMES");
+        }
+
+        assert_eq!(parse_smoke_frames().unwrap(), None);
+    }
+
+    #[test]
+    fn smoke_frames_accepts_zero_and_positive_counts() {
+        let _guard = env_lock();
+        unsafe {
+            std::env::set_var("GAME_SMOKE_FRAMES", "0");
+        }
+        assert_eq!(parse_smoke_frames().unwrap(), Some(0));
+
+        unsafe {
+            std::env::set_var("GAME_SMOKE_FRAMES", "120");
+        }
+        assert_eq!(parse_smoke_frames().unwrap(), Some(120));
+
+        unsafe {
+            std::env::remove_var("GAME_SMOKE_FRAMES");
+        }
+    }
+
+    #[test]
+    fn smoke_frames_rejects_invalid_values() {
+        let _guard = env_lock();
+        for value in ["", "-1", "abc", "1.5"] {
+            unsafe {
+                std::env::set_var("GAME_SMOKE_FRAMES", value);
+            }
+            assert!(parse_smoke_frames().is_err(), "accepted {value:?}");
+        }
+
+        unsafe {
+            std::env::remove_var("GAME_SMOKE_FRAMES");
+        }
+    }
 }

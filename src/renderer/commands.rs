@@ -119,6 +119,12 @@ pub fn ui_projection(extent: vk::Extent2D) -> glam::Mat4 {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// # Safety
+///
+/// `cmd` must be a valid primary command buffer allocated from `device`, `image`
+/// and `image_view` must refer to the same swapchain image, and all pipeline,
+/// layout, descriptor, and buffer handles referenced by `render_batches` must
+/// remain valid for the duration of command recording and later submission.
 pub unsafe fn record_sprite_commands(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
@@ -246,19 +252,22 @@ pub unsafe fn record_sprite_commands(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Submits the recorded render command buffer for one frame.
+///
+/// # Safety
+///
+/// `image_available`, `render_finished`, `command_buffer`, and `in_flight` must
+/// belong to `device`. The command buffer must have been recorded for the
+/// swapchain image associated with the signaled acquire semaphore, and
+/// `in_flight` must not already be associated with outstanding work.
 pub unsafe fn submit_frame(
     device: &ash::Device,
     graphics_queue: vk::Queue,
-    present_queue: vk::Queue,
-    swapchain_loader: &ash::khr::swapchain::Device,
-    swapchain: vk::SwapchainKHR,
     image_available: vk::Semaphore,
     command_buffer: vk::CommandBuffer,
     in_flight: vk::Fence,
     render_finished: vk::Semaphore,
-    image_index: u32,
-) -> Result<bool, vk::Result> {
+) -> Result<(), vk::Result> {
     let wait_info = vk::SemaphoreSubmitInfo::default()
         .semaphore(image_available)
         .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
@@ -283,6 +292,23 @@ pub unsafe fn submit_frame(
         )?;
     }
 
+    Ok(())
+}
+
+/// Presents the rendered swapchain image after graphics submission.
+///
+/// # Safety
+///
+/// `render_finished` must be signaled by submitted work that wrote
+/// `image_index` in `swapchain`; `swapchain` and `present_queue` must be valid
+/// for `swapchain_loader`.
+pub unsafe fn present_frame(
+    swapchain_loader: &ash::khr::swapchain::Device,
+    present_queue: vk::Queue,
+    swapchain: vk::SwapchainKHR,
+    render_finished: vk::Semaphore,
+    image_index: u32,
+) -> Result<bool, vk::Result> {
     let wait_semaphores = [render_finished];
     let swapchains = [swapchain];
     let image_indices = [image_index];

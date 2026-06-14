@@ -19,8 +19,8 @@ impl FrameActions {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct InputState {
-    pub move_x: f32,
-    pub move_y: f32,
+    move_x: f32,
+    move_y: f32,
     pub action_pressed: bool,
     pub pause_pressed: bool,
     pub reset_pressed: bool,
@@ -47,6 +47,19 @@ impl InputState {
     /// drifting or zooming after refocusing.
     pub fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    pub fn set_move_x(&mut self, value: f32) {
+        self.move_x = sanitize_axis(value);
+    }
+
+    pub fn set_move_y(&mut self, value: f32) {
+        self.move_y = sanitize_axis(value);
+    }
+
+    pub fn set_movement_axis(&mut self, x: f32, y: f32) {
+        self.set_move_x(x);
+        self.set_move_y(y);
     }
 
     pub fn take_frame_actions(&mut self) -> FrameActions {
@@ -82,31 +95,24 @@ impl InputState {
             _ => {}
         }
 
-        self.move_x = axis(self.left, self.right);
-        self.move_y = axis(self.up, self.down);
+        self.set_movement_axis(axis(self.left, self.right), axis(self.up, self.down));
     }
 
     pub fn movement(&self) -> glam::Vec2 {
-        // `move_x`/`move_y` are public, so a test or future caller could set them to
-        // a non-finite value. SDL-driven input only ever writes 0/±1 via `axis`, but
-        // guard here so `movement` can never return NaN/Inf, which would otherwise
-        // poison velocity, position, and the camera downstream.
-        let x = if self.move_x.is_finite() {
-            self.move_x
-        } else {
-            0.0
-        };
-        let y = if self.move_y.is_finite() {
-            self.move_y
-        } else {
-            0.0
-        };
-        let v = glam::vec2(x, y);
+        let v = glam::vec2(sanitize_axis(self.move_x), sanitize_axis(self.move_y));
         if v.length_squared() > 1.0 {
             v.normalize()
         } else {
             v
         }
+    }
+}
+
+fn sanitize_axis(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(-1.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -149,18 +155,26 @@ mod tests {
     }
 
     #[test]
-    fn movement_returns_zero_for_non_finite_public_state() {
-        let mut input = InputState {
-            move_x: f32::NAN,
-            move_y: f32::INFINITY,
-            ..Default::default()
-        };
+    fn movement_returns_zero_for_non_finite_axis_values() {
+        let mut input = InputState::default();
+        input.set_movement_axis(f32::NAN, f32::INFINITY);
         assert_eq!(input.movement(), glam::Vec2::ZERO);
 
         // A finite axis paired with a non-finite one keeps only the finite axis.
-        input.move_x = 1.0;
-        input.move_y = f32::NAN;
+        input.set_movement_axis(1.0, f32::NAN);
         assert_eq!(input.movement(), glam::vec2(1.0, 0.0));
+    }
+
+    #[test]
+    fn movement_axes_clamp_large_finite_values() {
+        let mut input = InputState::default();
+        input.set_movement_axis(42.0, -42.0);
+
+        let movement = input.movement();
+
+        assert!(movement.x > 0.0);
+        assert!(movement.y < 0.0);
+        assert!(movement.length() <= 1.0);
     }
 
     #[test]

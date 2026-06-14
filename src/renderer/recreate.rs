@@ -7,10 +7,14 @@
 /// Why a swapchain recreation is pending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwapchainRecreateReason {
-    /// Soft request from a resize or `SUBOPTIMAL_KHR`. May be skipped if the
-    /// current swapchain extent already matches the window, and is subject to
-    /// the resize debounce / recreate rate-limit.
-    ResizeOrSuboptimal,
+    /// Soft request from a resize. May be skipped if the current swapchain
+    /// extent already matches the window, and is subject to the resize debounce
+    /// / recreate rate-limit.
+    Resize,
+    /// Soft-but-real request from `SUBOPTIMAL_KHR`. Unlike a plain resize
+    /// request, this is never cleared just because the current extent happens to
+    /// match the window.
+    Suboptimal,
     /// Hard request from `ERROR_OUT_OF_DATE_KHR`. The current swapchain can no
     /// longer be used, so this must recreate as soon as a nonzero drawable
     /// extent is available, regardless of extent match or rate-limit.
@@ -45,13 +49,13 @@ pub fn swapchain_recreate_action(
 
     match reason {
         SwapchainRecreateReason::SurfaceOutOfDate => SwapchainRecreateAction::Recreate,
-        SwapchainRecreateReason::ResizeOrSuboptimal if extent_matches => {
-            SwapchainRecreateAction::ClearRequest
-        }
-        SwapchainRecreateReason::ResizeOrSuboptimal if soft_recreate_ready => {
+        SwapchainRecreateReason::Suboptimal if soft_recreate_ready => {
             SwapchainRecreateAction::Recreate
         }
-        SwapchainRecreateReason::ResizeOrSuboptimal => SwapchainRecreateAction::Wait,
+        SwapchainRecreateReason::Suboptimal => SwapchainRecreateAction::Wait,
+        SwapchainRecreateReason::Resize if extent_matches => SwapchainRecreateAction::ClearRequest,
+        SwapchainRecreateReason::Resize if soft_recreate_ready => SwapchainRecreateAction::Recreate,
+        SwapchainRecreateReason::Resize => SwapchainRecreateAction::Wait,
     }
 }
 
@@ -59,7 +63,15 @@ pub fn swapchain_recreate_action(
 /// (`SurfaceOutOfDate`) request. Free function so the priority rule is testable.
 pub fn request_soft_recreate(request: &mut Option<SwapchainRecreateReason>) {
     if *request != Some(SwapchainRecreateReason::SurfaceOutOfDate) {
-        *request = Some(SwapchainRecreateReason::ResizeOrSuboptimal);
+        *request = Some(SwapchainRecreateReason::Resize);
+    }
+}
+
+/// Records a suboptimal-present request without downgrading an already-pending
+/// hard (`SurfaceOutOfDate`) request.
+pub fn request_suboptimal_recreate(request: &mut Option<SwapchainRecreateReason>) {
+    if *request != Some(SwapchainRecreateReason::SurfaceOutOfDate) {
+        *request = Some(SwapchainRecreateReason::Suboptimal);
     }
 }
 
@@ -67,18 +79,13 @@ pub fn request_soft_recreate(request: &mut Option<SwapchainRecreateReason>) {
 mod tests {
     use super::{
         SwapchainRecreateAction, SwapchainRecreateReason, request_soft_recreate,
-        swapchain_recreate_action,
+        request_suboptimal_recreate, swapchain_recreate_action,
     };
 
     #[test]
     fn soft_recreate_clears_when_extent_matches() {
         assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::ResizeOrSuboptimal,
-                true,
-                true,
-                false,
-            ),
+            swapchain_recreate_action(SwapchainRecreateReason::Resize, true, true, false,),
             SwapchainRecreateAction::ClearRequest
         );
     }
@@ -86,12 +93,7 @@ mod tests {
     #[test]
     fn soft_recreate_waits_when_extent_differs_but_rate_limited() {
         assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::ResizeOrSuboptimal,
-                true,
-                false,
-                false,
-            ),
+            swapchain_recreate_action(SwapchainRecreateReason::Resize, true, false, false,),
             SwapchainRecreateAction::Wait
         );
     }
@@ -99,12 +101,7 @@ mod tests {
     #[test]
     fn soft_recreate_recreates_when_extent_differs_and_ready() {
         assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::ResizeOrSuboptimal,
-                true,
-                false,
-                true,
-            ),
+            swapchain_recreate_action(SwapchainRecreateReason::Resize, true, false, true,),
             SwapchainRecreateAction::Recreate
         );
     }
@@ -112,12 +109,7 @@ mod tests {
     #[test]
     fn soft_recreate_waits_for_zero_size() {
         assert_eq!(
-            swapchain_recreate_action(
-                SwapchainRecreateReason::ResizeOrSuboptimal,
-                false,
-                false,
-                true,
-            ),
+            swapchain_recreate_action(SwapchainRecreateReason::Resize, false, false, true,),
             SwapchainRecreateAction::Wait
         );
     }
@@ -156,7 +148,7 @@ mod tests {
     fn soft_request_sets_resize_reason_when_idle() {
         let mut request = None;
         request_soft_recreate(&mut request);
-        assert_eq!(request, Some(SwapchainRecreateReason::ResizeOrSuboptimal));
+        assert_eq!(request, Some(SwapchainRecreateReason::Resize));
     }
 
     #[test]
@@ -166,5 +158,20 @@ mod tests {
         let mut request = Some(SwapchainRecreateReason::SurfaceOutOfDate);
         request_soft_recreate(&mut request);
         assert_eq!(request, Some(SwapchainRecreateReason::SurfaceOutOfDate));
+    }
+
+    #[test]
+    fn suboptimal_recreate_does_not_clear_when_extent_matches() {
+        assert_eq!(
+            swapchain_recreate_action(SwapchainRecreateReason::Suboptimal, true, true, true),
+            SwapchainRecreateAction::Recreate
+        );
+    }
+
+    #[test]
+    fn suboptimal_request_sets_suboptimal_reason_when_idle() {
+        let mut request = None;
+        request_suboptimal_recreate(&mut request);
+        assert_eq!(request, Some(SwapchainRecreateReason::Suboptimal));
     }
 }

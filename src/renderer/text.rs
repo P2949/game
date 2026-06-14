@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use anyhow::Context;
+
 use crate::renderer::{SpriteDraw, TextureId};
 
 // The atlas is a fixed grid of equally-sized cells covering printable ASCII.
@@ -142,7 +144,9 @@ pub fn build_ascii_atlas(
     path: impl AsRef<Path>,
     texture: TextureId,
 ) -> anyhow::Result<FontAtlasImage> {
-    let font_bytes = std::fs::read(path)?;
+    let path = path.as_ref();
+    let font_bytes =
+        std::fs::read(path).with_context(|| format!("failed to read font {}", path.display()))?;
     let font = fontdue::Font::from_bytes(font_bytes, fontdue::FontSettings::default())
         .map_err(|err| anyhow::anyhow!("failed to load font: {err}"))?;
 
