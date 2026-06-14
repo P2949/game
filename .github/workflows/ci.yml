@@ -48,6 +48,7 @@ jobs:
             libxinerama-dev \
             libxkbcommon-dev \
             libxrandr-dev \
+            libxss-dev \
             ninja-build \
             pkg-config \
             vulkan-validationlayers \
