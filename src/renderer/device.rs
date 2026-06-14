@@ -246,9 +246,22 @@ fn select_device_candidate(
 }
 
 fn device_name_filter() -> Option<String> {
-    std::env::var("GAME_VK_DEVICE_NAME")
-        .ok()
-        .and_then(|value| normalize_device_name_filter(&value))
+    // Distinguish "unset", "set but blank", and "set to non-Unicode" so a user
+    // who set the override but sees it ignored can tell why from the logs.
+    match std::env::var("GAME_VK_DEVICE_NAME") {
+        Ok(value) => match normalize_device_name_filter(&value) {
+            Some(filter) => Some(filter),
+            None => {
+                log::warn!("GAME_VK_DEVICE_NAME is set but empty; ignoring the GPU override");
+                None
+            }
+        },
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            log::warn!("GAME_VK_DEVICE_NAME contains non-Unicode data; ignoring the GPU override");
+            None
+        }
+    }
 }
 
 fn normalize_device_name_filter(value: &str) -> Option<String> {

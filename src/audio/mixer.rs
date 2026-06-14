@@ -7,8 +7,27 @@ use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStrea
 const AUDIO_SCRATCH_SAMPLES: usize = 4096;
 const AUDIO_COMMAND_QUEUE_CAPACITY: usize = 128;
 const MAX_VOICES: usize = 32;
+// Upper bound on the per-channel frame count a generated tone may allocate.
+// 48 kHz * 60 s = 2.88M frames, so a one-minute tone fits comfortably while an
+// absurd `seconds`/`sample_rate` request is rejected before allocating.
+const MAX_GENERATED_FRAMES: usize = 1 << 22; // 4,194,304 frames
+// Upper bound on a generated tone's channel count, so a huge `channels` cannot
+// blow up the interleaved buffer even when the frame count is within cap.
+const MAX_GENERATED_CHANNELS: u16 = 8;
+// Hard cap on the total interleaved sample count (frames * channels).
+const MAX_GENERATED_SAMPLES: usize = MAX_GENERATED_FRAMES * MAX_GENERATED_CHANNELS as usize;
 
 pub type SoundId = usize;
+
+/// Outcome of [`Mixer::play`]. Returned so callers (and tests) can distinguish a
+/// started voice from the two silent-drop cases instead of guessing from voice
+/// counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayResult {
+    Started,
+    DroppedVoiceLimit,
+    InvalidSoundId,
+}
 
 #[derive(Debug, Clone, Copy)]
 enum AudioCommand {
@@ -54,6 +73,11 @@ pub struct Mixer {
     // speed/pitch. `add_sound` rejects mismatches.
     output_channels: u16,
     output_sample_rate: u32,
+    // Incremented whenever `play` drops a request because all voices are in use.
+    // Shared (via `dropped_voices_handle`) with the main thread so missing SFX
+    // caused by the voice cap can be diagnosed without logging from the realtime
+    // mix callback.
+    dropped_voices: Arc<AtomicU64>,
 }
 
 impl Mixer {
@@ -64,7 +88,19 @@ impl Mixer {
             master_volume: 1.0,
             output_channels: 0,
             output_sample_rate: 0,
+            dropped_voices: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// A shared handle to the voice-drop counter, for reading from another thread
+    /// (the audio callback owns the `Mixer`, the main thread polls this).
+    pub fn dropped_voices_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.dropped_voices)
+    }
+
+    #[allow(dead_code)]
+    pub fn dropped_voice_count(&self) -> u64 {
+        self.dropped_voices.load(Ordering::Relaxed)
     }
 
     #[allow(dead_code)]
@@ -129,7 +165,7 @@ impl Mixer {
     /// length is a multiple of its (nonzero) channel count. A malformed buffer
     /// would drift across channels when looped.
     pub fn sound_is_well_formed(sound: &Sound) -> bool {
-        sound.channels != 0 && sound.samples.len() % sound.channels as usize == 0
+        sound.channels != 0 && sound.samples.len().is_multiple_of(sound.channels as usize)
     }
 
     pub fn add_sound(&mut self, sound: Sound) -> anyhow::Result<SoundId> {
@@ -164,17 +200,21 @@ impl Mixer {
         Ok(id)
     }
 
-    pub fn play(&mut self, sound_id: SoundId, volume: f32, looping: bool) {
+    pub fn play(&mut self, sound_id: SoundId, volume: f32, looping: bool) -> PlayResult {
         let Some(sound) = self.sounds.get(sound_id) else {
-            return;
+            return PlayResult::InvalidSoundId;
         };
 
         if sound.samples.is_empty() {
-            return;
+            return PlayResult::InvalidSoundId;
         }
 
         if self.voices.len() >= MAX_VOICES {
-            return;
+            // Voice cap reached: drop the request and record it for diagnostics.
+            // This is the only drop case that bumps the counter — an invalid sound
+            // id is a programming error, not voice exhaustion.
+            self.dropped_voices.fetch_add(1, Ordering::Relaxed);
+            return PlayResult::DroppedVoiceLimit;
         }
 
         self.voices.push(Voice {
@@ -183,6 +223,7 @@ impl Mixer {
             volume: sanitize_volume(volume),
             looping,
         });
+        PlayResult::Started
     }
 
     pub fn mix_into(&mut self, out: &mut [f32]) {
@@ -232,6 +273,11 @@ pub struct AudioSystem {
     put_failures: Arc<AtomicU64>,
     reported_failures: AtomicU64,
     command_push_failures: AtomicU64,
+    // Shared with the mixer (owned by the callback). The mixer bumps it when a
+    // play request is dropped at the voice cap; the main thread reports it via
+    // `poll_dropped_voices`.
+    dropped_voices: Arc<AtomicU64>,
+    reported_voice_drops: AtomicU64,
     _stream: AudioStreamWithCallback<MixerCallback>,
 }
 
@@ -248,10 +294,21 @@ impl AudioSystem {
         let mut mixer = Mixer::new();
         mixer.set_master_volume(0.3);
         mixer.set_output_format(channels as u16, sample_rate as u32)?;
-        let blip_sound =
-            mixer.add_sound(sine_sound(660.0, 0.12, sample_rate as u32, channels as u16))?;
-        let music_sound =
-            mixer.add_sound(sine_sound(110.0, 1.0, sample_rate as u32, channels as u16))?;
+        let dropped_voices = mixer.dropped_voices_handle();
+        let blip_sound = mixer.add_sound(sine_sound(
+            660.0,
+            0.12,
+            sample_rate as u32,
+            channels as u16,
+        )?)?;
+        // Music loops, so it must be a seamless (non-decaying, whole-cycle) tone;
+        // a looped one-shot would click at the seam every second.
+        let music_sound = mixer.add_sound(loop_sine_sound(
+            110.0,
+            1.0,
+            sample_rate as u32,
+            channels as u16,
+        )?)?;
         mixer.play(music_sound, 0.08, true);
 
         let commands = Arc::new(ArrayQueue::new(AUDIO_COMMAND_QUEUE_CAPACITY));
@@ -280,6 +337,8 @@ impl AudioSystem {
             put_failures,
             reported_failures: AtomicU64::new(0),
             command_push_failures: AtomicU64::new(0),
+            dropped_voices,
+            reported_voice_drops: AtomicU64::new(0),
             _stream: stream,
         })
     }
@@ -324,6 +383,28 @@ impl AudioSystem {
              the stream may be falling behind",
             total - reported,
         );
+    }
+
+    /// Logs any newly-observed voice-cap drops. Like [`Self::poll_dropped_frames`]
+    /// this runs on the main thread (the mixer only bumps an atomic from the
+    /// realtime callback) and backs off on a power-of-two boundary so a sustained
+    /// flood of dropped SFX cannot flood the log.
+    pub fn poll_dropped_voices(&self) {
+        let total = self.dropped_voices.load(Ordering::Relaxed);
+        let reported = self.reported_voice_drops.load(Ordering::Relaxed);
+        if total <= reported || !crossed_power_of_two(reported, total) {
+            return;
+        }
+        self.reported_voice_drops.store(total, Ordering::Relaxed);
+        log::warn!(
+            "audio dropped {} sound(s) at the {MAX_VOICES}-voice cap ({total} total since start)",
+            total - reported,
+        );
+    }
+
+    #[allow(dead_code)]
+    pub fn dropped_voices(&self) -> u64 {
+        self.dropped_voices.load(Ordering::Relaxed)
     }
 }
 
@@ -406,20 +487,111 @@ fn sanitize_volume(volume: f32) -> f32 {
     }
 }
 
-fn sine_sound(freq: f32, seconds: f32, sample_rate: u32, channels: u16) -> Sound {
+/// Validates the shared parameters of the generated-tone helpers, returning
+/// `(frames, total_samples)` to synthesize (`total_samples = frames * channels`).
+/// Rejects non-finite/non-positive inputs, channel counts and frame counts past
+/// their caps, frequencies above Nyquist, and any request whose interleaved
+/// sample count would exceed [`MAX_GENERATED_SAMPLES`] — so no bad parameter can
+/// allocate an absurd buffer or drive the cycle/phase math non-finite.
+fn generated_tone_frames(
+    freq: f32,
+    seconds: f32,
+    sample_rate: u32,
+    channels: u16,
+) -> anyhow::Result<(usize, usize)> {
+    if !freq.is_finite() || freq <= 0.0 {
+        anyhow::bail!("tone frequency must be finite and positive, got {freq}");
+    }
+    if !seconds.is_finite() || seconds <= 0.0 {
+        anyhow::bail!("tone duration must be finite and positive, got {seconds}");
+    }
+    if sample_rate == 0 {
+        anyhow::bail!("tone sample rate must be nonzero");
+    }
+    if channels == 0 {
+        anyhow::bail!("tone channel count must be nonzero");
+    }
+    if channels > MAX_GENERATED_CHANNELS {
+        anyhow::bail!("tone channel count {channels} exceeds maximum {MAX_GENERATED_CHANNELS}");
+    }
+
+    // Above Nyquist a tone only aliases; rejecting it also bounds `freq`, which
+    // keeps the per-frame phase (and `loop_sine_sound`'s cycle count) finite.
+    let nyquist = sample_rate as f32 * 0.5;
+    if freq > nyquist {
+        anyhow::bail!("tone frequency {freq} exceeds Nyquist {nyquist} for {sample_rate} Hz");
+    }
+
     let frames = (seconds * sample_rate as f32) as usize;
-    let mut samples = Vec::with_capacity(frames * channels as usize);
+    if frames == 0 {
+        anyhow::bail!("tone duration {seconds}s at {sample_rate} Hz yields zero frames");
+    }
+    if frames > MAX_GENERATED_FRAMES {
+        anyhow::bail!(
+            "tone would synthesize {frames} frames, exceeding maximum {MAX_GENERATED_FRAMES}"
+        );
+    }
+
+    let total_samples = frames
+        .checked_mul(channels as usize)
+        .ok_or_else(|| anyhow::anyhow!("tone sample count overflow ({frames} x {channels})"))?;
+    if total_samples > MAX_GENERATED_SAMPLES {
+        anyhow::bail!(
+            "tone would synthesize {total_samples} samples, exceeding maximum {MAX_GENERATED_SAMPLES}"
+        );
+    }
+
+    Ok((frames, total_samples))
+}
+
+/// A one-shot decaying sine tone (full amplitude at the start, fading to silence
+/// at the end). Suitable for transient SFX like the action blip; not suitable for
+/// looping, since the amplitude discontinuity at the loop seam clicks (use
+/// [`loop_sine_sound`] for sustained/looping tones).
+fn sine_sound(freq: f32, seconds: f32, sample_rate: u32, channels: u16) -> anyhow::Result<Sound> {
+    let (frames, total_samples) = generated_tone_frames(freq, seconds, sample_rate, channels)?;
+    let mut samples = Vec::with_capacity(total_samples);
 
     for frame in 0..frames {
         let t = frame as f32 / sample_rate as f32;
-        let envelope = 1.0 - frame as f32 / frames.max(1) as f32;
+        let envelope = 1.0 - frame as f32 / frames as f32;
         let sample = (t * freq * std::f32::consts::TAU).sin() * envelope;
         for _ in 0..channels {
             samples.push(sample);
         }
     }
 
-    Sound::new(samples, channels, sample_rate)
+    Ok(Sound::new(samples, channels, sample_rate))
+}
+
+/// A seamless looping sine tone. The frequency is snapped to the nearest value
+/// that fits a whole number of cycles in the buffer, so the sample *after* the
+/// last one is exactly the first sample again: no value or slope discontinuity at
+/// the loop seam, and no decay envelope. This avoids the periodic click a looped
+/// one-shot ([`sine_sound`]) produces.
+fn loop_sine_sound(
+    freq: f32,
+    seconds: f32,
+    sample_rate: u32,
+    channels: u16,
+) -> anyhow::Result<Sound> {
+    let (frames, total_samples) = generated_tone_frames(freq, seconds, sample_rate, channels)?;
+
+    // Whole-cycle count closest to the requested frequency (at least one), so
+    // sample[frames] == sample[0] and the loop wraps continuously. `freq` is
+    // bounded by Nyquist and `frames` by its cap, so this is always finite.
+    let cycles = (freq * frames as f32 / sample_rate as f32).round().max(1.0);
+    let mut samples = Vec::with_capacity(total_samples);
+
+    for frame in 0..frames {
+        let phase = std::f32::consts::TAU * cycles * frame as f32 / frames as f32;
+        let sample = phase.sin();
+        for _ in 0..channels {
+            samples.push(sample);
+        }
+    }
+
+    Ok(Sound::new(samples, channels, sample_rate))
 }
 
 #[cfg(test)]
@@ -429,7 +601,10 @@ mod tests {
 
     use crossbeam_queue::ArrayQueue;
 
-    use super::{AudioCommand, Mixer, MixerCallback, Sound, crossed_power_of_two, sanitize_volume};
+    use super::{
+        AudioCommand, Mixer, MixerCallback, PlayResult, Sound, crossed_power_of_two,
+        sanitize_volume,
+    };
 
     #[test]
     fn crossed_power_of_two_reports_each_boundary_once() {
@@ -612,7 +787,7 @@ mod tests {
         mixer.set_master_volume(0.3);
 
         let music_sound = mixer
-            .add_sound(super::sine_sound(110.0, 1.0, sample_rate, channels))
+            .add_sound(super::loop_sine_sound(110.0, 1.0, sample_rate, channels).unwrap())
             .unwrap();
         mixer.play(music_sound, 0.08, true);
 
@@ -659,14 +834,146 @@ mod tests {
         let sound_id = mixer.add_sound(Sound::new(vec![0.25], 1, 48_000)).unwrap();
 
         for _ in 0..super::MAX_VOICES {
-            mixer.play(sound_id, 1.0, true);
+            assert_eq!(mixer.play(sound_id, 1.0, true), PlayResult::Started);
         }
 
         assert_eq!(mixer.voice_count(), super::MAX_VOICES);
 
-        mixer.play(sound_id, 1.0, true);
+        assert_eq!(
+            mixer.play(sound_id, 1.0, true),
+            PlayResult::DroppedVoiceLimit
+        );
 
         assert_eq!(mixer.voice_count(), super::MAX_VOICES);
+    }
+
+    #[test]
+    fn voice_cap_drop_increments_counter() {
+        let mut mixer = Mixer::new();
+        let sound_id = mixer.add_sound(Sound::new(vec![0.25], 1, 48_000)).unwrap();
+
+        for _ in 0..super::MAX_VOICES {
+            mixer.play(sound_id, 1.0, true);
+        }
+        assert_eq!(mixer.dropped_voice_count(), 0);
+
+        mixer.play(sound_id, 1.0, true);
+        mixer.play(sound_id, 1.0, true);
+
+        assert_eq!(mixer.dropped_voice_count(), 2);
+    }
+
+    #[test]
+    fn invalid_sound_id_does_not_increment_voice_cap_counter() {
+        let mut mixer = Mixer::new();
+
+        assert_eq!(mixer.play(42, 1.0, false), PlayResult::InvalidSoundId);
+
+        assert_eq!(mixer.dropped_voice_count(), 0);
+    }
+
+    #[test]
+    fn counter_can_be_read_from_shared_handle() {
+        // Mirrors how `AudioSystem` reads the mixer's counter from the main thread
+        // while the callback owns the `Mixer`.
+        let mut mixer = Mixer::new();
+        let handle = mixer.dropped_voices_handle();
+        let sound_id = mixer.add_sound(Sound::new(vec![0.25], 1, 48_000)).unwrap();
+
+        for _ in 0..(super::MAX_VOICES + 3) {
+            mixer.play(sound_id, 1.0, true);
+        }
+
+        assert_eq!(handle.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn sine_sound_rejects_nan_frequency() {
+        assert!(super::sine_sound(f32::NAN, 0.1, 48_000, 1).is_err());
+        assert!(super::sine_sound(f32::INFINITY, 0.1, 48_000, 1).is_err());
+        assert!(super::sine_sound(-440.0, 0.1, 48_000, 1).is_err());
+    }
+
+    #[test]
+    fn sine_sound_rejects_zero_duration() {
+        assert!(super::sine_sound(440.0, 0.0, 48_000, 1).is_err());
+        assert!(super::sine_sound(440.0, -1.0, 48_000, 1).is_err());
+    }
+
+    #[test]
+    fn sine_sound_rejects_excessive_duration() {
+        // 48 kHz for an hour is well past MAX_GENERATED_FRAMES.
+        assert!(super::sine_sound(440.0, 3600.0, 48_000, 1).is_err());
+    }
+
+    #[test]
+    fn sine_sound_rejects_zero_rate_or_channels() {
+        assert!(super::sine_sound(440.0, 0.1, 0, 1).is_err());
+        assert!(super::sine_sound(440.0, 0.1, 48_000, 0).is_err());
+    }
+
+    #[test]
+    fn sine_sound_rejects_excessive_channels() {
+        // A huge channel count must be rejected before allocating the buffer.
+        assert!(super::sine_sound(440.0, 0.1, 48_000, u16::MAX).is_err());
+        assert!(super::loop_sine_sound(440.0, 0.1, 48_000, u16::MAX).is_err());
+        assert!(super::sine_sound(440.0, 0.1, 48_000, super::MAX_GENERATED_CHANNELS).is_ok());
+    }
+
+    #[test]
+    fn sine_sound_rejects_frequency_above_nyquist() {
+        // Above Nyquist (sample_rate / 2) the tone only aliases; reject it (and an
+        // extreme finite frequency that would otherwise overflow the phase math).
+        assert!(super::sine_sound(30_000.0, 0.1, 48_000, 1).is_err());
+        assert!(super::loop_sine_sound(f32::MAX, 0.1, 48_000, 1).is_err());
+        assert!(super::sine_sound(24_000.0, 0.1, 48_000, 1).is_ok());
+    }
+
+    #[test]
+    fn loop_sine_sound_samples_are_finite() {
+        let sound = super::loop_sine_sound(110.0, 1.0, 48_000, 2).unwrap();
+        assert!(sound.samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn sine_sound_accepts_valid_input() {
+        let sound = super::sine_sound(440.0, 0.1, 48_000, 2).unwrap();
+        let frames = (0.1f32 * 48_000.0) as usize;
+        assert_eq!(sound.samples.len(), frames * 2);
+        assert!(sound.samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn one_shot_sound_still_decays() {
+        // The one-shot envelope means the late half of the tone is quieter than
+        // the early half.
+        let sound = super::sine_sound(440.0, 0.2, 48_000, 1).unwrap();
+        let half = sound.samples.len() / 2;
+        let peak = |s: &[f32]| s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let early = peak(&sound.samples[..half]);
+        let late = peak(&sound.samples[half..]);
+        assert!(late < early, "expected decay: early={early}, late={late}");
+    }
+
+    #[test]
+    fn loop_sound_start_and_end_are_continuous() {
+        // A seamless loop must have no jump at the wrap seam: the step from the
+        // last sample back to the first must be no larger than the largest step
+        // between adjacent interior samples.
+        let sound = super::loop_sine_sound(110.0, 1.0, 48_000, 1).unwrap();
+        let s = &sound.samples;
+        assert!(s.len() > 2);
+
+        let max_interior_step = s
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        let wrap_step = (s[0] - s[s.len() - 1]).abs();
+
+        assert!(
+            wrap_step <= max_interior_step * 1.5 + 1e-6,
+            "loop seam discontinuity: wrap={wrap_step}, max_interior={max_interior_step}"
+        );
     }
 
     #[test]

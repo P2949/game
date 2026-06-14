@@ -310,11 +310,12 @@ impl VulkanContext {
         }
 
         let min_interval = recreate_rate_limit_for(reason);
-        if let Some(last_recreate) = self.last_swapchain_recreate
-            && min_interval > Duration::ZERO
-            && Instant::now().duration_since(last_recreate) < min_interval
-        {
-            return Ok(false);
+        if let Some(last_recreate) = self.last_swapchain_recreate {
+            if min_interval > Duration::ZERO
+                && Instant::now().duration_since(last_recreate) < min_interval
+            {
+                return Ok(false);
+            }
         }
 
         Ok(true)
@@ -579,12 +580,15 @@ impl VulkanContext {
                 },
             ];
 
+            let swapchain_image = self.swapchain.image(image_index_usize)?;
+            let swapchain_image_view = self.swapchain_image_views.view(image_index_usize)?;
+
             let record_start = Instant::now();
             if let Err(err) = record_sprite_commands(
                 &device,
                 command_buffer,
-                self.swapchain.image(image_index_usize),
-                self.swapchain_image_views.view(image_index_usize),
+                swapchain_image,
+                swapchain_image_view,
                 swapchain_extent,
                 self.sprite_pipeline.layout(),
                 self.sprite_pipeline.pipeline(),

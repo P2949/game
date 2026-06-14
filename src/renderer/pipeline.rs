@@ -190,7 +190,12 @@ fn create_sprite_graphics_pipeline(
     };
 
     let pipeline = match pipeline_result {
-        Ok(pipelines) => pipelines[0],
+        Ok(pipelines) => pipelines.into_iter().next().ok_or_else(|| {
+            // We requested exactly one pipeline, so a conformant driver returns
+            // exactly one. Guard the empty case rather than indexing `[0]` so a
+            // misbehaving driver produces an error instead of a panic.
+            anyhow::anyhow!("vkCreateGraphicsPipelines returned no pipelines")
+        })?,
         Err((pipelines, err)) => {
             unsafe {
                 for pipeline in pipelines {

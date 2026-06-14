@@ -1,5 +1,5 @@
 use crate::game::camera::Camera2D;
-use crate::game::collision::{Aabb, move_with_collision, validate_spawn};
+use crate::game::collision::{Aabb, depenetrate, move_with_swept_collision, validate_spawn};
 use crate::game::world::Entity;
 use crate::platform::input::{FrameActions, InputState};
 use crate::renderer::{self, DrawCommands, SpriteDraw};
@@ -62,13 +62,10 @@ impl Game {
         // push simulation state (effect clock, physics) into NaN/garbage.
         let dt = if dt.is_finite() && dt > 0.0 { dt } else { 0.0 };
 
-        // Wrap the effect clock at TAU so it stays bounded over long sessions.
-        // The shake waveform uses sin(t * 71) / cos(t * 53); since 71 and 53 are
-        // integers, advancing t by TAU is a whole number of cycles for both, so
-        // wrapping is seamless while keeping f32 precision high indefinitely.
-        self.effect_time = (self.effect_time + dt).rem_euclid(std::f32::consts::TAU);
-        self.shake.update(dt);
-
+        // Cosmetic effects (the effect clock and camera shake) advance only while
+        // actively playing — see `update_playing`. Pause, the menu, and death all
+        // freeze them (roadmap 5.1, option A: pause freezes simulation *and*
+        // effects), so resuming continues exactly where it left off.
         match self.mode {
             GameMode::MainMenu => {
                 if actions.action_pressed {
@@ -110,10 +107,17 @@ impl Game {
     }
 
     fn update_playing(&mut self, dt: f32, input: InputState) {
+        // Wrap the effect clock at TAU so it stays bounded over long sessions.
+        // The shake waveform uses sin(t * 71) / cos(t * 53); since 71 and 53 are
+        // integers, advancing t by TAU is a whole number of cycles for both, so
+        // wrapping is seamless while keeping f32 precision high indefinitely.
+        self.effect_time = (self.effect_time + dt).rem_euclid(std::f32::consts::TAU);
+        self.shake.update(dt);
+
         let speed = 220.0;
         let desired_vel = input.movement() * speed;
         self.player.set_velocity(desired_vel);
-        move_with_collision(&mut self.player, &self.solids, dt);
+        move_with_swept_collision(&mut self.player, &self.solids, dt);
         if desired_vel.length_squared() > 0.0
             && self.player.velocity().length_squared() < desired_vel.length_squared()
         {
@@ -373,9 +377,17 @@ impl Default for FrameGraph {
 }
 
 fn new_world() -> (Camera2D, Entity, Vec<Aabb>) {
-    let player = Entity::new_player(glam::vec2(420.0, 120.0));
-    let camera = Camera2D::new(player.position() + player.size() * 0.5, 1.0);
+    let mut player = Entity::new_player(glam::vec2(420.0, 120.0));
     let solids = test_room_solids();
+
+    // Nudge the player out of any solid it spawns inside. This is a no-op for the
+    // hand-authored room (the spawn is clear), but keeps spawns robust once levels
+    // are data-driven and a spawn point could land embedded.
+    if let Some(push) = depenetrate(player.aabb(), &solids) {
+        player.set_position(player.position() + push);
+    }
+
+    let camera = Camera2D::new(player.position() + player.size() * 0.5, 1.0);
     validate_spawn(&player, &solids).expect("test room player spawn must not overlap solids");
 
     (camera, player, solids)
@@ -462,6 +474,70 @@ mod tests {
             },
         );
         assert_eq!(game.mode(), GameMode::Playing);
+    }
+
+    #[test]
+    fn playing_advances_effect_time() {
+        let mut game = playing_game();
+        assert_eq!(game.effect_time, 0.0);
+
+        game.update(DT, InputState::default(), FrameActions::default());
+
+        assert!(
+            game.effect_time > 0.0,
+            "effect clock should advance while playing"
+        );
+    }
+
+    #[test]
+    fn pause_freezes_effect_time() {
+        let mut game = playing_game();
+        game.update(DT, InputState::default(), FrameActions::default());
+        let before_pause = game.effect_time;
+        assert!(before_pause > 0.0);
+
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                pause_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode(), GameMode::Paused);
+
+        for _ in 0..5 {
+            game.update(DT, InputState::default(), FrameActions::default());
+        }
+
+        assert_eq!(
+            game.effect_time, before_pause,
+            "pause must freeze the effect clock"
+        );
+    }
+
+    #[test]
+    fn pause_freezes_shake_decay() {
+        let mut game = playing_game();
+        game.shake.add(0.8);
+
+        game.update(
+            DT,
+            InputState::default(),
+            FrameActions {
+                pause_pressed: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(game.mode(), GameMode::Paused);
+        let trauma = game.shake.trauma();
+        assert!(trauma > 0.0);
+
+        for _ in 0..10 {
+            game.update(DT, InputState::default(), FrameActions::default());
+        }
+
+        assert_eq!(game.shake.trauma(), trauma, "pause must freeze shake decay");
     }
 
     #[test]

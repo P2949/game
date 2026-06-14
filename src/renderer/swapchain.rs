@@ -284,8 +284,14 @@ impl Swapchain {
         &self.images
     }
 
-    pub fn image(&self, index: usize) -> vk::Image {
-        self.images[index]
+    /// Returns the swapchain image at `index`. Vulkan only hands back acquired
+    /// indices that are in range, but the whole render path is `Result`-based, so
+    /// an out-of-range index reports an error instead of panicking on a raw index.
+    pub fn image(&self, index: usize) -> anyhow::Result<vk::Image> {
+        self.images
+            .get(index)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("swapchain image index {index} out of range"))
     }
 
     pub fn image_count(&self) -> usize {
@@ -359,8 +365,13 @@ impl SwapchainImageViews {
         })
     }
 
-    pub fn view(&self, index: usize) -> vk::ImageView {
-        self.views[index]
+    /// Returns the image view at `index`, erroring (rather than panicking on a
+    /// raw index) when it is out of range. See [`Swapchain::image`].
+    pub fn view(&self, index: usize) -> anyhow::Result<vk::ImageView> {
+        self.views
+            .get(index)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("swapchain image view index {index} out of range"))
     }
 
     pub fn destroy(&mut self) {

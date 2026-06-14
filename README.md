@@ -3,6 +3,22 @@
 A small Rust game prototype built directly on SDL3 (window, input, audio) and a
 hand-written Vulkan renderer via [`ash`](https://crates.io/crates/ash).
 
+## Project status
+
+This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
+
+- explicit, RAII-driven Vulkan renderer lifetime handling
+- 2D sprite rendering with layered, texture-batched draws
+- fixed-timestep gameplay with render interpolation
+- swept-AABB collision with wall sliding
+- simple generated audio through a lock-free mixer
+
+It is **not** yet:
+
+- a full engine
+- a finished game
+- a general asset pipeline
+
 ## Features
 
 - SDL3 window, keyboard input, and a lock-free audio mixer
@@ -24,9 +40,15 @@ hand-written Vulkan renderer via [`ash`](https://crates.io/crates/ash).
 ## Build and run
 
 ```bash
-cargo run            # debug build (validation layers enabled)
-cargo run --release  # optimized build (LTO, single codegen unit)
+cargo run                                      # debug build (validation layers enabled)
+GAME_ASSET_DIR=assets cargo run --release      # optimized build (LTO, single codegen unit)
 ```
+
+A debug `cargo run` from a source checkout finds `assets/` through the
+source-tree fallback, but a `--release` build does **not** use that fallback (see
+the discovery order below), so point it at the asset directory explicitly with
+`GAME_ASSET_DIR=assets`. A packaged build instead ships `assets/` next to the
+binary (see [Packaging](#packaging)).
 
 Debug builds require Vulkan validation layers by default. On systems without
 the layer installed, disable that requirement explicitly:

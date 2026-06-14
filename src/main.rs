@@ -78,16 +78,19 @@ fn main() -> anyhow::Result<()> {
             if frame_actions.action_pressed {
                 audio.play_blip();
             }
-            // Surface any audio-output drops from the realtime callback on this
-            // (main) thread, where logging is safe.
+            // Surface any audio-output drops and voice-cap drops from the realtime
+            // callback on this (main) thread, where logging is safe.
             audio.poll_dropped_frames();
+            audio.poll_dropped_voices();
         }
         pending_actions.merge(frame_actions);
 
         timestep.begin_frame();
         let mut steps = 0;
-        while timestep.step_ready() && steps < platform::time::FixedTimestep::MAX_STEPS_PER_FRAME {
-            let dt = timestep.consume_step();
+        while steps < platform::time::FixedTimestep::MAX_STEPS_PER_FRAME {
+            let Some(dt) = timestep.consume_step() else {
+                break;
+            };
             // Edge-triggered actions are consumed by the first simulation step
             // only, so a key press is never applied twice in one render frame.
             let actions = if steps == 0 {
@@ -116,11 +119,11 @@ fn main() -> anyhow::Result<()> {
         if vk.render(&platform.window, game.camera())? == RenderOutcome::Presented {
             rendered_frames += 1;
         }
-        if let Some(limit) = smoke_frames
-            && rendered_frames >= limit
-        {
-            log::info!("GAME_SMOKE_FRAMES={limit} reached; exiting cleanly");
-            platform.should_quit = true;
+        if let Some(limit) = smoke_frames {
+            if rendered_frames >= limit {
+                log::info!("GAME_SMOKE_FRAMES={limit} reached; exiting cleanly");
+                platform.should_quit = true;
+            }
         }
     }
 

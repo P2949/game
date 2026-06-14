@@ -91,6 +91,22 @@ impl Entity {
         }
     }
 
+    /// Sets the position, returning an error (instead of silently keeping the old
+    /// position the way [`Entity::set_position`] does) when `pos` is non-finite or
+    /// would make the entity's AABB invalid. Prefer this on runtime/data-driven
+    /// paths — level loading, scripted teleports — where an invalid position is a
+    /// real failure that should be surfaced rather than swallowed.
+    #[allow(dead_code)]
+    pub fn try_set_position(&mut self, pos: glam::Vec2) -> anyhow::Result<()> {
+        if !pos.is_finite() {
+            anyhow::bail!("entity position must be finite, got {pos:?}");
+        }
+        crate::game::collision::Aabb::try_from_pos_size(pos, self.size)
+            .map_err(|err| anyhow::anyhow!("invalid entity position {pos:?}: {err}"))?;
+        self.pos = pos;
+        Ok(())
+    }
+
     pub fn set_velocity(&mut self, vel: glam::Vec2) {
         self.vel = sanitize_vec2(vel, glam::Vec2::ZERO);
     }
@@ -218,6 +234,40 @@ mod tests {
         entity.set_position(glam::Vec2::splat(f32::MAX));
 
         assert_eq!(entity.position(), glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn try_set_position_rejects_nan() {
+        let mut entity = Entity::new_player(glam::vec2(2.0, 3.0));
+        assert!(entity.try_set_position(glam::vec2(f32::NAN, 0.0)).is_err());
+        assert!(
+            entity
+                .try_set_position(glam::vec2(0.0, f32::INFINITY))
+                .is_err()
+        );
+        // Position is unchanged after a rejected update.
+        assert_eq!(entity.position(), glam::vec2(2.0, 3.0));
+    }
+
+    #[test]
+    fn try_set_position_rejects_invalid_aabb() {
+        let mut entity = Entity::new_player(glam::Vec2::ZERO);
+        // A position at f32::MAX would overflow the AABB max corner.
+        assert!(
+            entity
+                .try_set_position(glam::Vec2::splat(f32::MAX))
+                .is_err()
+        );
+        assert_eq!(entity.position(), glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn try_set_position_updates_valid_position() {
+        let mut entity = Entity::new_player(glam::Vec2::ZERO);
+        entity
+            .try_set_position(glam::vec2(10.0, 20.0))
+            .expect("valid position must be accepted");
+        assert_eq!(entity.position(), glam::vec2(10.0, 20.0));
     }
 
     #[test]

@@ -25,16 +25,15 @@ impl TextureColorSpace {
     }
 }
 
-/// Validates RGBA8 texture inputs before any Vulkan image is created. Rejects
-/// zero extents, dimension arithmetic that would overflow `usize`, decoded
-/// buffers that exceed the byte cap, and pixel buffers whose length does not
-/// match `width * height * 4`. Returns the expected byte length on success.
-fn validate_rgba8_texture(
-    name: &str,
-    width: u32,
-    height: u32,
-    pixels_len: usize,
-) -> anyhow::Result<usize> {
+/// Validates a texture *extent* independent of any decoded pixel buffer. Rejects
+/// zero extents, oversized dimensions, and `width * height * 4` arithmetic that
+/// would overflow `usize` or exceed the byte cap. Returns the expected RGBA8 byte
+/// length on success.
+///
+/// This is the pre-decode guard: it can be run against image-header dimensions
+/// before the full pixel buffer is allocated, so a malformed or hostile header
+/// cannot drive a huge decode allocation.
+fn validate_texture_dimensions(name: &str, width: u32, height: u32) -> anyhow::Result<usize> {
     if width == 0 || height == 0 {
         anyhow::bail!("texture '{name}' has zero extent ({width}x{height})");
     }
@@ -56,6 +55,21 @@ fn validate_rgba8_texture(
             "texture '{name}' requires {expected_len} bytes, exceeding maximum {MAX_TEXTURE_BYTES}"
         );
     }
+
+    Ok(expected_len)
+}
+
+/// Validates RGBA8 texture inputs before any Vulkan image is created. Runs the
+/// pre-decode [`validate_texture_dimensions`] checks, then additionally requires
+/// the decoded `pixels_len` to match `width * height * 4`. Returns the expected
+/// byte length on success.
+fn validate_rgba8_texture(
+    name: &str,
+    width: u32,
+    height: u32,
+    pixels_len: usize,
+) -> anyhow::Result<usize> {
+    let expected_len = validate_texture_dimensions(name, width, height)?;
 
     if pixels_len != expected_len {
         anyhow::bail!("texture '{name}' has {pixels_len} bytes, expected {expected_len}");
@@ -87,8 +101,20 @@ impl Texture {
         name: &str,
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        // Bundled assets are trusted. Before accepting user/mod textures, inspect
-        // dimensions or configure decoder limits before full RGBA allocation.
+        // Pre-decode guard: read just the image header and validate its extent
+        // before decoding pixels, so a malformed/hostile header cannot drive a
+        // huge RGBA allocation. Bundled assets are trusted today, but this keeps
+        // the path safe for future user/mod textures. `validate_rgba8_texture`
+        // still re-checks the decoded buffer length afterward.
+        let reader = image::ImageReader::open(path)
+            .with_context(|| format!("failed to open texture {}", path.display()))?
+            .with_guessed_format()
+            .with_context(|| format!("failed to read texture header {}", path.display()))?;
+        let (header_width, header_height) = reader
+            .into_dimensions()
+            .with_context(|| format!("failed to read texture dimensions {}", path.display()))?;
+        validate_texture_dimensions(name, header_width, header_height)?;
+
         let rgba = image::open(path)
             .with_context(|| format!("failed to open texture {}", path.display()))?
             .to_rgba8();
@@ -441,7 +467,32 @@ pub unsafe fn transition_image(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_rgba8_texture;
+    use super::{validate_rgba8_texture, validate_texture_dimensions};
+
+    #[test]
+    fn rejects_zero_width_metadata() {
+        assert!(validate_texture_dimensions("t", 0, 1).is_err());
+        assert!(validate_texture_dimensions("t", 1, 0).is_err());
+        assert!(validate_texture_dimensions("t", 0, 0).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_dimensions_before_decode() {
+        assert!(validate_texture_dimensions("t", 16_385, 1).is_err());
+        assert!(validate_texture_dimensions("t", 1, 16_385).is_err());
+        // Huge metadata is rejected (here by the dimension cap) before any
+        // allocation or decode.
+        assert!(validate_texture_dimensions("t", u32::MAX, u32::MAX).is_err());
+        // Within the dimension cap but past the byte cap.
+        assert!(validate_texture_dimensions("t", 16_384, 16_384).is_err());
+    }
+
+    #[test]
+    fn accepts_valid_small_texture() {
+        assert_eq!(validate_texture_dimensions("t", 1, 1).unwrap(), 4);
+        assert_eq!(validate_texture_dimensions("t", 2, 2).unwrap(), 16);
+        assert_eq!(validate_texture_dimensions("t", 4, 3).unwrap(), 48);
+    }
 
     #[test]
     fn zero_extent_is_rejected() {

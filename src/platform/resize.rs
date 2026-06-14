@@ -63,10 +63,10 @@ impl ResizePolicy {
             return false;
         }
 
-        if let Some(last_recreate) = self.last_recreate
-            && now.duration_since(last_recreate) < self.min_recreate_interval
-        {
-            return false;
+        if let Some(last_recreate) = self.last_recreate {
+            if now.duration_since(last_recreate) < self.min_recreate_interval {
+                return false;
+            }
         }
 
         true

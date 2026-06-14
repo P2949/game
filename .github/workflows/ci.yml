@@ -143,3 +143,65 @@ jobs:
           RUST_LOG: info
           SDL_VIDEODRIVER: x11
         run: timeout -k 5s 120s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --locked --features ci-build-sdl3
+      # Release smoke test: CI builds release mode but, without running it, an
+      # asset-path regression (release does not use the debug source-tree
+      # fallback) could survive. Launch the release binary with assets supplied
+      # explicitly via GAME_ASSET_DIR, exactly as the README documents.
+      - name: Render 120 frames in release mode and exit cleanly
+        env:
+          GAME_ASSET_DIR: assets
+          GAME_SMOKE_FRAMES: "120"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --release --locked --features ci-build-sdl3
+
+  # Minimum-supported-Rust-version gate. Cargo.toml declares rust-version = 1.87
+  # (the floor is set by a dependency: sdl3 0.18.4 uses `is_multiple_of`, stable
+  # since 1.87). The stable jobs above can silently rely on newer features, so
+  # this job pins 1.87.0 and type-checks the crate to prove the declared MSRV is
+  # real. Kept to `cargo check` (not full test/clippy) to bound build time.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.87.0
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            glslc \
+            libasound2-dev \
+            libdbus-1-dev \
+            libegl1-mesa-dev \
+            libudev-dev \
+            libvulkan-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            libxss-dev \
+            libxtst-dev \
+            ninja-build \
+            pkg-config \
+            vulkan-validationlayers \
+            wayland-protocols
+      - name: Check MSRV (1.87.0)
+        run: cargo check --locked --features ci-build-sdl3

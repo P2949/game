@@ -35,9 +35,18 @@ impl FixedTimestep {
         self.accumulator >= self.dt
     }
 
-    pub fn consume_step(&mut self) -> f32 {
+    /// Consumes one fixed step if (and only if) one is ready, returning its `dt`.
+    ///
+    /// Returning `Option` makes the type safe to call unconditionally: the
+    /// accumulator can never be driven negative by a `consume_step` that races
+    /// ahead of `step_ready`, so misuse is unrepresentable rather than merely
+    /// discouraged.
+    pub fn consume_step(&mut self) -> Option<f32> {
+        if !self.step_ready() {
+            return None;
+        }
         self.accumulator -= self.dt;
-        self.dt as f32
+        Some(self.dt as f32)
     }
 
     pub fn discard_lag(&mut self) {
@@ -99,8 +108,7 @@ mod tests {
         let mut ts = step(120.0, dt * 3.5);
 
         let mut steps = 0;
-        while ts.step_ready() {
-            let consumed = ts.consume_step();
+        while let Some(consumed) = ts.consume_step() {
             assert!((consumed - dt as f32).abs() < 1e-6);
             steps += 1;
         }
@@ -109,6 +117,36 @@ mod tests {
         // Just under one step of lag remains.
         assert!(ts.accumulator < dt);
         assert!((ts.accumulator - dt * 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn consume_step_returns_none_when_not_ready() {
+        let dt = 1.0 / 120.0;
+        let mut ts = step(120.0, dt * 0.5);
+        assert!(!ts.step_ready());
+        assert_eq!(ts.consume_step(), None);
+        // A rejected consume must not move the accumulator.
+        assert!((ts.accumulator - dt * 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn consume_step_returns_dt_when_ready() {
+        let dt = 1.0 / 120.0;
+        let mut ts = step(120.0, dt * 1.5);
+        let consumed = ts.consume_step().expect("a step is ready");
+        assert!((consumed - dt as f32).abs() < 1e-6);
+        assert!((ts.accumulator - dt * 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn consume_step_never_makes_accumulator_negative() {
+        let dt = 1.0 / 120.0;
+        let mut ts = step(120.0, dt * 2.0);
+        // Drain past the point a naive unconditional subtract would go negative.
+        for _ in 0..10 {
+            ts.consume_step();
+            assert!(ts.accumulator >= 0.0, "accumulator went negative");
+        }
     }
 
     #[test]

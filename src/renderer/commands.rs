@@ -66,14 +66,13 @@ pub fn upload_sprite_vertices(
     };
 
     if should_recreate {
-        if let Some(old_buffer) = buffer_slot.take() {
-            unsafe {
-                old_buffer.destroy(device, allocator);
-            }
-        }
-
         let capacity = sprite_vertex_buffer_capacity(required_bytes)?;
-        let buffer = buffer::Buffer::new(
+        // Allocate the replacement before releasing the old buffer. If allocation
+        // fails (`?`), `buffer_slot` still owns the previous buffer, so a transient
+        // out-of-memory condition costs one frame rather than the whole dynamic
+        // buffer. Only once `Buffer::new` succeeds do we swap it in and destroy the
+        // old one.
+        let new_buffer = buffer::Buffer::new(
             device,
             allocator,
             capacity,
@@ -81,7 +80,11 @@ pub fn upload_sprite_vertices(
             MemoryLocation::CpuToGpu,
             "dynamic sprite vertex buffer",
         )?;
-        *buffer_slot = Some(buffer);
+        if let Some(old_buffer) = buffer_slot.replace(new_buffer) {
+            unsafe {
+                old_buffer.destroy(device, allocator);
+            }
+        }
     }
 
     let buffer = buffer_slot
