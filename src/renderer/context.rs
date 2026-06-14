@@ -16,8 +16,8 @@ use crate::renderer::sprite_batch::{SpriteBatch, SpriteBatchRange};
 use crate::renderer::texture_registry::{TextureRegistry, TextureRegistryGuard};
 use crate::renderer::vertex::SpriteVertex;
 use crate::renderer::{
-    DrawCommands, FONT_TEXTURE_ID, SpriteDraw, TEST_TEXTURE_ID, assets, buffer, device, frame,
-    instance, pipeline, swapchain, text, texture,
+    DrawCommands, SpriteDraw, assets, buffer, device, frame, instance, pipeline, swapchain, text,
+    texture,
 };
 
 // Rate-limit swapchain recreations as defense against a driver that reports
@@ -28,21 +28,24 @@ const MIN_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
 const FRAME_TIMING_LOG_INTERVAL: Duration = Duration::from_secs(1);
 const UI_TEXT_LAYER: i16 = 1000;
 
+// All fields are private. The renderer's careful Vulkan destruction order (see
+// `Drop` below and `docs/renderer-lifetime.md`) depends on no outside code
+// mutating or replacing these; the public surface is `new`, `render`,
+// `request_swapchain_recreate`, and the `DrawCommands` trait.
 pub struct VulkanContext {
     // Declared before the instance so it drops first once Surface becomes RAII.
-    pub surface: crate::renderer::surface::Surface,
+    surface: crate::renderer::surface::Surface,
     // Keep the Vulkan loader/instance/debug messenger alive for objects created
     // from them. This RAII owner must remain intact during construction.
-    pub instance: instance::VulkanInstance,
+    instance: instance::VulkanInstance,
     #[allow(dead_code)]
-    pub physical_device: vk::PhysicalDevice,
-    #[allow(dead_code)]
-    pub queue_families: device::QueueFamilies,
-    pub logical_device: Option<device::LogicalDevice>,
-    pub allocator: Option<gpu_allocator::vulkan::Allocator>,
-    pub dynamic_sprite_buffers: Vec<Option<buffer::Buffer>>,
-    pub world_sprite_batch: SpriteBatch,
-    pub ui_sprite_batch: SpriteBatch,
+    physical_device: vk::PhysicalDevice,
+    queue_families: device::QueueFamilies,
+    logical_device: Option<device::LogicalDevice>,
+    allocator: Option<gpu_allocator::vulkan::Allocator>,
+    dynamic_sprite_buffers: Vec<Option<buffer::Buffer>>,
+    world_sprite_batch: SpriteBatch,
+    ui_sprite_batch: SpriteBatch,
     // Reused scratch buffers for sprite geometry assembly. Kept on the context
     // so steady-state rendering performs no per-frame heap allocation, even as
     // scene complexity grows; capacity only ever grows to the high-water mark.
@@ -50,7 +53,7 @@ pub struct VulkanContext {
     scratch_batch_ranges: Vec<SpriteBatchRange>,
     world_draw_ranges: Vec<RenderSpriteRange>,
     ui_draw_ranges: Vec<RenderSpriteRange>,
-    pub font_atlas: text::FontAtlas,
+    font_atlas: text::FontAtlas,
     // Device-child handles owned via RAII wrappers. They are `Option`/`Vec` so
     // `Drop` can release them (while the device is still alive) before the
     // logical device itself is destroyed. See `owned.rs`.
@@ -60,12 +63,12 @@ pub struct VulkanContext {
     texture_registry: TextureRegistry,
     upload_command_pool: Option<OwnedCommandPool>,
     upload_fence: Option<OwnedFence>,
-    pub swapchain: swapchain::Swapchain,
-    pub swapchain_image_views: swapchain::SwapchainImageViews,
-    pub sprite_pipeline: pipeline::GraphicsPipeline,
+    swapchain: swapchain::Swapchain,
+    swapchain_image_views: swapchain::SwapchainImageViews,
+    sprite_pipeline: pipeline::GraphicsPipeline,
     image_render_finished: Vec<OwnedSemaphore>,
     frames: Vec<frame::FrameData>,
-    pub current_frame: usize,
+    current_frame: usize,
     swapchain_recreate_request: Option<SwapchainRecreateReason>,
     last_swapchain_recreate: Option<Instant>,
     last_frame_timing_log: Instant,
@@ -104,47 +107,26 @@ impl VulkanContext {
             logical_device.device.clone(),
             selected_device.physical_device,
         )?;
-        let assets::RendererAssets {
-            test_texture,
-            font_texture,
-            font_atlas,
-        } = {
-            let mut texture_upload = texture::TextureUpload {
-                device: &logical_device.device,
-                allocator: &mut allocator,
-                queue: logical_device.graphics_queue,
-                upload_pool: upload_command_pool.handle(),
-                upload_fence: upload_fence.handle(),
-            };
-            assets::RendererAssets::load(&mut texture_upload)?
-        };
         let texture_descriptor_set_layout = OwnedDescriptorSetLayout::from_handle(
             &logical_device.device,
             texture::create_texture_descriptor_set_layout(&logical_device.device)?,
         );
-        // Register the built-in textures in the order their ids are defined, so
+        // The guard owns every registered texture (and its descriptor pool) for
+        // the remainder of construction. It is intentionally NOT `finish()`ed
+        // here: it is kept alive across swapchain/pipeline/frame creation below so
+        // that any `?` failure in those still-fallible steps drops the guard,
+        // which destroys the registered textures while the device/allocator are
+        // alive. `load_builtin_textures` registers the built-ins in id order, so
         // `TEST_TEXTURE_ID` / `FONT_TEXTURE_ID` keep resolving to the right entry.
         let mut texture_registry_guard =
             TextureRegistryGuard::new(&logical_device.device, &mut allocator);
-        let test_id = texture_registry_guard.register_texture(
+        let font_atlas = assets::load_builtin_textures(
+            &mut texture_registry_guard,
             texture_descriptor_set_layout.handle(),
-            test_texture,
-            "test texture",
+            logical_device.graphics_queue,
+            upload_command_pool.handle(),
+            upload_fence.handle(),
         )?;
-        let font_id = texture_registry_guard.register_texture(
-            texture_descriptor_set_layout.handle(),
-            font_texture,
-            "font atlas",
-        )?;
-        assert_eq!(
-            test_id, TEST_TEXTURE_ID,
-            "built-in test texture must keep its stable TextureId"
-        );
-        assert_eq!(
-            font_id, FONT_TEXTURE_ID,
-            "built-in font texture must keep its stable TextureId"
-        );
-        let texture_registry = texture_registry_guard.finish();
         let swapchain = swapchain::Swapchain::new(
             instance.handle(),
             &logical_device.device,
@@ -179,6 +161,11 @@ impl VulkanContext {
             })
             .collect::<anyhow::Result<_>>()?;
         let dynamic_sprite_buffers = (0..frame::MAX_FRAMES_IN_FLIGHT).map(|_| None).collect();
+
+        // Every fallible construction step that could leak the registry has now
+        // succeeded. Take the registry out of the guard (releasing its mutable
+        // borrow of the allocator) so both can move into the context.
+        let texture_registry = texture_registry_guard.finish();
 
         Ok(Self {
             surface,
@@ -288,7 +275,7 @@ impl VulkanContext {
         Ok(true)
     }
 
-    pub fn recreate_swapchain(&mut self, window: &sdl3::video::Window) -> anyhow::Result<()> {
+    fn recreate_swapchain(&mut self, window: &sdl3::video::Window) -> anyhow::Result<()> {
         let recreate_start = Instant::now();
         let (width, height) = window.size_in_pixels();
         if width == 0 || height == 0 {
@@ -466,6 +453,13 @@ impl VulkanContext {
             )?;
             let vertex_duration = vertex_start.elapsed();
 
+            // Reset this frame's command buffer before acquiring an image. The
+            // fence wait above guarantees the GPU finished the previous use of it,
+            // so resetting here keeps all remaining post-acquire work to
+            // record/submit/present — a fallible reset can no longer strand an
+            // already-acquired image and its signaled acquire semaphore.
+            device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
+
             let acquire_start = Instant::now();
             let acquire_result = self.swapchain.loader.acquire_next_image(
                 self.swapchain.handle,
@@ -486,8 +480,6 @@ impl VulkanContext {
 
             let mut recreate_after_present =
                 suboptimal && !self.swapchain_extent_matches_window(window)?;
-
-            device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
 
             let image_index_usize = image_index as usize;
             let render_finished = self.image_render_finished[image_index_usize].handle();
@@ -510,7 +502,7 @@ impl VulkanContext {
             ];
 
             let record_start = Instant::now();
-            record_sprite_commands(
+            if let Err(err) = record_sprite_commands(
                 &device,
                 command_buffer,
                 self.swapchain.images[image_index_usize],
@@ -520,7 +512,14 @@ impl VulkanContext {
                 self.sprite_pipeline.pipeline,
                 sprite_vertex_buffer,
                 &render_batches,
-            )?;
+            ) {
+                // We already hold an acquired image and a signaled acquire
+                // semaphore. Command recording failing here is a device-level
+                // error and the app exits on it, so drain the device first to
+                // keep teardown from racing any outstanding GPU work.
+                let _ = device.device_wait_idle();
+                return Err(err);
+            }
             let record_duration = record_start.elapsed();
 
             let submit_start = Instant::now();

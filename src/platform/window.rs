@@ -97,6 +97,10 @@ impl Platform {
                 } => self.input.set_key(keycode, false),
                 Event::Window { win_event, .. } => match win_event {
                     WindowEvent::CloseRequested => self.should_quit = true,
+                    // Losing keyboard focus means we will miss the key-up events
+                    // for anything currently held; clear input so movement/zoom
+                    // don't stay stuck on after refocusing.
+                    WindowEvent::FocusLost => self.input.reset(),
                     WindowEvent::Resized(width, height)
                     | WindowEvent::PixelSizeChanged(width, height) => {
                         log::debug!("window framebuffer resized: {width}x{height}");
@@ -126,13 +130,6 @@ impl Platform {
         self.pending_drawable_resize = false;
         self.resize_policy.note_recreate(now);
         true
-    }
-
-    pub fn resize_pending(&self) -> bool {
-        self.pending_drawable_resize
-            && !self
-                .resize_policy
-                .recreate_ready(Instant::now(), self.window.size_in_pixels())
     }
 
     fn track_drawable_size_change(&mut self) {

@@ -2,16 +2,18 @@ use std::time::{Duration, Instant};
 
 /// Debounce window after the most recent resize event before a swapchain
 /// recreate is allowed. Resizing can generate hundreds of transient drawable
-/// sizes, so wait for a genuinely stable size before touching WSI again.
-pub const DEFAULT_RESIZE_DEBOUNCE: Duration = Duration::from_millis(750);
+/// sizes, so wait for a stable size before doing the (final, exact-fit) recreate.
+/// We now keep rendering with the current swapchain throughout the resize, so
+/// this only governs the clean settle-recreate and can stay snappy.
+pub const DEFAULT_RESIZE_DEBOUNCE: Duration = Duration::from_millis(200);
 /// Minimum spacing between consecutive recreates, so a slow continuous drag (or
 /// a driver that keeps reporting suboptimal) cannot trigger a recreate storm.
-pub const DEFAULT_MIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
+pub const DEFAULT_MIN_RECREATE_INTERVAL: Duration = Duration::from_millis(350);
 /// Drawable sizes below this are usually drag-through transients. Let them
 /// settle for longer before recreating, but still allow them eventually so a
 /// deliberately tiny window is not frozen forever.
 pub const MIN_STABLE_RECREATE_SIZE: (u32, u32) = (320, 180);
-pub const TINY_RESIZE_SETTLE: Duration = Duration::from_millis(2000);
+pub const TINY_RESIZE_SETTLE: Duration = Duration::from_millis(750);
 
 /// Pure timing policy for when a debounced window resize should trigger a
 /// swapchain recreate. Holds no Vulkan/SDL state, so it can be unit-tested by

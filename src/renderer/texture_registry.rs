@@ -163,6 +163,21 @@ impl TextureRegistry {
     }
 }
 
+impl Drop for TextureRegistry {
+    fn drop(&mut self) {
+        // The registry is not self-cleaning (texture teardown needs the external
+        // allocator), so reaching `Drop` with live entries means an owner forgot
+        // to call `destroy`/hold a `TextureRegistryGuard`. That would leak GPU
+        // memory and descriptor pools; catch it in debug builds. After a correct
+        // `destroy` (or guard cleanup) the entry vector is drained, so this holds.
+        debug_assert!(
+            self.entries.is_empty(),
+            "TextureRegistry dropped without explicit destroy(): {} live texture(s) leaked",
+            self.entries.len()
+        );
+    }
+}
+
 struct RegistryCleanup<'a> {
     device: &'a ash::Device,
     allocator: &'a mut Allocator,
@@ -196,13 +211,23 @@ impl<'a> TextureRegistryGuard<'a> {
         }
     }
 
-    pub fn register_texture(
+    /// Creates a texture via `make` (which receives the guard's device and
+    /// allocator) and registers it in one step. The texture is never observable
+    /// as a plain value outside this call, so neither a creation failure nor a
+    /// descriptor-set failure can leak it, and any texture already registered is
+    /// owned by the guard (cleaned up on drop). This is the only registration
+    /// entry point, which keeps every built-in texture failure-safe.
+    pub fn create_and_register<F>(
         &mut self,
         descriptor_set_layout: vk::DescriptorSetLayout,
-        texture: Texture,
         name: impl Into<String>,
-    ) -> anyhow::Result<TextureId> {
+        make: F,
+    ) -> anyhow::Result<TextureId>
+    where
+        F: FnOnce(&ash::Device, &mut Allocator) -> anyhow::Result<Texture>,
+    {
         let CleanupGuard { value, cleanup } = &mut self.registry;
+        let texture = make(cleanup.device, cleanup.allocator)?;
         value
             .as_mut()
             .expect("registry exists until finish")

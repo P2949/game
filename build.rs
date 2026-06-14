@@ -29,7 +29,26 @@ fn main() {
             continue;
         };
 
-        if !matches!(ext, "vert" | "frag" | "comp") {
+        // glslc infers the shader stage from these extensions. Cover the full set
+        // of graphics/compute/mesh/ray-tracing stages so adding, say, a geometry
+        // or ray-gen shader later just works without revisiting this filter.
+        if !matches!(
+            ext,
+            "vert"
+                | "frag"
+                | "comp"
+                | "geom"
+                | "tesc"
+                | "tese"
+                | "mesh"
+                | "task"
+                | "rgen"
+                | "rint"
+                | "rahit"
+                | "rchit"
+                | "rmiss"
+                | "rcall"
+        ) {
             continue;
         }
 

@@ -37,7 +37,30 @@ pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer)>(
         .command_buffer_count(1);
 
     let command_buffer = unsafe { device.allocate_command_buffers(&alloc_info)?[0] };
-    let result = (|| -> anyhow::Result<()> {
+
+    // Free the command buffer on every exit, including an unwind out of `f`.
+    // Without this guard a panicking closure would skip the cleanup and leak the
+    // buffer until the pool is reset or destroyed.
+    struct FreeOnDrop<'a> {
+        device: &'a ash::Device,
+        pool: vk::CommandPool,
+        command_buffer: vk::CommandBuffer,
+    }
+    impl Drop for FreeOnDrop<'_> {
+        fn drop(&mut self) {
+            unsafe {
+                self.device
+                    .free_command_buffers(self.pool, std::slice::from_ref(&self.command_buffer));
+            }
+        }
+    }
+    let _free_guard = FreeOnDrop {
+        device,
+        pool: command_pool,
+        command_buffer,
+    };
+
+    (|| -> anyhow::Result<()> {
         let begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
@@ -59,13 +82,7 @@ pub unsafe fn immediate_submit<F: FnOnce(vk::CommandBuffer)>(
         }
 
         Ok(())
-    })();
-
-    unsafe {
-        device.free_command_buffers(command_pool, std::slice::from_ref(&command_buffer));
-    }
-
-    result
+    })()
 }
 
 /// Validates a requested buffer size before any Vulkan call. Vulkan forbids
@@ -132,6 +149,27 @@ impl Buffer {
             return Err(err.into());
         }
 
+        // `copy_from_bytes` writes CpuToGpu buffers via a plain mapped memcpy with
+        // no flush, which is only correct on HOST_COHERENT memory. Enforce it at
+        // creation so a non-coherent allocation fails fast here instead of later at
+        // copy time (or, worse, silently presenting stale data on a future port).
+        if location == MemoryLocation::CpuToGpu
+            && !allocation
+                .memory_properties()
+                .contains(vk::MemoryPropertyFlags::HOST_COHERENT)
+        {
+            allocator
+                .free(allocation)
+                .expect("free non-coherent buffer allocation");
+            unsafe {
+                device.destroy_buffer(handle, None);
+            }
+            anyhow::bail!(
+                "buffer '{name}' requested CpuToGpu memory but the allocation is not \
+                 HOST_COHERENT; mapped writes would require explicit flushing"
+            );
+        }
+
         log::info!("created buffer '{name}' ({size} bytes)");
 
         Ok(Self {
@@ -185,12 +223,17 @@ impl Buffer {
     }
 
     pub unsafe fn destroy(mut self, device: &ash::Device, allocator: &mut Allocator) {
-        if let Some(allocation) = self.allocation.take() {
-            allocator.free(allocation).expect("free buffer allocation");
-        }
-
+        // Destroy the Vulkan buffer before freeing its backing memory, matching
+        // `Texture::destroy` and the conventional "object before its memory"
+        // teardown order. Freeing bound memory first is permitted by the spec only
+        // under conditions that are awkward to reason about and confuses
+        // validation/debug tooling, so destroy the handle first.
         unsafe {
             device.destroy_buffer(self.handle, None);
+        }
+
+        if let Some(allocation) = self.allocation.take() {
+            allocator.free(allocation).expect("free buffer allocation");
         }
     }
 }

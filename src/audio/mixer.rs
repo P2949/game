@@ -18,9 +18,7 @@ enum AudioCommand {
 
 pub struct Sound {
     pub samples: Vec<f32>,
-    #[allow(dead_code)]
     pub channels: u16,
-    #[allow(dead_code)]
     pub sample_rate: u32,
 }
 
@@ -35,6 +33,12 @@ pub struct Mixer {
     pub sounds: Vec<Sound>,
     pub voices: Vec<Voice>,
     pub master_volume: f32,
+    // Expected playback-stream output format (0 means "unspecified / don't
+    // check"). The mixer plays sample data verbatim — it does not resample or
+    // remap channels — so a sound that doesn't match would play at the wrong
+    // speed/pitch. `add_sound` warns on a mismatch.
+    output_channels: u16,
+    output_sample_rate: u32,
 }
 
 impl Mixer {
@@ -43,10 +47,38 @@ impl Mixer {
             sounds: Vec::new(),
             voices: Vec::with_capacity(MAX_VOICES),
             master_volume: 1.0,
+            output_channels: 0,
+            output_sample_rate: 0,
         }
     }
 
+    /// Declares the output stream's channel count and sample rate so `add_sound`
+    /// can flag sounds that don't match. The default (0/0) disables the check.
+    pub fn set_output_format(&mut self, channels: u16, sample_rate: u32) {
+        self.output_channels = channels;
+        self.output_sample_rate = sample_rate;
+    }
+
+    /// Whether `sound` matches the configured output format. Always true when the
+    /// output format is unspecified.
+    pub fn sound_format_matches(&self, sound: &Sound) -> bool {
+        self.output_channels == 0
+            || (sound.channels == self.output_channels
+                && sound.sample_rate == self.output_sample_rate)
+    }
+
     pub fn add_sound(&mut self, sound: Sound) -> usize {
+        if !self.sound_format_matches(&sound) {
+            log::warn!(
+                "adding sound ({}ch/{}Hz) that does not match mixer output ({}ch/{}Hz); \
+                 it will play at the wrong speed/pitch (the mixer does not resample)",
+                sound.channels,
+                sound.sample_rate,
+                self.output_channels,
+                self.output_sample_rate,
+            );
+        }
+
         let id = self.sounds.len();
         self.sounds.push(sound);
         id
@@ -130,6 +162,7 @@ impl AudioSystem {
 
         let mut mixer = Mixer::new();
         mixer.master_volume = 0.3;
+        mixer.set_output_format(channels as u16, sample_rate as u32);
         let blip_sound =
             mixer.add_sound(sine_sound(660.0, 0.12, sample_rate as u32, channels as u16));
         let music_sound =
@@ -145,6 +178,7 @@ impl AudioSystem {
                     mixer,
                     commands: Arc::clone(&commands),
                     scratch: vec![0.0; AUDIO_SCRATCH_SAMPLES],
+                    put_failures: 0,
                 },
             )
             .map_err(anyhow::Error::msg)?;
@@ -176,6 +210,9 @@ struct MixerCallback {
     mixer: Mixer,
     commands: Arc<ArrayQueue<AudioCommand>>,
     scratch: Vec<f32>,
+    // Counts `put_data_f32` failures so a silently-dropping stream produces some
+    // signal. Read inside the (throttled) warning in `callback`.
+    put_failures: u64,
 }
 
 impl MixerCallback {
@@ -210,7 +247,18 @@ impl AudioCallback<f32> for MixerCallback {
             let out = &mut self.scratch[..chunk_len];
 
             self.mixer.mix_into(out);
-            let _ = stream.put_data_f32(out);
+            if stream.put_data_f32(out).is_err() {
+                self.put_failures += 1;
+                // Logging from an audio callback is normally avoided, but a rare,
+                // throttled warning (first failure, then every 1000th) is worth
+                // the signal if audio output silently stops.
+                if self.put_failures == 1 || self.put_failures.is_multiple_of(1000) {
+                    log::warn!(
+                        "audio stream put_data_f32 failed ({} total); output may be dropping",
+                        self.put_failures
+                    );
+                }
+            }
 
             remaining -= chunk_len;
         }
@@ -266,6 +314,29 @@ mod tests {
         assert_eq!(sanitize_volume(f32::NAN), 0.0);
         assert_eq!(sanitize_volume(f32::INFINITY), 0.0);
         assert_eq!(sanitize_volume(f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn sound_format_matches_respects_configured_output() {
+        let mut mixer = Mixer::new();
+        let matching = Sound {
+            samples: vec![0.0],
+            channels: 2,
+            sample_rate: 48_000,
+        };
+        let mismatched = Sound {
+            samples: vec![0.0],
+            channels: 1,
+            sample_rate: 44_100,
+        };
+
+        // Unspecified output format accepts anything.
+        assert!(mixer.sound_format_matches(&matching));
+        assert!(mixer.sound_format_matches(&mismatched));
+
+        mixer.set_output_format(2, 48_000);
+        assert!(mixer.sound_format_matches(&matching));
+        assert!(!mixer.sound_format_matches(&mismatched));
     }
 
     #[test]
@@ -425,6 +496,7 @@ mod tests {
             mixer,
             commands: Arc::clone(&commands),
             scratch: vec![0.0; super::AUDIO_SCRATCH_SAMPLES],
+            put_failures: 0,
         };
 
         callback.drain_commands();
@@ -459,6 +531,7 @@ mod tests {
             mixer,
             commands: Arc::clone(&commands),
             scratch: vec![0.0; super::AUDIO_SCRATCH_SAMPLES],
+            put_failures: 0,
         };
 
         callback.drain_commands();

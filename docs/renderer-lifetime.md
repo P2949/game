@@ -62,20 +62,43 @@ allocator lock just to make `Drop` possible for textures and buffers.
 
 ## Required Drop Order
 
-The safe destruction order is:
+This is the exact order `VulkanContext::drop` performs today. Everything that
+needs the logical device is destroyed while it is still alive (inside the
+`if let Some(logical_device)` block); the allocator outlives every
+allocator-backed resource; and the surface/instance are torn down last via struct
+field-drop order (fields are declared with `surface` before `instance`, so the
+surface drops first).
 
-1. Wait for the logical device to become idle.
-2. Destroy frame resources and per-image semaphores.
-3. Destroy textures and dynamic buffers while the allocator is alive.
-4. Destroy pipeline and pipeline layout.
-5. Destroy swapchain image views.
-6. Destroy swapchain.
-7. Destroy upload command pool, upload fence, descriptor set layout, and texture descriptor pools.
-8. Drop allocator.
-9. Drop logical device.
-10. Destroy surface.
-11. Destroy debug messenger, then Vulkan instance.
+While the logical device is alive:
 
-`VulkanContext::drop` may remain the coordinator for resources requiring the
-allocator, but resources that only need a device/instance should move toward
-RAII `Drop` owners so constructor failure paths are automatically cleaned up.
+1. `device_wait_idle` — let the GPU finish all outstanding work.
+2. Graphics pipeline **and** its pipeline layout (`GraphicsPipeline::destroy`).
+3. Textures and their descriptor pools/sets (`TextureRegistry::destroy`), while
+   the allocator is alive.
+4. Dynamic sprite vertex buffers (`Buffer::destroy`), while the allocator is alive.
+5. Per-frame resources — command pools, image-available semaphores, in-flight
+   fences (`frames.clear()`).
+6. Per-image render-finished semaphores (`image_render_finished.clear()`).
+7. Texture descriptor set layout (`OwnedDescriptorSetLayout` → `None`).
+8. Upload fence (`OwnedFence` → `None`).
+9. Upload command pool (`OwnedCommandPool` → `None`).
+10. Swapchain image views (`SwapchainImageViews::destroy`).
+
+Then, after the block:
+
+11. Drop the allocator (every allocator-backed resource above is already freed).
+12. Destroy the swapchain (idempotent `Swapchain::destroy`; the device is still
+    alive to do it).
+13. Drop the logical device (the `VkDevice`).
+
+Finally, as the struct's fields drop in declaration order:
+
+14. `Surface::drop` destroys the surface (the instance is still alive).
+15. `VulkanInstance::drop` destroys the debug messenger, then the instance, then
+    releases the entry/loader.
+
+`VulkanContext::drop` remains the coordinator for resources requiring the
+allocator, while resources that only need a device/instance are RAII `Drop`
+owners (the `Owned*` wrappers, `Surface`, `Swapchain`, `SwapchainImageViews`,
+`GraphicsPipeline`, `FrameData`, `VulkanInstance`) so constructor failure paths
+clean themselves up automatically.
