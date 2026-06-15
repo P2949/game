@@ -2,9 +2,9 @@ use game_map::{GameMap, MapBuilder, cell};
 use glam::{Vec2, Vec4};
 
 use crate::assets::ArenaAssets;
-use crate::engine::app::TileTheme;
-use crate::engine::world::Sprite;
 use crate::prefabs::ArenaPrefabs;
+use game_core::app::TileTheme;
+use game_core::world::Sprite;
 
 pub const TILE: f32 = 32.0;
 

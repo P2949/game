@@ -1,6 +1,6 @@
 use ash::vk;
 
-use crate::renderer::owned::{OwnedCommandPool, OwnedFence, OwnedSemaphore};
+use crate::owned::{OwnedCommandPool, OwnedFence, OwnedSemaphore};
 
 pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
 

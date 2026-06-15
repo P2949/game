@@ -60,9 +60,9 @@ GAME_ASSET_DIR=assets cargo run -p game --release   # optimized build (LTO, sing
 GAME_DEMO=testbed cargo run -p game                 # run the second (testbed) demo
 ```
 
-`game` is the only binary in the workspace, so a plain `cargo run` resolves to
-it; `-p game` is the explicit form and stays unambiguous if more binaries are
-added later.
+The workspace sets `bin/game` as its default member, so a plain `cargo run`
+works from the repository root today. The README uses `-p game` anyway because
+that form stays unambiguous if more binaries are added later.
 
 A debug `cargo run` from a source checkout finds `assets/` through the
 source-tree fallback, but a `--release` build does **not** use that fallback (see
@@ -74,7 +74,7 @@ Debug builds require Vulkan validation layers by default. On systems without
 the layer installed, disable that requirement explicitly:
 
 ```bash
-GAME_DISABLE_VALIDATION=1 cargo run
+GAME_DISABLE_VALIDATION=1 cargo run -p game
 ```
 
 Assets are discovered in this order:

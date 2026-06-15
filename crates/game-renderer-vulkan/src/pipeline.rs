@@ -1,7 +1,7 @@
 use ash::vk;
 use std::io::Cursor;
 
-use crate::renderer::vertex::SpriteVertex;
+use crate::vertex::SpriteVertex;
 
 pub const SPRITE_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sprite.vert.spv"));
 pub const SPRITE_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sprite.frag.spv"));

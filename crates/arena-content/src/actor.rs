@@ -1,4 +1,4 @@
-use crate::engine::input::Axis2dId;
+use game_core::input::Axis2dId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Name(pub String);

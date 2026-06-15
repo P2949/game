@@ -42,29 +42,22 @@ deliberately deferred with a rationale.
 
 The split landed with deliberately temporary compatibility shims so the
 mechanical crate move did not also have to rewrite every `use` path in one go.
-These are tracked here for removal — none are part of a public engine API, and
-each is marked `// TEMP:` at its definition:
+Those shims have now been removed:
 
-- `game_core::engine` — re-exports every `game-core` module under the old
-  `engine::` path. Remove once nothing imports `game_core::engine::*`.
-- `arena_content::engine` / `arena_content::game` — let the arena keep its
-  pre-split `crate::engine::*` / `crate::game::*` paths. Replace those with
-  direct `game_core::*` and crate-local imports; `testbed-content` already uses
-  the direct paths and is the reference for what "done" looks like.
-- `game_renderer_vulkan::renderer` and the `game-platform-sdl` compat module —
-  re-export the old `src/renderer` / `src/platform` module trees. Remove once
-  internal paths reference the crate-root items directly.
+- `game_core::engine`
+- `arena_content::{engine, game}`
+- `game_renderer_vulkan::renderer`
+- `game_platform_sdl::platform`
 
-Removal is mechanical (path rewrites plus deleting the shim modules) and can be
-done crate-by-crate. The `architecture_boundaries` integration test records the
-cross-crate import gates that must continue to hold afterward.
+The `architecture_boundaries` integration test records the cross-crate import
+gates that must continue to hold afterward.
 
 ## Current stabilization targets
 
 - Keep CI commands workspace/package-qualified so the virtual workspace does not
   rely on whichever package Cargo happens to infer.
-- Collapse the remaining direct `Game::update` fallback once runtime content is
-  fully schedule-driven.
+- Keep runtime/content tests on the schedule path now that the direct
+  `Game::update` fallback has been removed.
 - Keep command APIs honest: only expose commands the runtime actually consumes,
   or carry the necessary registries into runtime before adding map/prefab/event
   commands.

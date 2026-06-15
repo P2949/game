@@ -16,7 +16,7 @@
 //! textures) keep their explicit `destroy(device, allocator)` methods, because a
 //! `Drop` impl cannot reach the externally-owned allocator.
 //!
-//! Ownership-ordering note: a [`crate::renderer::context::VulkanContext`] still
+//! Ownership-ordering note: a [`crate::context::VulkanContext`] still
 //! destroys the [`ash::Device`] itself, so any of these wrappers held by the
 //! context must be dropped *before* that device is destroyed. The context's
 //! `Drop` does this explicitly (clearing owned collections and taking owned

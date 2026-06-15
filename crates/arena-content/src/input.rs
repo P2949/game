@@ -1,4 +1,4 @@
-use crate::engine::input::{ActionId, Axis2dId, InputRegistry, Key};
+use game_core::input::{ActionId, Axis2dId, InputRegistry, Key};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ArenaActions {
@@ -48,7 +48,7 @@ pub fn register(input: &mut InputRegistry) -> ArenaActions {
 #[cfg(test)]
 mod tests {
     use super::register;
-    use crate::engine::input::{InputRegistry, Key};
+    use game_core::input::{InputRegistry, Key};
 
     #[test]
     fn arena_input_registers_current_bindings() {

@@ -4,8 +4,8 @@ use sdl3::keyboard::Keycode;
 use sdl3::video::Window;
 use std::time::Instant;
 
-use crate::platform::input::key_from_sdl;
-use crate::platform::resize::ResizePolicy;
+use crate::input::key_from_sdl;
+use crate::resize::ResizePolicy;
 use game_core::input::InputState;
 
 pub struct Platform {

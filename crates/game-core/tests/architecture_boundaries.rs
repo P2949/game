@@ -1,49 +1,6 @@
 use std::fs;
 use std::path::Path;
 
-struct KnownLeak {
-    label: &'static str,
-    file: &'static str,
-    patterns: &'static [&'static str],
-}
-
-const KNOWN_LEAKS: &[KnownLeak] = &[
-    KnownLeak {
-        label: "engine::app -> platform, renderer, audio",
-        file: "crates/game-core/src/app.rs",
-        patterns: &[
-            "crate::platform",
-            "crate::renderer",
-            "crate::audio::AudioSystem",
-        ],
-    },
-    KnownLeak {
-        label: "engine::gfx -> renderer::TextureId",
-        file: "crates/game-core/src/gfx.rs",
-        patterns: &["crate::renderer", "TextureId"],
-    },
-    KnownLeak {
-        label: "engine::audio -> audio::AudioSystem",
-        file: "crates/game-core/src/audio.rs",
-        patterns: &["game_audio::AudioSystem"],
-    },
-    KnownLeak {
-        label: "renderer::context -> engine::camera::Camera2D (resolved in Phase 2)",
-        file: "crates/game-renderer-vulkan/src/context.rs",
-        patterns: &["crate::engine::camera::Camera2D"],
-    },
-    KnownLeak {
-        label: "game::ai tests -> platform::input",
-        file: "crates/arena-content/src/ai.rs",
-        patterns: &["crate::platform::input"],
-    },
-    KnownLeak {
-        label: "game::combat tests -> platform::input",
-        file: "crates/arena-content/src/combat.rs",
-        patterns: &["crate::platform::input"],
-    },
-];
-
 const FUTURE_HARD_GATES: &[&str] = &[
     // TODO(architecture): game-renderer-vulkan must not import arena-content.
     // TODO(architecture): game-audio must not import arena-content.
@@ -55,32 +12,6 @@ const FUTURE_HARD_GATES: &[&str] = &[
     "game-platform-sdl must not import arena-content",
     "game-runtime must not import arena-content except through plugin trait object passed by bin",
 ];
-
-#[test]
-fn current_boundary_leaks_are_advisory() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("game-core lives under crates/");
-
-    for leak in KNOWN_LEAKS {
-        let path = workspace_root.join(leak.file);
-        let source = fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
-        let present = leak
-            .patterns
-            .iter()
-            .filter(|pattern| source.contains(**pattern))
-            .count();
-
-        eprintln!(
-            "advisory architecture leak: {} ({present}/{}) patterns still present",
-            leak.label,
-            leak.patterns.len()
-        );
-    }
-}
 
 #[test]
 fn future_architecture_gates_are_recorded() {

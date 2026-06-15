@@ -1,11 +1,11 @@
-use crate::engine::audio::Audio;
-use crate::engine::backend::SoundHandle;
-use crate::engine::commands::CommandQueue;
-use crate::engine::input::{ActionId, Input};
-use crate::engine::world::{EntityId, Transform, Velocity};
-use crate::game::World;
-use crate::game::actor::{EnemyTag, PlayerController};
+use crate::actor::{EnemyTag, PlayerController};
 use game_combat::{Health, MeleeAttack, apply_damage};
+use game_core::audio::Audio;
+use game_core::backend::SoundHandle;
+use game_core::commands::CommandQueue;
+use game_core::input::{ActionId, Input};
+use game_core::world::World;
+use game_core::world::{EntityId, Transform, Velocity};
 
 #[derive(Default)]
 struct CombatEffects {
@@ -143,13 +143,13 @@ fn damage_entity(world: &mut World, id: EntityId, amount: i32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::audio::{Audio, AudioCommands};
-    use crate::engine::backend::SoundHandle;
-    use crate::engine::input::{ActionId, Axis2dId, Input};
-    use crate::engine::world::Entity;
-    use crate::game::World;
-    use crate::game::actor::{EnemyTag, PlayerController};
+    use crate::actor::{EnemyTag, PlayerController};
     use game_combat::{Health, MeleeAttack};
+    use game_core::audio::{Audio, AudioCommands};
+    use game_core::backend::SoundHandle;
+    use game_core::input::{ActionId, Axis2dId, Input};
+    use game_core::world::Entity;
+    use game_core::world::World;
 
     use super::{kill_player, player_is_dead, tick};
 

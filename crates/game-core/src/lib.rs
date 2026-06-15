@@ -16,7 +16,7 @@ pub mod world;
 #[allow(unused_imports)]
 pub mod prelude {
     pub use crate::app::{
-        Ctx, Game, MapData, RenderFrame, StartCtx, TileTheme, extract_entity_sprites,
+        Ctx, MapData, RenderFrame, StartCtx, TileTheme, extract_entity_sprites,
         extract_tilemap_sprites,
     };
     pub use crate::assets::{AssetRegistry, AssetValidator};
@@ -45,24 +45,9 @@ pub mod prelude {
     };
 }
 
-// TEMP: compatibility modules for the Phase 2 physical split. Most source files
-// still use their old single-crate paths; later phases remove these re-exports.
-pub mod engine {
-    pub use crate::{
-        app, assets, audio, backend, builder, camera, commands, gfx, input, nav, plugin, schedule,
-        tilemap, world,
-    };
-
-    #[allow(unused_imports)]
-    pub mod prelude {
-        pub use crate::prelude::*;
-    }
-}
-
 #[allow(unused_imports)]
 pub use app::{
-    Ctx, Game, MapData, RenderFrame, StartCtx, TileTheme, extract_entity_sprites,
-    extract_tilemap_sprites,
+    Ctx, MapData, RenderFrame, StartCtx, TileTheme, extract_entity_sprites, extract_tilemap_sprites,
 };
 #[allow(unused_imports)]
 pub use assets::{AssetRegistry, AssetValidator};

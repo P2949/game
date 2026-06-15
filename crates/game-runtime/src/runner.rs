@@ -3,9 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use game_audio::AudioSystem;
-use game_core::app::{
-    Ctx, Game, MapData, RenderFrame, StartCtx, extract_entity_sprites, extract_tilemap_sprites,
-};
+use game_core::app::{Ctx, RenderFrame, StartCtx, extract_entity_sprites, extract_tilemap_sprites};
 use game_core::assets::AssetValidator;
 use game_core::audio::{Audio, AudioCommands};
 use game_core::backend::AudioCommand;
@@ -65,19 +63,20 @@ impl Default for RuntimeConfig {
 
 pub fn run<P: GamePlugin>(config: RuntimeConfig, plugin: P) -> Result<()> {
     let mut builder = GameBuilder::new();
-    let game = plugin.build(&mut builder)?;
+    plugin.build(&mut builder)?;
     validate_builder(&builder)?;
-    // The runtime keeps the builder's registries (assets/input/schedule) as its
-    // source of truth rather than dropping everything but the schedule.
-    run_game_inner(game, config, builder)
+    run_game_inner(config, builder)
 }
 
 /// Validates host-owned content (schedule wiring and on-disk assets) before any
 /// backend is created or the main loop starts (Phase 11.3/11.4). Map and prefab
 /// validation runs earlier, inside `GamePlugin::build`.
 fn validate_builder(builder: &GameBuilder) -> Result<()> {
+    let start_map_ready = builder
+        .start_map()
+        .is_some_and(|id| builder.maps().get(id).is_some());
     ScheduleValidator::new(builder.schedule())
-        .start_map_set(builder.start_map().is_some())
+        .start_map_set(start_map_ready)
         // The runtime extracts tilemap/entity sprites into every frame itself, so
         // content is not required to register its own render_extract system.
         .builtin_render_extract()
@@ -95,12 +94,23 @@ fn validate_builder(builder: &GameBuilder) -> Result<()> {
     Ok(())
 }
 
-fn run_game_inner<G: Game>(mut game: G, config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
+fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
     let RuntimeContent {
         assets,
         input: input_registry,
+        maps,
+        prefabs,
+        start_map,
         mut schedule,
-    } = builder.into_parts();
+    } = builder.into_parts()?;
+
+    let map = maps
+        .get(start_map)
+        .ok_or_else(|| anyhow::anyhow!("start map {:?} is not registered", start_map))?
+        .data
+        .clone();
+    let _runtime_maps = maps;
+    let _runtime_prefabs = prefabs;
 
     let smoke_frames = parse_smoke_frames()?;
 
@@ -116,17 +126,11 @@ fn run_game_inner<G: Game>(mut game: G, config: RuntimeConfig, builder: GameBuil
     let mut timestep = FixedTimestep::new(config.sim_hz);
     let mut camera = Camera2D::new(glam::Vec2::ZERO, 1.0);
     let mut world = World::new();
-    let mut map_slot: Option<MapData> = None;
 
     {
-        let mut start_ctx = StartCtx::new(&mut world, &mut map_slot);
-        if schedule.has_startup_systems() {
-            schedule.run_startup(&mut start_ctx)?;
-        } else {
-            game.start(&mut start_ctx)?;
-        }
+        let mut start_ctx = StartCtx::new(&mut world);
+        schedule.run_startup(&mut start_ctx)?;
     }
-    let map = map_slot.expect("Game::start must call ctx.set_map(...)");
 
     if smoke_frames == Some(0) {
         log::info!("GAME_SMOKE_FRAMES=0 requested; initialized and exiting before rendering");
@@ -159,7 +163,6 @@ fn run_game_inner<G: Game>(mut game: G, config: RuntimeConfig, builder: GameBuil
         let now = Instant::now();
         let frame_ms = (now - previous_frame).as_secs_f32() * 1000.0;
         previous_frame = now;
-        game.record_frame_time(frame_ms);
 
         if let Some(audio) = &audio {
             audio.poll_dropped_frames();
@@ -174,7 +177,6 @@ fn run_game_inner<G: Game>(mut game: G, config: RuntimeConfig, builder: GameBuil
 
         let mut frame = RenderFrame::new(camera);
         let mut audio_commands = AudioCommands::default();
-        let has_frame_systems = schedule.has_frame_systems();
 
         timestep.begin_frame();
         let mut steps = 0;
@@ -199,11 +201,7 @@ fn run_game_inner<G: Game>(mut game: G, config: RuntimeConfig, builder: GameBuil
                     gfx: Gfx::new(&mut frame),
                     audio: Audio::new(&mut audio_commands),
                 };
-                if has_frame_systems {
-                    schedule.run_fixed(&mut ctx, dt);
-                } else {
-                    game.update(&mut ctx, dt);
-                }
+                schedule.run_fixed(&mut ctx, dt);
             }
             process_core_commands(&mut world, &mut audio_commands);
 
@@ -213,24 +211,22 @@ fn run_game_inner<G: Game>(mut game: G, config: RuntimeConfig, builder: GameBuil
         // Frame-rate-paced stages run once per rendered frame (not once per fixed
         // step), so UI text and camera follow neither duplicate when several
         // steps run nor stall when none do.
-        if has_frame_systems {
-            let frame_dt = frame_ms / 1000.0;
-            {
-                let mut ctx = Ctx {
-                    world: &mut world,
-                    map: &map.tilemap,
-                    nav: &map.nav,
-                    input: &frame_input,
-                    camera: &mut camera,
-                    gfx: Gfx::new(&mut frame),
-                    audio: Audio::new(&mut audio_commands),
-                };
-                schedule.run_update(&mut ctx, frame_dt);
-                schedule.run_render_extract(&mut ctx, frame_dt);
-                schedule.run_ui(&mut ctx, frame_dt);
-            }
-            process_core_commands(&mut world, &mut audio_commands);
+        let frame_dt = frame_ms / 1000.0;
+        {
+            let mut ctx = Ctx {
+                world: &mut world,
+                map: &map.tilemap,
+                nav: &map.nav,
+                input: &frame_input,
+                camera: &mut camera,
+                gfx: Gfx::new(&mut frame),
+                audio: Audio::new(&mut audio_commands),
+            };
+            schedule.run_update(&mut ctx, frame_dt);
+            schedule.run_render_extract(&mut ctx, frame_dt);
+            schedule.run_ui(&mut ctx, frame_dt);
         }
+        process_core_commands(&mut world, &mut audio_commands);
 
         if timestep.step_ready() {
             let now = Instant::now();

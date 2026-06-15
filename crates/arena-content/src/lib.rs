@@ -10,37 +10,17 @@ pub mod spawn;
 pub mod state;
 pub mod systems;
 
-// TEMP: compatibility modules for the Phase 2 physical split. Arena content
-// still uses old single-crate paths internally, but only depends on game-core.
-pub mod engine {
-    pub use game_core::*;
-}
-
-pub mod game {
-    pub use crate::{
-        ArenaGame, ArenaPlugin, World, actor, ai, assets, combat, input, level, maps, prefabs,
-        spawn, state, systems,
-    };
-}
-
 use anyhow::{Context, Result};
-use std::rc::Rc;
 
 use crate::actor::PlayerController;
-use crate::assets::ArenaAssets;
-use crate::engine::app::{Ctx, Game, StartCtx};
-use crate::engine::assets::AssetRegistry;
-use crate::engine::builder::{GameBuilder, PrefabId, PrefabRegistry, PrefabValidator};
-use crate::engine::plugin::GamePlugin;
-use crate::engine::world::{Sprite, Transform};
-use crate::input::ArenaActions;
 use crate::prefabs::ArenaPrefabs;
 use game_ai::AiController;
 use game_combat::{Faction, Health};
+use game_core::builder::{GameBuilder, PrefabId, PrefabRegistry, PrefabValidator};
+use game_core::plugin::GamePlugin;
+use game_core::world::{Sprite, Transform};
 use game_map::{GameMap, MapValidator};
 use game_physics::Collider;
-
-pub type World = crate::engine::world::World;
 
 pub struct ArenaPlugin;
 
@@ -48,80 +28,24 @@ pub fn plugin() -> ArenaPlugin {
     ArenaPlugin
 }
 
-pub struct ArenaGame {
-    assets: ArenaAssets,
-    actions: ArenaActions,
-    map: GameMap,
-    prefabs: Rc<PrefabRegistry>,
-}
-
-impl ArenaGame {
-    pub fn new() -> Self {
-        let mut assets = AssetRegistry::new();
-        let arena_assets = assets::register(&mut assets);
-        let mut input = crate::engine::input::InputRegistry::new();
-        let actions = input::register(&mut input);
-        let mut prefabs = PrefabRegistry::new();
-        let arena_prefabs = prefabs::register(&mut prefabs, arena_assets, actions);
-        let map = level::arena_map(arena_prefabs);
-        Self::with_content(arena_assets, actions, map, prefabs)
-    }
-
-    pub fn with_content(
-        assets: ArenaAssets,
-        actions: ArenaActions,
-        map: GameMap,
-        prefabs: PrefabRegistry,
-    ) -> Self {
-        Self::with_shared_content(assets, actions, map, Rc::new(prefabs))
-    }
-
-    pub fn with_shared_content(
-        assets: ArenaAssets,
-        actions: ArenaActions,
-        map: GameMap,
-        prefabs: Rc<PrefabRegistry>,
-    ) -> Self {
-        Self {
-            assets,
-            actions,
-            map,
-            prefabs,
-        }
-    }
-}
-
 impl GamePlugin for ArenaPlugin {
-    type Game = ArenaGame;
-
-    fn build(&self, app: &mut GameBuilder) -> Result<Self::Game> {
+    fn build(&self, app: &mut GameBuilder) -> Result<()> {
         let assets = assets::register(app.assets_mut());
         let actions = input::register(app.input_mut());
 
-        // Register prefabs exactly once into a registry shared (via `Rc`) by
-        // validation, the schedule's systems, and the returned game. Registering
-        // a second time into a parallel registry risked the two silently
-        // diverging.
-        let mut prefabs = PrefabRegistry::new();
-        let prefab_ids = prefabs::register(&mut prefabs, assets, actions);
+        // Register prefabs exactly once into the builder-owned registry shared by
+        // validation, the runtime content, and the schedule systems.
+        let prefab_ids = prefabs::register(app.prefabs_mut(), assets, actions);
         let (start_map, map) = maps::register(app.maps_mut(), &assets, prefab_ids);
         app.set_start_map(start_map);
 
         // Phase 11: fail before the runtime enters the main loop if the arena's
         // map, prefab compositions, or object references are malformed.
-        validate_arena_content(&prefabs, prefab_ids, &map)?;
+        validate_arena_content(app.prefabs(), prefab_ids, &map)?;
 
-        let prefabs = Rc::new(prefabs);
-        systems::register(
-            app.schedule_mut(),
-            assets,
-            actions,
-            map.clone(),
-            Rc::clone(&prefabs),
-        );
-        Ok(ArenaGame::with_shared_content(
-            assets, actions, map, prefabs,
-        ))
+        let prefabs = app.prefabs_shared();
+        systems::register(app.schedule_mut(), assets, actions, map.clone(), prefabs);
+        Ok(())
     }
 }
 
@@ -159,49 +83,22 @@ fn validate_arena_content(
     Ok(())
 }
 
-impl Default for ArenaGame {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Game for ArenaGame {
-    fn start(&mut self, ctx: &mut StartCtx) -> Result<()> {
-        systems::startup_system(ctx, self.assets, &self.map, &self.prefabs)
-    }
-
-    fn update(&mut self, ctx: &mut Ctx, dt: f32) {
-        systems::state_input_system(ctx, &self.map, &self.prefabs, self.actions);
-        systems::player_control_system(ctx, dt);
-        systems::chase_player_system(ctx, dt);
-        systems::physics_system(ctx, dt);
-        combat::tick(
-            ctx.world,
-            ctx.input,
-            self.actions.attack,
-            &mut ctx.audio,
-            self.assets.hit,
-            dt,
-        );
-        systems::death_state_system(ctx, dt);
-        systems::camera_follow_player_system(ctx, self.actions, dt);
-        systems::pause_death_ui_system(ctx, dt);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use game_combat::Health;
-    use game_core::app::{Ctx, Game, MapData, RenderFrame, StartCtx};
+    use game_core::app::{Ctx, MapData, RenderFrame, StartCtx};
     use game_core::audio::{Audio, AudioCommands};
+    use game_core::builder::{GameBuilder, RuntimeContent};
     use game_core::camera::Camera2D;
     use game_core::gfx::Gfx;
     use game_core::input::{Axis2dId, Input, InputRegistry};
-    use game_core::world::{EntityId, Transform, Velocity};
+    use game_core::plugin::GamePlugin;
+    use game_core::schedule::Schedule;
+    use game_core::world::{EntityId, Transform, Velocity, World};
 
     use crate::actor::{EnemyTag, PlayerController};
     use crate::input::ArenaActions;
-    use crate::{ArenaGame, World, spawn};
+    use crate::{ArenaPlugin, spawn};
 
     const DT: f32 = 1.0 / 120.0;
 
@@ -214,19 +111,27 @@ mod tests {
         crate::input::register(&mut registry)
     }
 
-    fn start_arena() -> (ArenaGame, World, MapData) {
-        let mut game = ArenaGame::new();
+    fn start_arena() -> (Schedule, World, MapData) {
+        let mut builder = GameBuilder::new();
+        ArenaPlugin.build(&mut builder).unwrap();
+        let RuntimeContent {
+            maps,
+            start_map,
+            mut schedule,
+            ..
+        } = builder.into_parts().unwrap();
+        let map = maps.get(start_map).unwrap().data.clone();
         let mut world = World::new();
-        let mut map_slot = None;
-        let mut start_ctx = StartCtx::new(&mut world, &mut map_slot);
 
-        game.start(&mut start_ctx).unwrap();
+        schedule
+            .run_startup(&mut StartCtx::new(&mut world))
+            .unwrap();
 
-        (game, world, map_slot.unwrap())
+        (schedule, world, map)
     }
 
     fn update_arena(
-        game: &mut ArenaGame,
+        schedule: &mut Schedule,
         world: &mut World,
         map: &MapData,
         input: Input,
@@ -245,7 +150,10 @@ mod tests {
                 gfx: Gfx::new(&mut frame),
                 audio: Audio::new(&mut audio_commands),
             };
-            game.update(&mut ctx, DT);
+            schedule.run_fixed(&mut ctx, DT);
+            schedule.run_update(&mut ctx, DT);
+            schedule.run_render_extract(&mut ctx, DT);
+            schedule.run_ui(&mut ctx, DT);
         }
 
         frame.ui_text.into_iter().map(|text| text.text).collect()
@@ -279,7 +187,7 @@ mod tests {
 
     #[test]
     fn arena_start_snapshot_sets_map_and_spawn_positions() {
-        let (_game, world, map) = start_arena();
+        let (_schedule, world, map) = start_arena();
 
         assert_eq!(map.tilemap.width(), 15);
         assert_eq!(map.tilemap.height(), 9);
@@ -295,10 +203,10 @@ mod tests {
 
     #[test]
     fn arena_update_snapshot_player_input_sets_velocity() {
-        let (mut game, mut world, map) = start_arena();
+        let (mut schedule, mut world, map) = start_arena();
 
         update_arena(
-            &mut game,
+            &mut schedule,
             &mut world,
             &map,
             Input::default().with_axis2d(MOVE_AXIS, glam::vec2(1.0, 0.0)),
@@ -309,13 +217,13 @@ mod tests {
 
     #[test]
     fn arena_update_snapshot_enemy_chases_player_through_nav_grid() {
-        let (mut game, mut world, map) = start_arena();
+        let (mut schedule, mut world, map) = start_arena();
         let player_pos = pos(&world, player_id(&world));
         for id in enemy_ids(&world) {
             set_pos(&mut world, id, player_pos + glam::vec2(96.0, 0.0));
         }
 
-        update_arena(&mut game, &mut world, &map, Input::default());
+        update_arena(&mut schedule, &mut world, &map, Input::default());
 
         let enemy = enemy_ids(&world).pop().unwrap();
         assert!(velocity(&world, enemy).x < 0.0);
@@ -323,7 +231,7 @@ mod tests {
 
     #[test]
     fn arena_update_snapshot_player_attack_damages_nearest_enemy() {
-        let (mut game, mut world, map) = start_arena();
+        let (mut schedule, mut world, map) = start_arena();
         let player_pos = pos(&world, player_id(&world));
         for id in enemy_ids(&world) {
             set_pos(&mut world, id, player_pos + glam::vec2(29.0, 0.0));
@@ -335,7 +243,7 @@ mod tests {
         );
 
         update_arena(
-            &mut game,
+            &mut schedule,
             &mut world,
             &map,
             Input::default().with_pressed(arena_actions().attack),
@@ -352,20 +260,20 @@ mod tests {
 
     #[test]
     fn arena_update_snapshot_enemy_attack_damages_player() {
-        let (mut game, mut world, map) = start_arena();
+        let (mut schedule, mut world, map) = start_arena();
         let player_pos = pos(&world, player_id(&world));
         for id in enemy_ids(&world) {
             set_pos(&mut world, id, player_pos + glam::vec2(10.0, 0.0));
         }
 
-        update_arena(&mut game, &mut world, &map, Input::default());
+        update_arena(&mut schedule, &mut world, &map, Input::default());
 
         assert_eq!(world.get::<Health>(player_id(&world)).unwrap().current, 94);
     }
 
     #[test]
     fn arena_update_snapshot_reset_clears_and_respawns_world() {
-        let (mut game, mut world, map) = start_arena();
+        let (mut schedule, mut world, map) = start_arena();
         spawn::spawn_enemy(
             &mut world,
             glam::vec2(64.0, 64.0),
@@ -375,7 +283,7 @@ mod tests {
         set_pos(&mut world, player, glam::vec2(64.0, 64.0));
 
         update_arena(
-            &mut game,
+            &mut schedule,
             &mut world,
             &map,
             Input::default().with_pressed(arena_actions().reset),
@@ -394,11 +302,11 @@ mod tests {
 
     #[test]
     fn arena_update_snapshot_pause_stops_simulation_velocity() {
-        let (mut game, mut world, map) = start_arena();
+        let (mut schedule, mut world, map) = start_arena();
         set_all_velocities(&mut world, glam::vec2(5.0, 7.0));
 
         let ui_text = update_arena(
-            &mut game,
+            &mut schedule,
             &mut world,
             &map,
             Input::default().with_pressed(arena_actions().pause),
@@ -415,13 +323,13 @@ mod tests {
 
     #[test]
     fn arena_update_snapshot_death_screen_path_stops_entities() {
-        let (mut game, mut world, map) = start_arena();
+        let (mut schedule, mut world, map) = start_arena();
         set_all_velocities(&mut world, glam::vec2(5.0, 7.0));
         let player = player_id(&world);
         let health = world.get_mut::<Health>(player).unwrap();
         health.damage(health.current);
 
-        let ui_text = update_arena(&mut game, &mut world, &map, Input::default());
+        let ui_text = update_arena(&mut schedule, &mut world, &map, Input::default());
 
         assert!(
             world
@@ -434,8 +342,6 @@ mod tests {
 
     #[test]
     fn arena_plugin_builds_and_validates_clean() {
-        use game_core::builder::GameBuilder;
-        use game_core::plugin::GamePlugin;
         use game_core::schedule::ScheduleValidator;
 
         let mut builder = GameBuilder::new();
@@ -452,8 +358,8 @@ mod tests {
 
     #[test]
     fn arena_content_validation_rejects_missing_player_spawn() {
-        use crate::engine::builder::PrefabRegistry;
-        use crate::engine::input::InputRegistry;
+        use game_core::builder::PrefabRegistry;
+        use game_core::input::InputRegistry;
         use game_map::{MapBuilder, cell};
 
         let assets = crate::assets::ArenaAssets::load();

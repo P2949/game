@@ -4,7 +4,7 @@
 use ash::{Entry, vk};
 use std::ffi::{CStr, CString};
 
-use crate::renderer::debug;
+use crate::debug;
 
 /// Owns the Vulkan loader, instance, and optional debug messenger.
 ///

@@ -4,12 +4,12 @@ use game_map::GameMap;
 use game_physics::Collider;
 use glam::{Vec2, Vec4};
 
+use crate::actor::{EnemyTag, MoveSpeed, Name, PlayerController};
 use crate::assets::ArenaAssets;
-use crate::engine::builder::PrefabRegistry;
-use crate::engine::world::{Entity, EntityId, Sprite};
-use crate::game::World;
-use crate::game::actor::{EnemyTag, MoveSpeed, Name, PlayerController};
 use crate::input::ArenaActions;
+use game_core::builder::PrefabRegistry;
+use game_core::world::World;
+use game_core::world::{Entity, EntityId, Sprite};
 
 const ENEMY_REPATH_SECONDS: f32 = 0.25;
 

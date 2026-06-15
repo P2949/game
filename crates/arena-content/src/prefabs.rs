@@ -1,6 +1,6 @@
 use crate::assets::ArenaAssets;
-use crate::engine::builder::{PrefabId, PrefabRegistry};
 use crate::input::ArenaActions;
+use game_core::builder::{PrefabId, PrefabRegistry};
 
 pub const PLAYER: &str = "arena/player";
 pub const SLIME: &str = "arena/slime";
@@ -39,9 +39,9 @@ pub fn register(
 mod tests {
     use super::register;
     use crate::assets::ArenaAssets;
-    use crate::engine::builder::{PrefabRegistry, PropertyBag};
-    use crate::engine::input::InputRegistry;
-    use crate::engine::world::World;
+    use game_core::builder::{PrefabRegistry, PropertyBag};
+    use game_core::input::InputRegistry;
+    use game_core::world::World;
 
     #[test]
     fn arena_prefabs_spawn_player_and_enemy() {
