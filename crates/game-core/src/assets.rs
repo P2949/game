@@ -26,12 +26,32 @@ impl AssetRegistry {
     }
 
     pub fn texture(&mut self, key: impl Into<String>, path: impl Into<String>) -> TextureHandle {
+        self.try_texture(key, path)
+            .expect("texture asset keys must not be reused with different paths")
+    }
+
+    pub fn try_texture(
+        &mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> anyhow::Result<TextureHandle> {
         let key = key.into();
-        if let Some(handle) = self.texture_handles.get(&key) {
-            return *handle;
+        let path = path.into();
+        if let Some(request) = self.textures.get(&key) {
+            if request.path != path {
+                anyhow::bail!(
+                    "texture asset key '{}' already points to '{}', not '{}'",
+                    key,
+                    request.path,
+                    path
+                );
+            }
+            return Ok(*self
+                .texture_handles
+                .get(&key)
+                .expect("texture request and handle maps must stay in sync"));
         }
 
-        let path = path.into();
         let handle = if let Some(handle) = self.texture_path_handles.get(&path) {
             *handle
         } else {
@@ -42,16 +62,36 @@ impl AssetRegistry {
         self.textures
             .insert(key.clone(), TextureLoadRequest { path });
         self.texture_handles.insert(key, handle);
-        handle
+        Ok(handle)
     }
 
     pub fn sound(&mut self, key: impl Into<String>, path: impl Into<String>) -> SoundHandle {
+        self.try_sound(key, path)
+            .expect("sound asset keys must not be reused with different paths")
+    }
+
+    pub fn try_sound(
+        &mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> anyhow::Result<SoundHandle> {
         let key = key.into();
-        if let Some(handle) = self.sound_handles.get(&key) {
-            return *handle;
+        let path = path.into();
+        if let Some(request) = self.sounds.get(&key) {
+            if request.path != path {
+                anyhow::bail!(
+                    "sound asset key '{}' already points to '{}', not '{}'",
+                    key,
+                    request.path,
+                    path
+                );
+            }
+            return Ok(*self
+                .sound_handles
+                .get(&key)
+                .expect("sound request and handle maps must stay in sync"));
         }
 
-        let path = path.into();
         let handle = if let Some(handle) = self.sound_path_handles.get(&path) {
             *handle
         } else {
@@ -61,16 +101,36 @@ impl AssetRegistry {
         };
         self.sounds.insert(key.clone(), SoundLoadRequest { path });
         self.sound_handles.insert(key, handle);
-        handle
+        Ok(handle)
     }
 
     pub fn font(&mut self, key: impl Into<String>, path: impl Into<String>) -> FontHandle {
+        self.try_font(key, path)
+            .expect("font asset keys must not be reused with different paths")
+    }
+
+    pub fn try_font(
+        &mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> anyhow::Result<FontHandle> {
         let key = key.into();
-        if let Some(handle) = self.font_handles.get(&key) {
-            return *handle;
+        let path = path.into();
+        if let Some(request) = self.fonts.get(&key) {
+            if request.path != path {
+                anyhow::bail!(
+                    "font asset key '{}' already points to '{}', not '{}'",
+                    key,
+                    request.path,
+                    path
+                );
+            }
+            return Ok(*self
+                .font_handles
+                .get(&key)
+                .expect("font request and handle maps must stay in sync"));
         }
 
-        let path = path.into();
         let handle = if let Some(handle) = self.font_path_handles.get(&path) {
             *handle
         } else {
@@ -80,7 +140,7 @@ impl AssetRegistry {
         };
         self.fonts.insert(key.clone(), FontLoadRequest { path });
         self.font_handles.insert(key, handle);
-        handle
+        Ok(handle)
     }
 
     pub fn texture_request(&self, key: &str) -> Option<&TextureLoadRequest> {
@@ -197,7 +257,7 @@ mod tests {
     fn asset_registry_reuses_keys_and_records_requests() {
         let mut registry = AssetRegistry::new();
         let first = registry.texture("arena/floor", "textures/test.png");
-        let second = registry.texture("arena/floor", "textures/other.png");
+        let second = registry.texture("arena/floor", "textures/test.png");
         let same_path = registry.texture("arena/wall", "textures/test.png");
         let other_path = registry.texture("arena/other", "textures/other.png");
 
@@ -208,6 +268,18 @@ mod tests {
             registry.texture_request("arena/floor").unwrap().path,
             "textures/test.png"
         );
+    }
+
+    #[test]
+    fn asset_registry_rejects_conflicting_key_paths() {
+        let mut registry = AssetRegistry::new();
+        registry.texture("arena/floor", "textures/test.png");
+
+        let err = registry
+            .try_texture("arena/floor", "textures/other.png")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("already points to"));
     }
 
     #[test]

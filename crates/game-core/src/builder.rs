@@ -54,17 +54,32 @@ impl MapRegistry {
         tilemap: TileMap,
         theme: TileTheme,
     ) -> MapId {
+        self.try_register(name, tilemap, theme)
+            .expect("map names must be unique")
+    }
+
+    pub fn try_register(
+        &mut self,
+        name: impl Into<String>,
+        tilemap: TileMap,
+        theme: TileTheme,
+    ) -> anyhow::Result<MapId> {
+        let name = name.into();
+        if self.maps.iter().any(|map| map.name == name) {
+            anyhow::bail!("duplicate map name '{name}'");
+        }
+
         let id = MapId(self.maps.len() as u32);
         let nav = NavGrid::from_tilemap(&tilemap);
         self.maps.push(RegisteredMap {
-            name: name.into(),
+            name,
             data: MapData {
                 tilemap,
                 nav,
                 theme,
             },
         });
-        id
+        Ok(id)
     }
 
     pub fn get(&self, id: MapId) -> Option<&RegisteredMap> {
@@ -337,9 +352,17 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use crate::world::{Entity, Transform, Velocity};
+    use crate::backend::TextureHandle;
+    use crate::world::{Entity, Sprite, Transform, Velocity};
 
-    use super::{PrefabRegistry, PrefabValidator};
+    use super::{MapRegistry, PrefabRegistry, PrefabValidator};
+
+    fn theme() -> crate::app::TileTheme {
+        crate::app::TileTheme {
+            floor: Sprite::new(TextureHandle(0), glam::Vec2::ONE),
+            wall: Sprite::new(TextureHandle(1), glam::Vec2::ONE),
+        }
+    }
 
     #[test]
     fn try_register_rejects_duplicate_names() {
@@ -353,6 +376,17 @@ mod tests {
             .unwrap_err();
 
         assert!(err.to_string().contains("duplicate prefab name 'thing'"));
+    }
+
+    #[test]
+    fn map_registry_rejects_duplicate_names() {
+        let mut registry = MapRegistry::new();
+        let map = crate::tilemap::TileMap::try_from_rows(&["."], 16.0).unwrap();
+        registry.register("arena", map.clone(), theme());
+
+        let err = registry.try_register("arena", map, theme()).unwrap_err();
+
+        assert!(err.to_string().contains("duplicate map name 'arena'"));
     }
 
     #[test]

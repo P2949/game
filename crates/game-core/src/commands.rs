@@ -1,19 +1,10 @@
 use crate::backend::SoundHandle;
-use crate::builder::{MapId, PrefabId};
 use crate::world::EntityId;
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Event {
-    Named(String),
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
-    Spawn(PrefabId, glam::Vec2),
     Despawn(EntityId),
     PlaySound(SoundHandle),
-    SetMap(MapId),
-    EmitEvent(Event),
 }
 
 #[derive(Default)]
@@ -30,24 +21,12 @@ impl CommandQueue {
         self.commands.push(command);
     }
 
-    pub fn spawn(&mut self, prefab: PrefabId, position: glam::Vec2) {
-        self.push(Command::Spawn(prefab, position));
-    }
-
     pub fn despawn(&mut self, entity: EntityId) {
         self.push(Command::Despawn(entity));
     }
 
     pub fn play_sound(&mut self, sound: SoundHandle) {
         self.push(Command::PlaySound(sound));
-    }
-
-    pub fn set_map(&mut self, map: MapId) {
-        self.push(Command::SetMap(map));
-    }
-
-    pub fn emit(&mut self, event: Event) {
-        self.push(Command::EmitEvent(event));
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = Command> + '_ {

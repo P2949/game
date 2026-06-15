@@ -24,7 +24,7 @@ This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 
 - explicit, RAII-driven Vulkan renderer lifetime handling
 - 2D sprite rendering with layered, texture-batched draws
-- fixed-timestep gameplay with render interpolation
+- fixed-timestep gameplay
 - axis-separated AABB collision with wall sliding
 - simple generated audio through a lock-free mixer
 
@@ -40,7 +40,7 @@ It is **not** yet:
 - Vulkan 1.3 renderer (dynamic rendering, synchronization2) through `ash`
 - Sprite batching reuses dynamic GPU vertex buffers after growth, avoiding
   steady-state GPU buffer allocation for normal sprite submission
-- Fixed-timestep update loop with render interpolation
+- Fixed-timestep update loop
 - Bitmap (ASCII) UI text rendered from a runtime-built font atlas
 
 ## Requirements

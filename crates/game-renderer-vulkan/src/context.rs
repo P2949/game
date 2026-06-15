@@ -1,7 +1,7 @@
 use ash::vk;
 use game_core::app::RenderFrame;
 use game_core::backend::TextureHandle;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::renderer::commands::{
@@ -114,6 +114,7 @@ pub struct VulkanContext {
     // the font sentinel) to renderer texture ids. The render path resolves each
     // sprite's handle through this rather than casting handle -> id.
     texture_handle_to_id: HashMap<TextureHandle, TextureId>,
+    warned_unmapped_texture_handles: HashSet<TextureHandle>,
     upload_command_pool: Option<OwnedCommandPool>,
     upload_fence: Option<OwnedFence>,
     swapchain: swapchain::Swapchain,
@@ -241,6 +242,7 @@ impl VulkanContext {
             texture_descriptor_set_layout: Some(texture_descriptor_set_layout),
             texture_registry,
             texture_handle_to_id,
+            warned_unmapped_texture_handles: HashSet::new(),
             upload_command_pool: Some(upload_command_pool),
             upload_fence: Some(upload_fence),
             swapchain,
@@ -490,6 +492,7 @@ impl VulkanContext {
             &mut self.world_draw_ranges,
             &self.texture_registry,
             &self.texture_handle_to_id,
+            &mut self.warned_unmapped_texture_handles,
         )?;
 
         self.scratch_batch_ranges.clear();
@@ -501,6 +504,7 @@ impl VulkanContext {
             &mut self.ui_draw_ranges,
             &self.texture_registry,
             &self.texture_handle_to_id,
+            &mut self.warned_unmapped_texture_handles,
         )?;
 
         let dropped_invalid_sprites =

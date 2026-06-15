@@ -31,7 +31,7 @@ pub mod prelude {
         PropertyBag, RegisteredMap,
     };
     pub use crate::camera::Camera2D;
-    pub use crate::commands::{Command, CommandQueue, Event};
+    pub use crate::commands::{Command, CommandQueue};
     pub use crate::gfx::{Gfx, SpriteDraw, TextDraw};
     pub use crate::input::{
         ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, InputRegistry, Key,
@@ -81,7 +81,7 @@ pub use builder::{
 #[allow(unused_imports)]
 pub use camera::Camera2D;
 #[allow(unused_imports)]
-pub use commands::{Command, CommandQueue, Event};
+pub use commands::{Command, CommandQueue};
 #[allow(unused_imports)]
 pub use gfx::{Gfx, SpriteDraw, TextDraw};
 #[allow(unused_imports)]

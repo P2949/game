@@ -121,24 +121,48 @@ impl InputRegistry {
     }
 
     pub fn action(&mut self, name: impl Into<String>) -> ActionBindingBuilder<'_> {
+        self.try_action(name)
+            .expect("input action names must be unique")
+    }
+
+    pub fn try_action(
+        &mut self,
+        name: impl Into<String>,
+    ) -> anyhow::Result<ActionBindingBuilder<'_>> {
+        let name = name.into();
+        if self.actions.iter().any(|binding| binding.name == name) {
+            anyhow::bail!("duplicate input action '{name}'");
+        }
         let id = ActionId(self.actions.len() as u32);
         self.actions.push(ActionBinding {
-            name: name.into(),
+            name,
             keys: Vec::new(),
         });
-        ActionBindingBuilder { registry: self, id }
+        Ok(ActionBindingBuilder { registry: self, id })
     }
 
     pub fn axis2d(&mut self, name: impl Into<String>) -> Axis2dBindingBuilder<'_> {
+        self.try_axis2d(name)
+            .expect("input axis2d names must be unique")
+    }
+
+    pub fn try_axis2d(
+        &mut self,
+        name: impl Into<String>,
+    ) -> anyhow::Result<Axis2dBindingBuilder<'_>> {
+        let name = name.into();
+        if self.axes2d.iter().any(|binding| binding.name == name) {
+            anyhow::bail!("duplicate input axis2d '{name}'");
+        }
         let id = Axis2dId(self.axes2d.len() as u32);
         self.axes2d.push(Axis2dBinding {
-            name: name.into(),
+            name,
             negative_x: Vec::new(),
             positive_x: Vec::new(),
             negative_y: Vec::new(),
             positive_y: Vec::new(),
         });
-        Axis2dBindingBuilder { registry: self, id }
+        Ok(Axis2dBindingBuilder { registry: self, id })
     }
 
     pub fn action_binding(&self, id: ActionId) -> Option<&ActionBinding> {
@@ -392,5 +416,23 @@ mod tests {
         let (registry, _attack, _movement) = registry();
         let input = Input::evaluate_continuous(&registry, &InputState::default());
         assert_eq!(input.axis2d(super::Axis2dId(7)), glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_binding_names() {
+        let mut registry = InputRegistry::new();
+        registry.action("attack");
+        let err = registry
+            .try_action("attack")
+            .err()
+            .expect("duplicate action should be rejected");
+        assert!(err.to_string().contains("duplicate input action"));
+
+        registry.axis2d("move");
+        let err = registry
+            .try_axis2d("move")
+            .err()
+            .expect("duplicate axis should be rejected");
+        assert!(err.to_string().contains("duplicate input axis2d"));
     }
 }

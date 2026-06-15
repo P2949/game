@@ -22,12 +22,13 @@ deliberately deferred with a rationale.
   rest (indexed quads, layout tracking, non-coherent memory) is deferred as "not
   urgent" per the roadmap.
 - **Phase 5 — gameplay correctness:** pause freezes simulation and effects;
-  `Entity::try_set_position` added; depenetration and swept-AABB movement added,
-  with gameplay switched to swept collision. The data-driven level format is
-  deferred (would add a serialization dependency; collision is now strong enough
-  to unblock it later).
-- **Phase 6 — audio robustness:** seamless looping music, a voice-drop counter,
-  and validated tone generation. Resampling stays deferred by design.
+  collision remains discrete axis-separated AABB movement with wall sliding.
+  Swept collision/depenetration are still planned, and fast movement can tunnel
+  through thin solids. Map authoring has moved toward strict validation through
+  `game-map`.
+- **Phase 6 — audio robustness:** a voice-drop counter and validated generated
+  tone playback are present. Loading registered sound files, seamless looping
+  music, and resampling stay deferred by design.
 - **Phase 7 — text/UI:** ASCII-only limitation documented; dynamic glyph/shaping
   work deferred.
 - **Phase 8 — cleanup/docs:** `#[allow(dead_code)]` audit
@@ -57,3 +58,14 @@ each is marked `// TEMP:` at its definition:
 Removal is mechanical (path rewrites plus deleting the shim modules) and can be
 done crate-by-crate. The `architecture_boundaries` integration test records the
 cross-crate import gates that must continue to hold afterward.
+
+## Current stabilization targets
+
+- Keep CI commands workspace/package-qualified so the virtual workspace does not
+  rely on whichever package Cargo happens to infer.
+- Collapse the remaining direct `Game::update` fallback once runtime content is
+  fully schedule-driven.
+- Keep command APIs honest: only expose commands the runtime actually consumes,
+  or carry the necessary registries into runtime before adding map/prefab/event
+  commands.
+- Tighten duplicate-name validation in registries before more content is added.
