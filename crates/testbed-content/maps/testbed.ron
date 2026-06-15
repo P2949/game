@@ -1,0 +1,27 @@
+GameMap(
+    id: "testbed",
+    tile_size: 32.0,
+    layers: [
+        TileLayer(
+            id: "collision",
+            rows: [
+                "#################",
+                "#...............#",
+                "#...............#",
+                "#...............#",
+                "#......###......#",
+                "#......###......#",
+                "#......###......#",
+                "#...............#",
+                "#...............#",
+                "#...............#",
+                "#################",
+            ],
+        ),
+    ],
+    objects: [
+        MapObject(id: "player_start", prefab: "testbed/player", cell: (1, 1)),
+        MapObject(id: "patroller_01", prefab: "testbed/patroller", cell: (8, 1)),
+        MapObject(id: "chaser_01", prefab: "testbed/chaser", cell: (15, 9)),
+    ],
+)

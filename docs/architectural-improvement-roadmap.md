@@ -36,3 +36,24 @@ deliberately deferred with a rationale.
   and a [`release-checklist.md`](release-checklist.md).
 - **Phase 9 — README polish:** project-status/scope section added. A
   screenshot/GIF still needs a manual capture from a real display.
+
+## Follow-ups after the engine/content workspace split
+
+The split landed with deliberately temporary compatibility shims so the
+mechanical crate move did not also have to rewrite every `use` path in one go.
+These are tracked here for removal — none are part of a public engine API, and
+each is marked `// TEMP:` at its definition:
+
+- `game_core::engine` — re-exports every `game-core` module under the old
+  `engine::` path. Remove once nothing imports `game_core::engine::*`.
+- `arena_content::engine` / `arena_content::game` — let the arena keep its
+  pre-split `crate::engine::*` / `crate::game::*` paths. Replace those with
+  direct `game_core::*` and crate-local imports; `testbed-content` already uses
+  the direct paths and is the reference for what "done" looks like.
+- `game_renderer_vulkan::renderer` and the `game-platform-sdl` compat module —
+  re-export the old `src/renderer` / `src/platform` module trees. Remove once
+  internal paths reference the crate-root items directly.
+
+Removal is mechanical (path rewrites plus deleting the shim modules) and can be
+done crate-by-crate. The `architecture_boundaries` integration test records the
+cross-crate import gates that must continue to hold afterward.

@@ -3,6 +3,21 @@
 A small Rust game prototype built directly on SDL3 (window, input, audio) and a
 hand-written Vulkan renderer via [`ash`](https://crates.io/crates/ash).
 
+## Workspace layout
+
+The project is a Cargo workspace. The reusable engine and the gameplay content
+are separate crates, and the binary (`bin/game`) only selects which content
+plugin to run:
+
+- engine/runtime: `game-core`, `game-runtime`, `game-renderer-vulkan`,
+  `game-platform-sdl`, `game-audio`
+- gameplay building blocks: `game-map`, `game-ai`, `game-combat`, `game-physics`
+- content plugins (demos): `arena-content` (default) and `testbed-content`
+
+The binary picks a demo from the `GAME_DEMO` environment variable (`arena` by
+default, or `testbed`); the runtime, renderer, audio, and platform crates are
+identical for both.
+
 ## Project status
 
 This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
@@ -10,7 +25,7 @@ This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 - explicit, RAII-driven Vulkan renderer lifetime handling
 - 2D sprite rendering with layered, texture-batched draws
 - fixed-timestep gameplay with render interpolation
-- swept-AABB collision with wall sliding
+- axis-separated AABB collision with wall sliding
 - simple generated audio through a lock-free mixer
 
 It is **not** yet:
@@ -40,9 +55,14 @@ It is **not** yet:
 ## Build and run
 
 ```bash
-cargo run                                      # debug build (validation layers enabled)
-GAME_ASSET_DIR=assets cargo run --release      # optimized build (LTO, single codegen unit)
+cargo run -p game                                   # debug build (validation layers enabled)
+GAME_ASSET_DIR=assets cargo run -p game --release   # optimized build (LTO, single codegen unit)
+GAME_DEMO=testbed cargo run -p game                 # run the second (testbed) demo
 ```
+
+`game` is the only binary in the workspace, so a plain `cargo run` resolves to
+it; `-p game` is the explicit form and stays unambiguous if more binaries are
+added later.
 
 A debug `cargo run` from a source checkout finds `assets/` through the
 source-tree fallback, but a `--release` build does **not** use that fallback (see
@@ -69,6 +89,7 @@ Release packages should not rely on the source-tree fallback.
 
 | Variable | Effect |
 | -------- | ------ |
+| `GAME_DEMO` | Selects the content plugin: `arena` (default) or `testbed`. |
 | `GAME_SMOKE_FRAMES` | If set to `N`, initializes normally, renders exactly `N` frames, then exits. `0` exits after initialization before rendering. Invalid values fail early. |
 | `GAME_ASSET_DIR` | Overrides runtime asset root discovery. |
 | `GAME_PRESENT_MODE` | `fifo` (default), `mailbox`, or `immediate`; unavailable opt-in modes fall back to FIFO. |
@@ -128,22 +149,26 @@ required across textures.
 
 ```bash
 cargo fmt --all -- --check
-cargo test --locked
-cargo clippy --all-targets --locked -- -D warnings
-cargo build --release --locked
-GAME_SMOKE_FRAMES=120 cargo run --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build -p game --release --locked
+GAME_SMOKE_FRAMES=120 cargo run -p game --locked
+GAME_ASSET_DIR=assets GAME_SMOKE_FRAMES=120 cargo run -p game --release --locked
 ```
 
 These commands use your system SDL3 development libraries. CI instead builds
-SDL3 from source through the `ci-build-sdl3` feature so the workflow does not
-depend on whether the runner image ships a `libsdl3-dev` package. To reproduce
-the CI build exactly, pass that feature:
+SDL3 from source through the `ci-build-sdl3` feature (defined on the `game`
+binary package, which forwards it to `game-platform-sdl` and `game-audio`) so
+the workflow does not depend on whether the runner image ships a `libsdl3-dev`
+package. The feature lives on a single package, so passing it at the workspace
+root just enables it wherever it is defined:
 
 ```bash
-cargo test --locked --features ci-build-sdl3
-cargo clippy --all-targets --locked --features ci-build-sdl3 -- -D warnings
-cargo build --release --locked --features ci-build-sdl3
-GAME_SMOKE_FRAMES=120 cargo run --locked --features ci-build-sdl3
+cargo test --workspace --locked --features game/ci-build-sdl3
+cargo clippy --workspace --all-targets --locked --features game/ci-build-sdl3 -- -D warnings
+cargo build -p game --release --locked --features ci-build-sdl3
+GAME_SMOKE_FRAMES=120 cargo run -p game --locked --features ci-build-sdl3
+GAME_ASSET_DIR=assets GAME_SMOKE_FRAMES=120 cargo run -p game --release --locked --features ci-build-sdl3
 ```
 
 ## Known limitations

@@ -1,0 +1,22 @@
+[package]
+name = "game"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+env_logger.workspace = true
+game-audio = { version = "0.1.0", path = "../../crates/game-audio" }
+game-platform-sdl = { version = "0.1.0", path = "../../crates/game-platform-sdl" }
+game-runtime = { version = "0.1.0", path = "../../crates/game-runtime" }
+arena-content = { version = "0.1.0", path = "../../crates/arena-content" }
+testbed-content = { version = "0.1.0", path = "../../crates/testbed-content" }
+
+[features]
+ci-build-sdl3 = [
+    "game-platform-sdl/ci-build-sdl3",
+    "game-audio/ci-build-sdl3",
+]

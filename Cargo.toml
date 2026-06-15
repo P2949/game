@@ -1,34 +1,42 @@
-[package]
-name = "game"
+[workspace]
+resolver = "3"
+members = [
+    "crates/game-audio",
+    "crates/game-combat",
+    "crates/game-core",
+    "crates/game-ai",
+    "crates/game-map",
+    "crates/game-physics",
+    "crates/game-platform-sdl",
+    "crates/game-renderer-vulkan",
+    "crates/game-runtime",
+    "crates/arena-content",
+    "crates/testbed-content",
+    "bin/game",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.87"
 license = "GPL-3.0-or-later"
-description = "Small Rust/SDL3/Vulkan game prototype"
 repository = "https://github.com/P2949/game"
 
-[dependencies]
-sdl3 = "0.18.4"
+[workspace.dependencies]
+anyhow = "1"
 ash = "0.38"
-gpu-allocator = "0.28"
-glam = "0.33.1"
-
-image = { version = "0.25", default-features = false, features = ["png"] }
-fontdue = "0.9"
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-queue = "0.3"
-
-anyhow = "1"
-log = "0.4"
 env_logger = "0.11"
-
-[build-dependencies]
+fontdue = "0.9"
+glam = "0.33.1"
+gpu-allocator = "0.28"
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = "0.4"
+ron = "0.12.1"
+sdl3 = "0.18.4"
+serde = { version = "1", features = ["derive"] }
 walkdir = "2"
-
-[features]
-# CI uses the sdl3 crate's pinned source package so the workflow does not depend
-# on whether the runner image happens to ship a `libsdl3-dev` apt package.
-ci-build-sdl3 = ["sdl3/build-from-source"]
 
 [profile.release]
 # Production builds: optimize across the whole crate graph. codegen-units = 1
