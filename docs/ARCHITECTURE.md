@@ -1,10 +1,19 @@
 # Architecture Overview
 
+> **Workspace layout.** The code is a Cargo workspace; the binary (`bin/game`)
+> only selects a content plugin. The engine lives in `game-core` /
+> `game-runtime` / `game-renderer-vulkan` / `game-platform-sdl` / `game-audio`,
+> gameplay building blocks in `game-map` / `game-ai` / `game-combat` /
+> `game-physics`, and demos in `arena-content` / `testbed-content` (see the
+> README "Workspace layout" section). A few module paths below predate the split
+> (e.g. the loop now lives in `game-runtime`'s `runner.rs`, not `src/main.rs`);
+> the responsibilities they describe are still accurate.
+
 ## Main Loop
 
-`src/main.rs` owns platform event pumping, fixed-timestep simulation, rendering,
-audio command submission, resize handling, and smoke-test shutdown. Rendering is
-skipped while the drawable size is zero.
+`game-runtime`'s `runner.rs` owns platform event pumping, fixed-timestep
+simulation, rendering, audio command submission, resize handling, and smoke-test
+shutdown. Rendering is skipped while the drawable size is zero.
 
 ## Fixed Timestep
 

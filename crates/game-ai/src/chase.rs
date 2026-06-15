@@ -66,6 +66,16 @@ pub struct PathFollow {
 /// position) so this system stays free of any content-specific target component.
 pub fn chase_system(world: &mut World, nav: &NavGrid, target_pos: Option<Vec2>, dt: f32) {
     let Some(target_pos) = target_pos else {
+        // No target this tick (e.g. the player despawned mid-chase): stop every
+        // chaser and drop it to Idle so nothing coasts on stale velocity.
+        for id in world.ids_with::<ChaseTarget>() {
+            if let Some(velocity) = world.get_mut::<Velocity>(id) {
+                velocity.0 = Vec2::ZERO;
+            }
+            if let Some(controller) = world.get_mut::<AiController>(id) {
+                controller.state = AiState::Idle;
+            }
+        }
         return;
     };
 
@@ -159,6 +169,9 @@ mod tests {
                 .with(ChaseTarget::player(100.0, 1.0, 5.0, 0.25))
                 .with(PathFollow::default()),
         );
+        // Seed stale velocity so the assertion proves the system *clears* it when
+        // the target vanishes, not merely that it started at rest.
+        world.get_mut::<Velocity>(enemy).unwrap().0 = glam::vec2(9.0, -3.0);
 
         chase_system(&mut world, &nav, None, 1.0 / 120.0);
 

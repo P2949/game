@@ -311,7 +311,6 @@ name = "game-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "game-map",
  "glam",
  "log",
 ]
@@ -321,6 +320,7 @@ name = "game-map"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "game-core",
  "glam",
  "ron",
  "serde",

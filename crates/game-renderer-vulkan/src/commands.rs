@@ -3,7 +3,10 @@
 //! `context.rs` so the context owns frame orchestration while the imperative
 //! Vulkan command details live here.
 
+use std::collections::HashMap;
+
 use ash::vk;
+use game_core::backend::TextureHandle;
 use gpu_allocator::MemoryLocation;
 
 use crate::renderer::sprite_batch::SpriteBatchRange;
@@ -26,18 +29,29 @@ pub struct RenderSpriteBatch<'a> {
     pub ranges: &'a [RenderSpriteRange],
 }
 
-/// Resolves each batch range's texture id to its descriptor set via the registry,
-/// appending the GPU-ready draw ranges to `out`. `out` is appended to (never
-/// cleared) so the caller controls buffer reuse across frames.
+/// Resolves each batch range's content [`TextureHandle`] to a descriptor set,
+/// first mapping the handle to a renderer [`TextureId`] via `handle_to_id` and
+/// then looking that id up in the registry. Resolved ranges are appended to `out`
+/// (never cleared, so the caller controls cross-frame buffer reuse). A handle with
+/// no mapping is dropped (and logged) rather than cast straight to a `TextureId`,
+/// which previously let an unregistered handle alias an unrelated texture.
 pub fn resolve_draw_ranges(
     batch_ranges: &[SpriteBatchRange],
     out: &mut Vec<RenderSpriteRange>,
     textures: &TextureRegistry,
+    handle_to_id: &HashMap<TextureHandle, TextureId>,
 ) -> anyhow::Result<()> {
     out.reserve(batch_ranges.len());
     for range in batch_ranges {
+        let Some(&texture_id) = handle_to_id.get(&range.texture) else {
+            log::debug!(
+                "dropping draw range for unmapped texture handle {:?}",
+                range.texture
+            );
+            continue;
+        };
         out.push(RenderSpriteRange {
-            descriptor_set: textures.descriptor_set(TextureId(range.texture.0))?,
+            descriptor_set: textures.descriptor_set(texture_id)?,
             first_vertex: range.first_vertex,
             vertex_count: range.vertex_count,
         });

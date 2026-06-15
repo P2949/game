@@ -32,6 +32,7 @@ use game_physics::Collider;
 
 use crate::actor::PlayerController;
 use crate::assets::TestbedAssets;
+use crate::input::TestbedActions;
 use crate::prefabs::TestbedPrefabs;
 
 pub struct TestbedPlugin;
@@ -42,6 +43,7 @@ pub fn plugin() -> TestbedPlugin {
 
 pub struct TestbedGame {
     assets: TestbedAssets,
+    actions: TestbedActions,
     map: GameMap,
     prefabs: Rc<PrefabRegistry>,
 }
@@ -57,6 +59,7 @@ impl TestbedGame {
         let map = level::testbed_map_from_ron(&prefabs).expect("embedded testbed RON map is valid");
         Self {
             assets: testbed_assets,
+            actions,
             map,
             prefabs: Rc::new(prefabs),
         }
@@ -75,28 +78,31 @@ impl GamePlugin for TestbedPlugin {
     fn build(&self, app: &mut GameBuilder) -> Result<Self::Game> {
         let assets = assets::register(app.assets_mut());
         let actions = input::register(app.input_mut());
-        let _builder_prefabs = prefabs::register(app.prefabs_mut(), assets, actions);
 
-        let mut runtime_prefabs = PrefabRegistry::new();
-        let prefab_ids = prefabs::register(&mut runtime_prefabs, assets, actions);
+        // Register prefabs exactly once into a registry shared (via `Rc`) by
+        // validation, the schedule's systems, and the returned game.
+        let mut prefabs = PrefabRegistry::new();
+        let prefab_ids = prefabs::register(&mut prefabs, assets, actions);
         // Load the map from the external RON content file (Phase 13).
-        let map = level::testbed_map_from_ron(&runtime_prefabs)?;
+        let map = level::testbed_map_from_ron(&prefabs)?;
         let start_map = maps::register(app.maps_mut(), &assets, &map);
         app.set_start_map(start_map);
 
-        validate_testbed_content(&runtime_prefabs, prefab_ids, &map)?;
+        validate_testbed_content(&prefabs, prefab_ids, &map)?;
 
-        let runtime_prefabs = Rc::new(runtime_prefabs);
+        let prefabs = Rc::new(prefabs);
         systems::register(
             app.schedule_mut(),
             assets,
+            actions,
             map.clone(),
-            Rc::clone(&runtime_prefabs),
+            Rc::clone(&prefabs),
         );
         Ok(TestbedGame {
             assets,
+            actions,
             map,
-            prefabs: runtime_prefabs,
+            prefabs,
         })
     }
 }
@@ -107,14 +113,14 @@ impl Game for TestbedGame {
     }
 
     fn update(&mut self, ctx: &mut Ctx, dt: f32) {
-        systems::state_input_system(ctx, &self.map, &self.prefabs);
+        systems::state_input_system(ctx, &self.map, &self.prefabs, self.actions);
         systems::player_control_system(ctx, dt);
         systems::chase_system(ctx, dt);
         systems::patrol_system(ctx, dt);
         systems::physics_system(ctx, dt);
-        systems::combat_system(ctx, self.assets.hit, dt);
+        systems::combat_system(ctx, self.actions.attack, self.assets.hit, dt);
         systems::death_state_system(ctx, dt);
-        systems::camera_follow_player_system(ctx, dt);
+        systems::camera_follow_player_system(ctx, self.actions, dt);
         systems::testbed_ui_system(ctx, dt);
     }
 }
@@ -156,8 +162,7 @@ fn validate_testbed_content(
     validator
         .validate()
         .context("testbed prefab validation failed")?;
-    validator
-        .validate_map_references(map)
+    game_map::validate_map_prefabs(map, prefabs)
         .context("testbed map references unknown prefab")?;
     Ok(())
 }
@@ -170,7 +175,7 @@ mod tests {
     use game_core::builder::GameBuilder;
     use game_core::camera::Camera2D;
     use game_core::gfx::Gfx;
-    use game_core::input::{FrameActions, Input};
+    use game_core::input::Input;
     use game_core::plugin::GamePlugin;
     use game_core::schedule::ScheduleValidator;
     use game_core::world::World;
@@ -224,12 +229,7 @@ mod tests {
     #[test]
     fn testbed_ui_text_is_distinct_from_arena() {
         let (mut game, mut world, map) = start_testbed();
-        let ui = update_testbed(
-            &mut game,
-            &mut world,
-            &map,
-            Input::new(glam::Vec2::ZERO, 0.0, FrameActions::default()),
-        );
+        let ui = update_testbed(&mut game, &mut world, &map, Input::default());
         assert_eq!(ui, vec!["TESTBED"]);
     }
 

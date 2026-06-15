@@ -6,17 +6,20 @@ use game_map::GameMap;
 use crate::assets::ArenaAssets;
 use crate::combat;
 use crate::engine::app::{Ctx, StartCtx};
+use crate::engine::backend::SoundHandle;
 use crate::engine::builder::PrefabRegistry;
 use crate::engine::commands::CommandQueue;
-use crate::engine::input::Action;
+use crate::engine::input::ActionId;
 use crate::engine::schedule::Schedule;
 use crate::game::World;
+use crate::input::ArenaActions;
 use crate::state::GameState;
 use crate::{ai, level, spawn};
 
 pub fn register(
     schedule: &mut Schedule,
     assets: ArenaAssets,
+    actions: ArenaActions,
     map: GameMap,
     prefabs: Rc<PrefabRegistry>,
 ) {
@@ -29,15 +32,16 @@ pub fn register(
 
     let state_map = map.clone();
     let state_prefabs = Rc::clone(&prefabs);
-    schedule.add_fixed(move |ctx, _dt| state_input_system(ctx, &state_map, &state_prefabs));
+    schedule
+        .add_fixed(move |ctx, _dt| state_input_system(ctx, &state_map, &state_prefabs, actions));
     schedule.add_fixed(player_control_system);
     schedule.add_fixed(chase_player_system);
     schedule.add_fixed(physics_system);
 
     let hit_sound = assets.hit;
-    schedule.add_fixed(move |ctx, dt| combat_system(ctx, hit_sound, dt));
+    schedule.add_fixed(move |ctx, dt| combat_system(ctx, actions.attack, hit_sound, dt));
     schedule.add_fixed(death_state_system);
-    schedule.add_update(camera_follow_player_system);
+    schedule.add_update(move |ctx, dt| camera_follow_player_system(ctx, actions, dt));
     schedule.add_ui(pause_death_ui_system);
 
     // Every arena fixed system self-guards via `simulation_active`/`GameState`,
@@ -65,10 +69,20 @@ pub fn initialize_resources(world: &mut World) {
 
 pub fn reset_world(world: &mut World, map: &GameMap, prefabs: &PrefabRegistry) -> Result<()> {
     world.clear();
+    // `World::clear` preserves resources (including the command queue), so drop
+    // any commands queued against the pre-reset world before respawning.
+    if let Some(commands) = world.get_resource_mut::<CommandQueue>() {
+        commands.clear();
+    }
     spawn::spawn_map_objects(world, map, prefabs)
 }
 
-pub fn state_input_system(ctx: &mut Ctx<'_>, map: &GameMap, prefabs: &PrefabRegistry) {
+pub fn state_input_system(
+    ctx: &mut Ctx<'_>,
+    map: &GameMap,
+    prefabs: &PrefabRegistry,
+    actions: ArenaActions,
+) {
     initialize_resources(ctx.world);
     let mut state = ctx
         .world
@@ -77,22 +91,22 @@ pub fn state_input_system(ctx: &mut Ctx<'_>, map: &GameMap, prefabs: &PrefabRegi
         .unwrap_or_default();
     let was_dead = state.player_dead;
 
-    if ctx.input.pressed(Action::Pause) {
+    if ctx.input.pressed(actions.pause) {
         state.paused = !state.paused;
     }
 
-    if ctx.input.pressed(Action::Reset) {
+    if ctx.input.pressed(actions.reset) {
         reset_world(ctx.world, map, prefabs)
             .expect("arena map objects reference registered prefabs");
         state = GameState::default();
     }
 
-    if ctx.input.pressed(Action::DebugDie) {
+    if ctx.input.pressed(actions.debug_die) {
         combat::kill_player(ctx.world);
     }
 
     state.player_dead = combat::player_is_dead(ctx.world);
-    if state.player_dead && (ctx.input.pressed(Action::Attack) || ctx.input.pressed(Action::Reset))
+    if state.player_dead && (ctx.input.pressed(actions.attack) || ctx.input.pressed(actions.reset))
     {
         reset_world(ctx.world, map, prefabs)
             .expect("arena map objects reference registered prefabs");
@@ -128,9 +142,9 @@ pub fn physics_system(ctx: &mut Ctx<'_>, dt: f32) {
     }
 }
 
-pub fn combat_system(ctx: &mut Ctx<'_>, hit_sound: crate::engine::backend::SoundHandle, dt: f32) {
+pub fn combat_system(ctx: &mut Ctx<'_>, attack: ActionId, hit_sound: SoundHandle, dt: f32) {
     if simulation_active(ctx.world) {
-        combat::tick_commands(ctx.world, ctx.input, hit_sound, dt);
+        combat::tick_commands(ctx.world, ctx.input, attack, hit_sound, dt);
     }
 }
 
@@ -148,12 +162,13 @@ pub fn death_state_system(ctx: &mut Ctx<'_>, _dt: f32) {
     ctx.world.insert_resource(state);
 }
 
-pub fn camera_follow_player_system(ctx: &mut Ctx<'_>, dt: f32) {
-    let zoom_axis = ctx.input.zoom_axis();
-    if zoom_axis != 0.0 {
+pub fn camera_follow_player_system(ctx: &mut Ctx<'_>, actions: ArenaActions, dt: f32) {
+    let zoom_in = ctx.input.down(actions.zoom_in);
+    let zoom_out = ctx.input.down(actions.zoom_out);
+    if zoom_in != zoom_out {
         let zoom_step = 1.0 + 2.0 * dt;
         let mut zoom = ctx.camera.zoom();
-        if zoom_axis > 0.0 {
+        if zoom_in {
             zoom *= zoom_step;
         } else {
             zoom /= zoom_step;
@@ -201,7 +216,7 @@ mod tests {
     use crate::engine::audio::{Audio, AudioCommands};
     use crate::engine::camera::Camera2D;
     use crate::engine::gfx::Gfx;
-    use crate::engine::input::{FrameActions, Input};
+    use crate::engine::input::Input;
     use crate::engine::world::Velocity;
     use crate::state::GameState;
     use crate::{assets, input, level, prefabs};
@@ -252,14 +267,7 @@ mod tests {
         let mut camera = Camera2D::new(glam::Vec2::ZERO, 1.0);
         let mut frame = RenderFrame::new(camera);
         let mut audio_commands = AudioCommands::default();
-        let input = Input::new(
-            glam::Vec2::ZERO,
-            0.0,
-            FrameActions {
-                pause_pressed: true,
-                ..Default::default()
-            },
-        );
+        let input = Input::default().with_pressed(actions.pause);
         let mut ctx = Ctx {
             world: &mut world,
             map: &collision,
@@ -270,7 +278,7 @@ mod tests {
             audio: Audio::new(&mut audio_commands),
         };
 
-        state_input_system(&mut ctx, &map, &prefab_registry);
+        state_input_system(&mut ctx, &map, &prefab_registry, actions);
 
         assert!(world.get_resource::<GameState>().unwrap().paused);
         for id in world.ids_with::<Velocity>() {

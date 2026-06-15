@@ -251,9 +251,23 @@ impl World {
         }
     }
 
+    /// Despawns every entity, invalidating all outstanding [`EntityId`]s.
+    ///
+    /// Crucially this does **not** reset the id space: each live slot's generation
+    /// is bumped (exactly as [`Self::despawn`] does) rather than the slot vector
+    /// being truncated. That keeps an id minted before the clear from ever
+    /// aliasing an entity spawned afterward, so a stale handle or queued
+    /// `Despawn` left over from before a world reset is simply dead, never a
+    /// hijack of a freshly-spawned entity. Resources are intentionally preserved.
     pub fn clear(&mut self) {
-        self.slots.clear();
         self.free.clear();
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            if slot.alive {
+                slot.alive = false;
+                slot.generation = slot.generation.wrapping_add(1);
+            }
+            self.free.push(index as u32);
+        }
         self.components.clear();
     }
 
@@ -425,6 +439,25 @@ mod tests {
             glam::vec2(3.0, 4.0)
         );
         assert_eq!(world.get::<Velocity>(id).unwrap().0, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn clear_invalidates_ids_so_they_cannot_be_reused() {
+        let mut world = World::new();
+        let stale = world.spawn(Entity::new(glam::Vec2::ZERO).with(1_i32));
+
+        world.clear();
+        // Re-spawn the same number of entities; the reused slot must not revive
+        // the pre-clear id.
+        let fresh = world.spawn(Entity::new(glam::Vec2::ZERO).with(2_i32));
+
+        assert_ne!(stale, fresh);
+        assert!(world.get::<i32>(stale).is_none());
+        assert_eq!(world.get::<i32>(fresh), Some(&2));
+        // A leftover despawn aimed at the stale id is a harmless no-op, not a
+        // hijack of the freshly-spawned entity.
+        world.despawn(stale);
+        assert_eq!(world.get::<i32>(fresh), Some(&2));
     }
 
     #[test]

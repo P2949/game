@@ -21,18 +21,21 @@ pub fn stop_all(world: &mut World) {
 
 pub fn drive_player(world: &mut World, input: &Input) {
     for id in world.ids_with::<PlayerController>() {
+        let Some(controller) = world.get::<PlayerController>(id).copied() else {
+            continue;
+        };
         let Some(speed) = world.get::<MoveSpeed>(id).copied() else {
             continue;
         };
         if let Some(velocity) = world.get_mut::<Velocity>(id) {
-            velocity.0 = input.move_axis() * speed.0;
+            velocity.0 = input.axis2d(controller.move_axis) * speed.0;
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use game_core::input::{FrameActions, Input};
+    use game_core::input::{Axis2dId, Input};
     use game_core::world::{Entity, Velocity, World};
 
     use super::{drive_player, player_pos};
@@ -44,11 +47,11 @@ mod tests {
         let id = world.spawn(
             Entity::new(glam::Vec2::ZERO)
                 .with(PlayerController {
-                    move_axis: game_core::input::Axis2dId(0),
+                    move_axis: Axis2dId(0),
                 })
                 .with(MoveSpeed(140.0)),
         );
-        let input = Input::new(glam::vec2(1.0, 0.0), 0.0, FrameActions::default());
+        let input = Input::default().with_axis2d(Axis2dId(0), glam::vec2(1.0, 0.0));
 
         drive_player(&mut world, &input);
 

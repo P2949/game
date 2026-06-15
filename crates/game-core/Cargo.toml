@@ -10,4 +10,3 @@ repository.workspace = true
 anyhow.workspace = true
 glam.workspace = true
 log.workspace = true
-game-map = { path = "../game-map" }

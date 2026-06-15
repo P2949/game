@@ -47,7 +47,9 @@ impl GameMapFile {
         let mut builder = MapBuilder::new(self.id, self.tile_size);
         for layer in self.layers {
             let rows: Vec<&str> = layer.rows.iter().map(String::as_str).collect();
-            builder = builder.tile_layer(layer.id, &rows);
+            // External rows are untrusted, so reject malformed content here
+            // instead of letting it be silently sanitized to floor.
+            builder = builder.try_tile_layer(layer.id, &rows)?;
         }
         for object in self.objects {
             let prefab = resolve(&object.prefab).ok_or_else(|| {
@@ -124,5 +126,21 @@ mod tests {
     fn malformed_ron_is_reported() {
         let err = load_game_map_ron("not ron at all", resolver).unwrap_err();
         assert!(err.to_string().contains("failed to parse RON map"));
+    }
+
+    #[test]
+    fn invalid_tile_rows_are_rejected_not_sanitized() {
+        // A stray glyph in an external layer must fail loading rather than be
+        // silently rewritten to floor before validation can see it.
+        // Rows are written so no `#` immediately follows a `"` (which would close
+        // the `r#"…"#` literal early); `X` is the invalid character under test.
+        let ron = r#"GameMap(
+    id: "x",
+    tile_size: 16.0,
+    layers: [ TileLayer(id: "collision", rows: [".#", ".X"]) ],
+)"#;
+
+        let err = load_game_map_ron(ron, resolver).unwrap_err();
+        assert!(err.to_string().contains("invalid tile character"));
     }
 }

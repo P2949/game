@@ -1,5 +1,7 @@
 use ash::vk;
 use game_core::app::RenderFrame;
+use game_core::backend::TextureHandle;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::renderer::commands::{
@@ -17,8 +19,8 @@ use crate::renderer::sprite_batch::{SpriteBatch, SpriteBatchRange};
 use crate::renderer::texture_registry::{TextureRegistry, TextureRegistryGuard};
 use crate::renderer::vertex::SpriteVertex;
 use crate::renderer::{
-    DrawCommands, SpriteDraw, assets, buffer, device, frame, instance, pipeline, swapchain, text,
-    texture,
+    DrawCommands, SpriteDraw, TextureId, assets, buffer, device, frame, instance, pipeline,
+    swapchain, text, texture,
 };
 
 // Rate-limit soft swapchain recreations as defense against noisy request
@@ -108,6 +110,10 @@ pub struct VulkanContext {
     // Owns every registered texture plus its descriptor set/pool; the render path
     // looks descriptor sets up by id instead of branching per texture.
     texture_registry: TextureRegistry,
+    // Maps content-facing texture handles (assigned by the asset registry, plus
+    // the font sentinel) to renderer texture ids. The render path resolves each
+    // sprite's handle through this rather than casting handle -> id.
+    texture_handle_to_id: HashMap<TextureHandle, TextureId>,
     upload_command_pool: Option<OwnedCommandPool>,
     upload_fence: Option<OwnedFence>,
     swapchain: swapchain::Swapchain,
@@ -123,7 +129,10 @@ pub struct VulkanContext {
 }
 
 impl VulkanContext {
-    pub fn new(window: &sdl3::video::Window) -> anyhow::Result<Self> {
+    pub fn new(
+        window: &sdl3::video::Window,
+        content_textures: Vec<(TextureHandle, String)>,
+    ) -> anyhow::Result<Self> {
         let instance = instance::VulkanInstance::new(window)?;
 
         let surface =
@@ -168,12 +177,13 @@ impl VulkanContext {
         // `TEST_TEXTURE_ID` / `FONT_TEXTURE_ID` keep resolving to the right entry.
         let mut texture_registry_guard =
             TextureRegistryGuard::new(logical_device.device(), &mut allocator);
-        let font_atlas = assets::load_builtin_textures(
+        let (font_atlas, texture_handle_to_id) = assets::load_textures(
             &mut texture_registry_guard,
             texture_descriptor_set_layout.handle(),
             logical_device.graphics_queue(),
             upload_command_pool.handle(),
             upload_fence.handle(),
+            &content_textures,
         )?;
         let swapchain = swapchain::Swapchain::new(
             instance.handle(),
@@ -230,6 +240,7 @@ impl VulkanContext {
             font_atlas,
             texture_descriptor_set_layout: Some(texture_descriptor_set_layout),
             texture_registry,
+            texture_handle_to_id,
             upload_command_pool: Some(upload_command_pool),
             upload_fence: Some(upload_fence),
             swapchain,
@@ -478,6 +489,7 @@ impl VulkanContext {
             &self.scratch_batch_ranges,
             &mut self.world_draw_ranges,
             &self.texture_registry,
+            &self.texture_handle_to_id,
         )?;
 
         self.scratch_batch_ranges.clear();
@@ -488,6 +500,7 @@ impl VulkanContext {
             &self.scratch_batch_ranges,
             &mut self.ui_draw_ranges,
             &self.texture_registry,
+            &self.texture_handle_to_id,
         )?;
 
         let dropped_invalid_sprites =

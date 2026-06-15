@@ -17,23 +17,26 @@ pub mod texture;
 pub mod texture_registry;
 pub mod vertex;
 
-/// Handle to a texture registered in the renderer's `TextureRegistry`.
+/// Renderer-internal id of a texture registered in the `TextureRegistry`.
 ///
 /// Ids are assigned sequentially as textures are registered and resolved back to
 /// a descriptor set at draw time; an unknown id is reported as an error rather
-/// than panicking, so a stale id cannot cause unsafe access. The inner value is
-/// `pub` only for the built-in constants below; richer safety (opaque,
-/// registry-minted ids with generation counters) is deferred until the engine
-/// grows dynamic texture lifetimes.
+/// than panicking, so a stale id cannot cause unsafe access. Gameplay never names
+/// a `TextureId` directly — it uses content [`TextureHandle`]s, which the renderer
+/// maps to ids via `texture_handle_to_id` (see `assets::load_textures`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
 
-// Built-in texture handles. These are the first two registrations in the
-// renderer's `TextureRegistry`, so the ids are stable and can be referenced as
-// constants from gameplay code. Registration order in `assets::load_builtin_textures`
-// must match these values (asserted there with `assert_eq!`).
-pub const TEST_TEXTURE_ID: TextureId = TextureId(0);
-pub const FONT_TEXTURE_ID: TextureId = TextureId(1);
+/// The font atlas is the renderer's only built-in texture and is always the first
+/// registration, so its id is stable.
+pub const FONT_TEXTURE_ID: TextureId = TextureId(0);
+
+/// Sentinel content handle the renderer maps to the font atlas. Asset-registry
+/// texture handles are assigned `0, 1, 2, …`, so this high value can never
+/// collide with a real content texture; text rendering tags its glyph sprites
+/// with it.
+pub const FONT_TEXTURE_HANDLE: game_core::backend::TextureHandle =
+    game_core::backend::TextureHandle(u32::MAX);
 
 #[derive(Clone, Copy, Debug)]
 pub struct RenderCamera {
@@ -99,9 +102,9 @@ pub trait DrawCommands {
 // Later phases can replace these old single-crate paths with direct crate paths.
 pub mod renderer {
     pub use crate::{
-        DrawCommands, FONT_TEXTURE_ID, RenderCamera, TEST_TEXTURE_ID, TextureId, assets, buffer,
-        commands, context, debug, device, frame, instance, owned, pipeline, recreate, sprite_batch,
-        surface, swapchain, text, texture, texture_registry, vertex,
+        DrawCommands, FONT_TEXTURE_HANDLE, FONT_TEXTURE_ID, RenderCamera, TextureId, assets,
+        buffer, commands, context, debug, device, frame, instance, owned, pipeline, recreate,
+        sprite_batch, surface, swapchain, text, texture, texture_registry, vertex,
     };
     pub use game_core::gfx::SpriteDraw;
 }

@@ -1,12 +1,6 @@
-use glam::Vec2;
+use std::collections::{HashMap, HashSet};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
-    Attack,
-    Pause,
-    Reset,
-    DebugDie,
-}
+use glam::Vec2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
@@ -94,23 +88,6 @@ impl InputState {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct FrameActions {
-    pub action_pressed: bool,
-    pub pause_pressed: bool,
-    pub reset_pressed: bool,
-    pub debug_die_pressed: bool,
-}
-
-impl FrameActions {
-    pub fn merge(&mut self, other: Self) {
-        self.action_pressed |= other.action_pressed;
-        self.pause_pressed |= other.pause_pressed;
-        self.reset_pressed |= other.reset_pressed;
-        self.debug_die_pressed |= other.debug_die_pressed;
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ActionId(pub u32);
 
@@ -171,6 +148,16 @@ impl InputRegistry {
     pub fn axis2d_binding(&self, id: Axis2dId) -> Option<&Axis2dBinding> {
         self.axes2d.get(id.0 as usize)
     }
+
+    /// Registered action bindings in id order (`ActionId(i)` is `actions()[i]`).
+    pub fn actions(&self) -> &[ActionBinding] {
+        &self.actions
+    }
+
+    /// Registered 2D-axis bindings in id order (`Axis2dId(i)` is `axes2d()[i]`).
+    pub fn axes2d(&self) -> &[Axis2dBinding] {
+        &self.axes2d
+    }
 }
 
 pub struct ActionBindingBuilder<'a> {
@@ -228,37 +215,110 @@ impl Axis2dBindingBuilder<'_> {
     }
 }
 
+/// Resolved per-step input, keyed by the content-defined [`ActionId`]/[`Axis2dId`]
+/// handles minted by an [`InputRegistry`]. The runtime builds this each step from
+/// the registry bindings and the raw [`InputState`], so gameplay never refers to
+/// physical keys — it asks `input.pressed(actions.attack)` /
+/// `input.axis2d(controller.move_axis)`. A second demo can bind entirely
+/// different keys to the same logical handles without touching the runtime.
+#[derive(Clone, Default)]
 pub struct Input {
-    move_axis: Vec2,
-    zoom_axis: f32,
-    actions: FrameActions,
+    pressed: HashSet<ActionId>,
+    down: HashSet<ActionId>,
+    axes2d: HashMap<Axis2dId, Vec2>,
 }
 
 impl Input {
-    pub fn new(move_axis: Vec2, zoom_axis: f32, actions: FrameActions) -> Self {
+    /// True if any key bound to `action` transitioned to pressed this frame
+    /// (edge-triggered).
+    pub fn pressed(&self, action: ActionId) -> bool {
+        self.pressed.contains(&action)
+    }
+
+    /// True while any key bound to `action` is held (level-triggered); used for
+    /// continuous inputs such as zoom.
+    pub fn down(&self, action: ActionId) -> bool {
+        self.down.contains(&action)
+    }
+
+    /// Sanitized value of a 2D axis (clamped to the unit disc), or zero if the
+    /// axis is unbound.
+    pub fn axis2d(&self, axis: Axis2dId) -> Vec2 {
+        self.axes2d.get(&axis).copied().unwrap_or(Vec2::ZERO)
+    }
+
+    /// Test/builder helper: marks `action` as both pressed and held.
+    pub fn with_pressed(mut self, action: ActionId) -> Self {
+        self.pressed.insert(action);
+        self.down.insert(action);
+        self
+    }
+
+    /// Test/builder helper: marks `action` as held (not edge-pressed).
+    pub fn with_down(mut self, action: ActionId) -> Self {
+        self.down.insert(action);
+        self
+    }
+
+    /// Test/builder helper: sets a 2D axis value (sanitized to the unit disc).
+    pub fn with_axis2d(mut self, axis: Axis2dId, value: Vec2) -> Self {
+        self.axes2d.insert(axis, sanitize_axis2(value));
+        self
+    }
+
+    /// Builds the continuous part of the input (held actions and axes) by
+    /// evaluating every registered binding against the raw key state. Edge-pressed
+    /// actions are added separately via [`Self::set_pressed`] so the runtime can
+    /// deliver a frame's key presses to exactly one fixed step.
+    pub fn evaluate_continuous(registry: &InputRegistry, state: &InputState) -> Self {
+        let mut down = HashSet::new();
+        for (index, binding) in registry.actions().iter().enumerate() {
+            if binding.keys.iter().any(|key| state.down(*key)) {
+                down.insert(ActionId(index as u32));
+            }
+        }
+
+        let mut axes2d = HashMap::new();
+        for (index, binding) in registry.axes2d().iter().enumerate() {
+            axes2d.insert(Axis2dId(index as u32), evaluate_axis2d(binding, state));
+        }
+
         Self {
-            move_axis: sanitize_axis2(move_axis),
-            zoom_axis: sanitize_axis(zoom_axis),
-            actions,
+            pressed: HashSet::new(),
+            down,
+            axes2d,
         }
     }
 
-    pub fn move_axis(&self) -> Vec2 {
-        self.move_axis
-    }
-
-    pub fn zoom_axis(&self) -> f32 {
-        self.zoom_axis
-    }
-
-    pub fn pressed(&self, action: Action) -> bool {
-        match action {
-            Action::Attack => self.actions.action_pressed,
-            Action::Pause => self.actions.pause_pressed,
-            Action::Reset => self.actions.reset_pressed,
-            Action::DebugDie => self.actions.debug_die_pressed,
+    /// Set of actions newly pressed this frame, for the runtime's per-frame edge
+    /// accumulation.
+    pub fn pressed_this_frame(registry: &InputRegistry, state: &InputState) -> HashSet<ActionId> {
+        let mut pressed = HashSet::new();
+        for (index, binding) in registry.actions().iter().enumerate() {
+            if binding.keys.iter().any(|key| state.pressed(*key)) {
+                pressed.insert(ActionId(index as u32));
+            }
         }
+        pressed
     }
+
+    /// Overwrites the edge-pressed action set (used by the runtime to deliver
+    /// accumulated presses to the first fixed step of a frame).
+    pub fn set_pressed(&mut self, pressed: HashSet<ActionId>) {
+        self.pressed = pressed;
+    }
+}
+
+fn evaluate_axis2d(binding: &Axis2dBinding, state: &InputState) -> Vec2 {
+    let axis = |negative: &[Key], positive: &[Key]| -> f32 {
+        let neg = negative.iter().any(|key| state.down(*key));
+        let pos = positive.iter().any(|key| state.down(*key));
+        f32::from(pos) - f32::from(neg)
+    };
+    sanitize_axis2(Vec2::new(
+        axis(&binding.negative_x, &binding.positive_x),
+        axis(&binding.negative_y, &binding.positive_y),
+    ))
 }
 
 pub fn sanitize_axis(value: f32) -> f32 {
@@ -275,5 +335,62 @@ fn sanitize_axis2(value: Vec2) -> Vec2 {
         v.normalize()
     } else {
         v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Input, InputRegistry, InputState, Key};
+
+    fn registry() -> (InputRegistry, super::ActionId, super::Axis2dId) {
+        let mut registry = InputRegistry::new();
+        let attack = registry
+            .action("attack")
+            .bind(Key::Space)
+            .bind(Key::Enter)
+            .id();
+        let movement = registry
+            .axis2d("move")
+            .negative_x(Key::A)
+            .positive_x(Key::D)
+            .id();
+        (registry, attack, movement)
+    }
+
+    #[test]
+    fn evaluates_actions_and_axes_from_registry_bindings() {
+        let (registry, attack, movement) = registry();
+        let mut state = InputState::default();
+        state.begin_frame();
+        state.set_key(Key::Enter, true); // edge press on a bound key
+        state.set_key(Key::D, true); // held: positive x
+
+        let mut input = Input::evaluate_continuous(&registry, &state);
+        input.set_pressed(Input::pressed_this_frame(&registry, &state));
+
+        assert!(input.pressed(attack));
+        assert!(input.down(attack));
+        assert_eq!(input.axis2d(movement), glam::vec2(1.0, 0.0));
+    }
+
+    #[test]
+    fn held_key_is_down_but_not_edge_pressed() {
+        let (registry, attack, _movement) = registry();
+        let mut state = InputState::default();
+        state.set_key(Key::Space, true); // pressed on a previous frame
+        state.begin_frame(); // new frame: still down, no fresh edge
+
+        let mut input = Input::evaluate_continuous(&registry, &state);
+        input.set_pressed(Input::pressed_this_frame(&registry, &state));
+
+        assert!(input.down(attack));
+        assert!(!input.pressed(attack));
+    }
+
+    #[test]
+    fn unbound_axis_reads_zero() {
+        let (registry, _attack, _movement) = registry();
+        let input = Input::evaluate_continuous(&registry, &InputState::default());
+        assert_eq!(input.axis2d(super::Axis2dId(7)), glam::Vec2::ZERO);
     }
 }

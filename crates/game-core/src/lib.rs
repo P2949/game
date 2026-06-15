@@ -34,7 +34,7 @@ pub mod prelude {
     pub use crate::commands::{Command, CommandQueue, Event};
     pub use crate::gfx::{Gfx, SpriteDraw, TextDraw};
     pub use crate::input::{
-        Action, ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, InputRegistry, Key,
+        ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, InputRegistry, Key,
     };
     pub use crate::nav::NavGrid;
     pub use crate::plugin::GamePlugin;
@@ -85,9 +85,7 @@ pub use commands::{Command, CommandQueue, Event};
 #[allow(unused_imports)]
 pub use gfx::{Gfx, SpriteDraw, TextDraw};
 #[allow(unused_imports)]
-pub use input::{
-    Action, ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, InputRegistry, Key,
-};
+pub use input::{ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, InputRegistry, Key};
 #[allow(unused_imports)]
 pub use nav::NavGrid;
 #[allow(unused_imports)]

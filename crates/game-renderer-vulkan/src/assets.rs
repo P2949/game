@@ -5,14 +5,16 @@
 //! they are created, so a failure partway through can never leak an already-built
 //! texture: the guard owns everything registered so far and destroys it on drop.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use ash::vk;
+use game_core::backend::TextureHandle;
 
 use crate::renderer::texture::{Texture, TextureColorSpace, TextureUpload};
 use crate::renderer::texture_registry::TextureRegistryGuard;
-use crate::renderer::{FONT_TEXTURE_ID, TEST_TEXTURE_ID, text};
+use crate::renderer::{FONT_TEXTURE_HANDLE, FONT_TEXTURE_ID, TextureId, text};
 
 /// Creates and registers the renderer's built-in textures into `registry_guard`,
 /// returning the font atlas metadata the renderer needs for text layout.
@@ -21,41 +23,25 @@ use crate::renderer::{FONT_TEXTURE_ID, TEST_TEXTURE_ID, text};
 /// the registry, so the only state held across the fallible font-atlas build is
 /// the guard itself — which already owns the test texture and will clean it up if
 /// any later step (here or back in `VulkanContext::new`) fails.
-pub fn load_builtin_textures(
+/// Loads the renderer's textures into `registry_guard` and returns the font atlas
+/// metadata plus the `TextureHandle -> TextureId` map that gameplay sprites are
+/// resolved through. The font atlas is registered first so it owns the stable
+/// [`FONT_TEXTURE_ID`]; the content textures follow in handle order. Each
+/// `create_and_register` call hands its freshly-built texture straight to the
+/// guard, so a failure partway through cleans up everything registered so far.
+pub fn load_textures(
     registry_guard: &mut TextureRegistryGuard<'_>,
     descriptor_set_layout: vk::DescriptorSetLayout,
     queue: vk::Queue,
     upload_pool: vk::CommandPool,
     upload_fence: vk::Fence,
-) -> anyhow::Result<text::FontAtlas> {
+    content_textures: &[(TextureHandle, String)],
+) -> anyhow::Result<(text::FontAtlas, HashMap<TextureHandle, TextureId>)> {
     let asset_root = asset_root()?;
-
-    let test_id = registry_guard.create_and_register(
-        descriptor_set_layout,
-        "test texture",
-        |device, allocator| {
-            let mut upload = TextureUpload {
-                device,
-                allocator,
-                queue,
-                upload_pool,
-                upload_fence,
-            };
-            Texture::from_path(
-                &mut upload,
-                asset_root.join("textures/test.png"),
-                TextureColorSpace::SrgbColor,
-                "test texture",
-            )
-        },
-    )?;
-    assert_eq!(
-        test_id, TEST_TEXTURE_ID,
-        "built-in test texture must keep its stable TextureId"
-    );
+    let mut handle_to_id = HashMap::new();
 
     let font_atlas_image =
-        text::build_ascii_atlas(asset_root.join("fonts/DejaVuSans.ttf"), FONT_TEXTURE_ID)?;
+        text::build_ascii_atlas(asset_root.join("fonts/DejaVuSans.ttf"), FONT_TEXTURE_HANDLE)?;
     let font_id = registry_guard.create_and_register(
         descriptor_set_layout,
         "font atlas",
@@ -79,10 +65,35 @@ pub fn load_builtin_textures(
     )?;
     assert_eq!(
         font_id, FONT_TEXTURE_ID,
-        "built-in font texture must keep its stable TextureId"
+        "font atlas must be the first-registered texture so its id stays stable"
     );
+    handle_to_id.insert(FONT_TEXTURE_HANDLE, font_id);
 
-    Ok(font_atlas_image.atlas)
+    for (handle, path) in content_textures {
+        let texture_path = asset_root.join(path);
+        let id = registry_guard.create_and_register(
+            descriptor_set_layout,
+            path.clone(),
+            move |device, allocator| {
+                let mut upload = TextureUpload {
+                    device,
+                    allocator,
+                    queue,
+                    upload_pool,
+                    upload_fence,
+                };
+                Texture::from_path(
+                    &mut upload,
+                    texture_path,
+                    TextureColorSpace::SrgbColor,
+                    "content texture",
+                )
+            },
+        )?;
+        handle_to_id.insert(*handle, id);
+    }
+
+    Ok((font_atlas_image.atlas, handle_to_id))
 }
 
 pub fn asset_root() -> anyhow::Result<PathBuf> {

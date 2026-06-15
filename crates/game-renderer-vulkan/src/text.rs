@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context;
 use game_core::backend::TextureHandle;
 
-use crate::renderer::{SpriteDraw, TextureId};
+use crate::renderer::SpriteDraw;
 
 // The atlas is a fixed grid of equally-sized cells covering printable ASCII.
 // These values are tuned for the bundled DejaVu Sans at FONT_SIZE: every glyph in
@@ -34,7 +34,7 @@ pub struct GlyphInfo {
 }
 
 pub struct FontAtlas {
-    pub texture: TextureId,
+    pub texture: TextureHandle,
     pub glyphs: HashMap<char, GlyphInfo>,
     pub line_height: f32,
 }
@@ -149,7 +149,7 @@ pub struct TextDrawStats {
 
 pub fn build_ascii_atlas(
     path: impl AsRef<Path>,
-    texture: TextureId,
+    texture: TextureHandle,
 ) -> anyhow::Result<FontAtlasImage> {
     let path = path.as_ref();
     let font_bytes =
@@ -261,7 +261,7 @@ pub fn draw_text(
             let glyph_pos = glam::vec2(pos.x + glyph.bearing.x, pos.y + glyph.bearing.y);
 
             let sprite = SpriteDraw {
-                texture: TextureHandle(atlas.texture.0),
+                texture: atlas.texture,
                 layer,
                 position: glyph_pos,
                 size: glyph.size,
@@ -286,7 +286,7 @@ pub fn draw_text(
 #[cfg(test)]
 mod tests {
     use super::{FontAtlas, GlyphInfo, draw_text};
-    use crate::renderer::FONT_TEXTURE_ID;
+    use crate::renderer::FONT_TEXTURE_HANDLE;
     use crate::renderer::sprite_batch::SpriteBatch;
     use std::collections::HashMap;
 
@@ -307,7 +307,7 @@ mod tests {
         glyphs.insert(' ', glyph(5.0));
         glyphs.insert('?', glyph(8.0));
         FontAtlas {
-            texture: FONT_TEXTURE_ID,
+            texture: FONT_TEXTURE_HANDLE,
             glyphs,
             line_height: 12.0,
         }

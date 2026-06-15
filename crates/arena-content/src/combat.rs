@@ -1,7 +1,7 @@
 use crate::engine::audio::Audio;
 use crate::engine::backend::SoundHandle;
 use crate::engine::commands::{CommandQueue, Event};
-use crate::engine::input::{Action, Input};
+use crate::engine::input::{ActionId, Input};
 use crate::engine::world::{EntityId, Transform, Velocity};
 use crate::game::World;
 use crate::game::actor::{EnemyTag, PlayerController};
@@ -16,11 +16,12 @@ struct CombatEffects {
 pub fn tick(
     world: &mut World,
     input: &Input,
+    attack: ActionId,
     audio: &mut Audio<'_>,
     hit_sound: SoundHandle,
     dt: f32,
 ) {
-    let effects = tick_effects(world, input, dt);
+    let effects = tick_effects(world, input, attack, dt);
     for _ in 0..effects.hit_sounds {
         audio.play(hit_sound, 0.8);
     }
@@ -29,8 +30,14 @@ pub fn tick(
     }
 }
 
-pub fn tick_commands(world: &mut World, input: &Input, hit_sound: SoundHandle, dt: f32) {
-    let effects = tick_effects(world, input, dt);
+pub fn tick_commands(
+    world: &mut World,
+    input: &Input,
+    attack: ActionId,
+    hit_sound: SoundHandle,
+    dt: f32,
+) {
+    let effects = tick_effects(world, input, attack, dt);
     let queue = world.resource_or_insert_with(CommandQueue::new);
     for _ in 0..effects.hit_sounds {
         queue.play_sound(hit_sound);
@@ -46,13 +53,13 @@ pub fn emit_player_death(world: &mut World) {
         .emit(Event::Named("arena/player_dead".to_owned()));
 }
 
-fn tick_effects(world: &mut World, input: &Input, dt: f32) -> CombatEffects {
+fn tick_effects(world: &mut World, input: &Input, attack: ActionId, dt: f32) -> CombatEffects {
     let mut effects = CombatEffects::default();
     let Some((player_id, player_pos, player_range, player_damage)) = player_snapshot(world) else {
         return effects;
     };
 
-    if input.pressed(Action::Attack) {
+    if input.pressed(attack) {
         if let Some(target) = nearest_enemy_in_range(world, player_pos, player_range) {
             if damage_entity(world, target, player_damage) {
                 effects.hit_sounds += 1;
@@ -144,7 +151,7 @@ fn damage_entity(world: &mut World, id: EntityId, amount: i32) -> bool {
 mod tests {
     use crate::engine::audio::{Audio, AudioCommands};
     use crate::engine::backend::SoundHandle;
-    use crate::engine::input::{FrameActions, Input};
+    use crate::engine::input::{ActionId, Axis2dId, Input};
     use crate::engine::world::Entity;
     use crate::game::World;
     use crate::game::actor::{EnemyTag, PlayerController};
@@ -152,15 +159,15 @@ mod tests {
 
     use super::{kill_player, player_is_dead, tick};
 
-    fn input(action_pressed: bool) -> Input {
-        Input::new(
-            glam::Vec2::ZERO,
-            0.0,
-            FrameActions {
-                action_pressed,
-                ..Default::default()
-            },
-        )
+    const ATTACK: ActionId = ActionId(0);
+
+    fn input(attack_pressed: bool) -> Input {
+        let input = Input::default();
+        if attack_pressed {
+            input.with_pressed(ATTACK)
+        } else {
+            input
+        }
     }
 
     fn world_with_player_and_enemy(enemy_pos: glam::Vec2) -> World {
@@ -168,7 +175,7 @@ mod tests {
         world.spawn(
             Entity::new(glam::Vec2::ZERO)
                 .with(PlayerController {
-                    move_axis: crate::engine::input::Axis2dId(0),
+                    move_axis: Axis2dId(0),
                 })
                 .with(Health::new(100))
                 .with(MeleeAttack::new(20.0, 50)),
@@ -191,6 +198,7 @@ mod tests {
         tick(
             &mut world,
             &input(true),
+            ATTACK,
             &mut audio,
             SoundHandle(0),
             1.0 / 120.0,
@@ -208,6 +216,7 @@ mod tests {
         tick(
             &mut world,
             &input(false),
+            ATTACK,
             &mut audio,
             SoundHandle(0),
             1.0 / 120.0,

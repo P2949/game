@@ -47,6 +47,11 @@ pub fn patrol_system(world: &mut World, _dt: f32) {
             continue;
         };
         if len == 0 {
+            // An empty route is a stop, not a coast: clear any prior velocity so
+            // the physics step does not keep carrying the entity along.
+            if let Some(velocity) = world.get_mut::<Velocity>(id) {
+                velocity.0 = Vec2::ZERO;
+            }
             continue;
         }
 
@@ -85,6 +90,17 @@ mod tests {
         patrol_system(&mut world, 1.0 / 60.0);
 
         assert_eq!(world.get::<Velocity>(id).unwrap().0, glam::vec2(50.0, 0.0));
+    }
+
+    #[test]
+    fn patrol_with_no_waypoints_clears_velocity() {
+        let mut world = World::new();
+        let id = world.spawn(Entity::new(glam::Vec2::ZERO).with(Patrol::new(Vec::new(), 50.0)));
+        world.get_mut::<Velocity>(id).unwrap().0 = glam::vec2(5.0, 5.0);
+
+        patrol_system(&mut world, 1.0 / 60.0);
+
+        assert_eq!(world.get::<Velocity>(id).unwrap().0, glam::Vec2::ZERO);
     }
 
     #[test]

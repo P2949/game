@@ -54,6 +54,13 @@ impl CommandQueue {
         self.commands.drain(..)
     }
 
+    /// Drops every pending command without executing it. Used on world reset so
+    /// commands enqueued against the pre-reset world cannot run against the new
+    /// one.
+    pub fn clear(&mut self) {
+        self.commands.clear();
+    }
+
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
     }

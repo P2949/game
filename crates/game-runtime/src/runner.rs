@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -8,13 +9,13 @@ use game_core::app::{
 use game_core::assets::AssetValidator;
 use game_core::audio::{Audio, AudioCommands};
 use game_core::backend::AudioCommand;
-use game_core::builder::GameBuilder;
+use game_core::builder::{GameBuilder, RuntimeContent};
 use game_core::camera::Camera2D;
 use game_core::commands::{Command, CommandQueue};
 use game_core::gfx::Gfx;
-use game_core::input::{FrameActions, Input, InputState, Key};
+use game_core::input::{ActionId, Input};
 use game_core::plugin::GamePlugin;
-use game_core::schedule::{Schedule, ScheduleValidator};
+use game_core::schedule::ScheduleValidator;
 use game_core::world::World;
 use game_platform_sdl::window::Platform;
 use game_renderer_vulkan::assets::asset_root;
@@ -62,15 +63,13 @@ impl Default for RuntimeConfig {
     }
 }
 
-pub fn run_legacy<G: Game>(game: G, title: &str) -> Result<()> {
-    run_game(game, RuntimeConfig::default().title(title))
-}
-
 pub fn run<P: GamePlugin>(config: RuntimeConfig, plugin: P) -> Result<()> {
     let mut builder = GameBuilder::new();
     let game = plugin.build(&mut builder)?;
     validate_builder(&builder)?;
-    run_game_with_schedule(game, config, builder.into_schedule())
+    // The runtime keeps the builder's registries (assets/input/schedule) as its
+    // source of truth rather than dropping everything but the schedule.
+    run_game_inner(game, config, builder)
 }
 
 /// Validates host-owned content (schedule wiring and on-disk assets) before any
@@ -96,27 +95,17 @@ fn validate_builder(builder: &GameBuilder) -> Result<()> {
     Ok(())
 }
 
-pub fn run_game<G: Game>(mut game: G, config: RuntimeConfig) -> Result<()> {
-    run_game_inner(&mut game, config, Schedule::new())
-}
+fn run_game_inner<G: Game>(mut game: G, config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
+    let RuntimeContent {
+        assets,
+        input: input_registry,
+        mut schedule,
+    } = builder.into_parts();
 
-fn run_game_with_schedule<G: Game>(
-    mut game: G,
-    config: RuntimeConfig,
-    schedule: Schedule,
-) -> Result<()> {
-    run_game_inner(&mut game, config, schedule)
-}
-
-fn run_game_inner<G: Game>(
-    game: &mut G,
-    config: RuntimeConfig,
-    mut schedule: Schedule,
-) -> Result<()> {
     let smoke_frames = parse_smoke_frames()?;
 
     let mut platform = Platform::new(&config.title, config.width, config.height)?;
-    let mut renderer = VulkanContext::new(&platform.window)?;
+    let mut renderer = VulkanContext::new(&platform.window, assets.texture_loads())?;
     let audio = match AudioSystem::new(&platform.sdl) {
         Ok(audio) => Some(audio),
         Err(err) => {
@@ -144,7 +133,10 @@ fn run_game_inner<G: Game>(
         return Ok(());
     }
 
-    let mut pending_actions = FrameActions::default();
+    // Edge-pressed actions accumulate across frames so a key press during a
+    // frame that consumed zero fixed steps is delivered to the next step instead
+    // of being lost.
+    let mut pending_pressed: HashSet<ActionId> = HashSet::new();
     let mut previous_frame = Instant::now();
     let mut last_lag_warning: Option<Instant> = None;
     let mut rendered_frames: u64 = 0;
@@ -169,15 +161,20 @@ fn run_game_inner<G: Game>(
         previous_frame = now;
         game.record_frame_time(frame_ms);
 
-        let frame_actions = frame_actions(&platform.input);
         if let Some(audio) = &audio {
             audio.poll_dropped_frames();
             audio.poll_dropped_voices();
         }
-        pending_actions.merge(frame_actions);
+
+        // Resolve this frame's input through the content-defined bindings rather
+        // than hardcoded keys: continuous state (held actions + axes) plus the
+        // edges newly pressed this frame.
+        pending_pressed.extend(Input::pressed_this_frame(&input_registry, &platform.input));
+        let frame_input = Input::evaluate_continuous(&input_registry, &platform.input);
 
         let mut frame = RenderFrame::new(camera);
         let mut audio_commands = AudioCommands::default();
+        let has_frame_systems = schedule.has_frame_systems();
 
         timestep.begin_frame();
         let mut steps = 0;
@@ -185,16 +182,12 @@ fn run_game_inner<G: Game>(
             let Some(dt) = timestep.consume_step() else {
                 break;
             };
-            let actions = if steps == 0 {
-                std::mem::take(&mut pending_actions)
-            } else {
-                FrameActions::default()
-            };
-            let input = Input::new(
-                movement_axis(&platform.input),
-                zoom_axis(&platform.input),
-                actions,
-            );
+            // Deliver accumulated edge presses to exactly one step; later steps in
+            // the same frame see held state and axes but no fresh edges.
+            let mut input = frame_input.clone();
+            if steps == 0 {
+                input.set_pressed(std::mem::take(&mut pending_pressed));
+            }
 
             {
                 let mut ctx = Ctx {
@@ -206,8 +199,8 @@ fn run_game_inner<G: Game>(
                     gfx: Gfx::new(&mut frame),
                     audio: Audio::new(&mut audio_commands),
                 };
-                if schedule.has_frame_systems() {
-                    schedule.run_frame(&mut ctx, dt);
+                if has_frame_systems {
+                    schedule.run_fixed(&mut ctx, dt);
                 } else {
                     game.update(&mut ctx, dt);
                 }
@@ -215,6 +208,28 @@ fn run_game_inner<G: Game>(
             process_core_commands(&mut world, &mut audio_commands);
 
             steps += 1;
+        }
+
+        // Frame-rate-paced stages run once per rendered frame (not once per fixed
+        // step), so UI text and camera follow neither duplicate when several
+        // steps run nor stall when none do.
+        if has_frame_systems {
+            let frame_dt = frame_ms / 1000.0;
+            {
+                let mut ctx = Ctx {
+                    world: &mut world,
+                    map: &map.tilemap,
+                    nav: &map.nav,
+                    input: &frame_input,
+                    camera: &mut camera,
+                    gfx: Gfx::new(&mut frame),
+                    audio: Audio::new(&mut audio_commands),
+                };
+                schedule.run_update(&mut ctx, frame_dt);
+                schedule.run_render_extract(&mut ctx, frame_dt);
+                schedule.run_ui(&mut ctx, frame_dt);
+            }
+            process_core_commands(&mut world, &mut audio_commands);
         }
 
         if timestep.step_ready() {
@@ -276,44 +291,6 @@ fn submit_audio_command(audio: &AudioSystem, command: AudioCommand) {
     match command {
         AudioCommand::Play { .. } | AudioCommand::PlayMusic { .. } => audio.play_blip(),
         AudioCommand::StopMusic => {}
-    }
-}
-
-fn frame_actions(input: &InputState) -> FrameActions {
-    FrameActions {
-        action_pressed: input.pressed(Key::Space) || input.pressed(Key::Enter),
-        pause_pressed: input.pressed(Key::P),
-        reset_pressed: input.pressed(Key::R),
-        debug_die_pressed: input.pressed(Key::K),
-    }
-}
-
-fn movement_axis(input: &InputState) -> glam::Vec2 {
-    let x = axis(
-        input.down(Key::A) || input.down(Key::Left),
-        input.down(Key::D) || input.down(Key::Right),
-    );
-    let y = axis(
-        input.down(Key::W) || input.down(Key::Up),
-        input.down(Key::S) || input.down(Key::Down),
-    );
-    let value = glam::vec2(x, y);
-    if value.length_squared() > 1.0 {
-        value.normalize()
-    } else {
-        value
-    }
-}
-
-fn zoom_axis(input: &InputState) -> f32 {
-    axis(input.down(Key::Minus), input.down(Key::Plus))
-}
-
-fn axis(negative: bool, positive: bool) -> f32 {
-    match (negative, positive) {
-        (true, false) => -1.0,
-        (false, true) => 1.0,
-        _ => 0.0,
     }
 }
 

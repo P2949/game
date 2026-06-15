@@ -11,3 +11,4 @@ anyhow.workspace = true
 glam.workspace = true
 ron.workspace = true
 serde.workspace = true
+game-core = { path = "../game-core" }

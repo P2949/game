@@ -1,5 +1,5 @@
 use crate::tilemap::TileMap;
-use crate::{GameMap, MapId, MapObject, MapRegion, PrefabId, PropertyBag, TileLayer};
+use crate::{GameMap, MapObject, MapRegion, PrefabId, PropertyBag, TileLayer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MapCell {
@@ -12,6 +12,7 @@ pub fn cell(col: usize, row: usize) -> MapCell {
 }
 
 pub struct MapBuilder {
+    name: String,
     tile_size: f32,
     layers: Vec<TileLayer>,
     objects: Vec<MapObject>,
@@ -19,8 +20,9 @@ pub struct MapBuilder {
 }
 
 impl MapBuilder {
-    pub fn new(_id: impl Into<String>, tile_size: f32) -> Self {
+    pub fn new(name: impl Into<String>, tile_size: f32) -> Self {
         Self {
+            name: name.into(),
             tile_size,
             layers: Vec::new(),
             objects: Vec::new(),
@@ -28,12 +30,25 @@ impl MapBuilder {
         }
     }
 
-    pub fn tile_layer(mut self, id: impl Into<String>, rows: &[&str]) -> Self {
+    /// Adds a tile layer from strict rows (`.`/`#`, rectangular), **panicking** on
+    /// malformed rows. Intended for in-code maps whose rows are compile-time
+    /// literals: a bad literal is a programming error that should fail loudly at
+    /// startup rather than be silently rewritten to floor. For untrusted/external
+    /// rows (e.g. RON files) use [`Self::try_tile_layer`].
+    pub fn tile_layer(self, id: impl Into<String>, rows: &[&str]) -> Self {
+        self.try_tile_layer(id, rows)
+            .expect("in-code tile layer rows must be valid")
+    }
+
+    /// Fallible counterpart to [`Self::tile_layer`]: returns an error (rather than
+    /// sanitizing) when the rows contain an invalid character or are not
+    /// rectangular, so malformed external content is rejected by validation.
+    pub fn try_tile_layer(mut self, id: impl Into<String>, rows: &[&str]) -> anyhow::Result<Self> {
         self.layers.push(TileLayer {
             id: id.into(),
-            tiles: TileMap::from_rows(rows, self.tile_size),
+            tiles: TileMap::try_from_rows(rows, self.tile_size)?,
         });
-        self
+        Ok(self)
     }
 
     pub fn object(mut self, id: impl Into<String>, prefab: PrefabId, cell: MapCell) -> Self {
@@ -53,7 +68,7 @@ impl MapBuilder {
 
     pub fn finish(self) -> GameMap {
         GameMap {
-            id: MapId(0),
+            name: self.name,
             tile_size: self.tile_size,
             layers: self.layers,
             objects: self.objects,
@@ -81,7 +96,20 @@ mod tests {
             .object("player_start", PrefabId(0), cell(1, 1))
             .finish();
 
+        assert_eq!(map.name, "arena");
         assert_eq!(map.collision_tilemap().width(), 2);
         assert_eq!(map.objects[0].position, glam::vec2(48.0, 48.0));
+    }
+
+    #[test]
+    fn try_tile_layer_rejects_invalid_rows() {
+        // `MapBuilder` is not `Debug`, so inspect the error via `.err()` rather
+        // than `.unwrap_err()`.
+        let err = MapBuilder::new("bad", 32.0)
+            .try_tile_layer("collision", &["#P"])
+            .err()
+            .expect("invalid rows must be rejected");
+
+        assert!(err.to_string().contains("invalid tile character"));
     }
 }

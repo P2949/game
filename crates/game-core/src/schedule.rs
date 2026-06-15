@@ -180,7 +180,7 @@ mod tests {
     use crate::audio::{Audio, AudioCommands};
     use crate::camera::Camera2D;
     use crate::gfx::Gfx;
-    use crate::input::{FrameActions, Input};
+    use crate::input::Input;
     use crate::world::World;
 
     use super::Schedule;
@@ -229,7 +229,7 @@ mod tests {
         let mut audio_commands = AudioCommands::default();
         let map = crate::tilemap::TileMap::from_rows(&["."], 10.0);
         let nav = crate::nav::NavGrid::from_tilemap(&map);
-        let input = Input::new(glam::Vec2::ZERO, 0.0, FrameActions::default());
+        let input = Input::default();
         let mut ctx = Ctx {
             world: &mut world,
             map: &map,

@@ -33,6 +33,7 @@ use crate::engine::assets::AssetRegistry;
 use crate::engine::builder::{GameBuilder, PrefabId, PrefabRegistry, PrefabValidator};
 use crate::engine::plugin::GamePlugin;
 use crate::engine::world::{Sprite, Transform};
+use crate::input::ArenaActions;
 use crate::prefabs::ArenaPrefabs;
 use game_ai::AiController;
 use game_combat::{Faction, Health};
@@ -49,6 +50,7 @@ pub fn plugin() -> ArenaPlugin {
 
 pub struct ArenaGame {
     assets: ArenaAssets,
+    actions: ArenaActions,
     map: GameMap,
     prefabs: Rc<PrefabRegistry>,
 }
@@ -62,20 +64,27 @@ impl ArenaGame {
         let mut prefabs = PrefabRegistry::new();
         let arena_prefabs = prefabs::register(&mut prefabs, arena_assets, actions);
         let map = level::arena_map(arena_prefabs);
-        Self::with_content(arena_assets, map, prefabs)
+        Self::with_content(arena_assets, actions, map, prefabs)
     }
 
-    pub fn with_content(assets: ArenaAssets, map: GameMap, prefabs: PrefabRegistry) -> Self {
-        Self::with_shared_content(assets, map, Rc::new(prefabs))
+    pub fn with_content(
+        assets: ArenaAssets,
+        actions: ArenaActions,
+        map: GameMap,
+        prefabs: PrefabRegistry,
+    ) -> Self {
+        Self::with_shared_content(assets, actions, map, Rc::new(prefabs))
     }
 
     pub fn with_shared_content(
         assets: ArenaAssets,
+        actions: ArenaActions,
         map: GameMap,
         prefabs: Rc<PrefabRegistry>,
     ) -> Self {
         Self {
             assets,
+            actions,
             map,
             prefabs,
         }
@@ -88,24 +97,31 @@ impl GamePlugin for ArenaPlugin {
     fn build(&self, app: &mut GameBuilder) -> Result<Self::Game> {
         let assets = assets::register(app.assets_mut());
         let actions = input::register(app.input_mut());
-        let _builder_prefabs = prefabs::register(app.prefabs_mut(), assets, actions);
-        let mut runtime_prefabs = PrefabRegistry::new();
-        let runtime_prefab_ids = prefabs::register(&mut runtime_prefabs, assets, actions);
-        let (start_map, map) = maps::register(app.maps_mut(), &assets, runtime_prefab_ids);
+
+        // Register prefabs exactly once into a registry shared (via `Rc`) by
+        // validation, the schedule's systems, and the returned game. Registering
+        // a second time into a parallel registry risked the two silently
+        // diverging.
+        let mut prefabs = PrefabRegistry::new();
+        let prefab_ids = prefabs::register(&mut prefabs, assets, actions);
+        let (start_map, map) = maps::register(app.maps_mut(), &assets, prefab_ids);
         app.set_start_map(start_map);
 
         // Phase 11: fail before the runtime enters the main loop if the arena's
         // map, prefab compositions, or object references are malformed.
-        validate_arena_content(&runtime_prefabs, runtime_prefab_ids, &map)?;
+        validate_arena_content(&prefabs, prefab_ids, &map)?;
 
-        let runtime_prefabs = Rc::new(runtime_prefabs);
+        let prefabs = Rc::new(prefabs);
         systems::register(
             app.schedule_mut(),
             assets,
+            actions,
             map.clone(),
-            Rc::clone(&runtime_prefabs),
+            Rc::clone(&prefabs),
         );
-        Ok(ArenaGame::with_shared_content(assets, map, runtime_prefabs))
+        Ok(ArenaGame::with_shared_content(
+            assets, actions, map, prefabs,
+        ))
     }
 }
 
@@ -139,9 +155,7 @@ fn validate_arena_content(
     validator
         .validate()
         .context("arena prefab validation failed")?;
-    validator
-        .validate_map_references(map)
-        .context("arena map references unknown prefab")?;
+    game_map::validate_map_prefabs(map, prefabs).context("arena map references unknown prefab")?;
     Ok(())
 }
 
@@ -157,13 +171,20 @@ impl Game for ArenaGame {
     }
 
     fn update(&mut self, ctx: &mut Ctx, dt: f32) {
-        systems::state_input_system(ctx, &self.map, &self.prefabs);
+        systems::state_input_system(ctx, &self.map, &self.prefabs, self.actions);
         systems::player_control_system(ctx, dt);
         systems::chase_player_system(ctx, dt);
         systems::physics_system(ctx, dt);
-        combat::tick(ctx.world, ctx.input, &mut ctx.audio, self.assets.hit, dt);
+        combat::tick(
+            ctx.world,
+            ctx.input,
+            self.actions.attack,
+            &mut ctx.audio,
+            self.assets.hit,
+            dt,
+        );
         systems::death_state_system(ctx, dt);
-        systems::camera_follow_player_system(ctx, dt);
+        systems::camera_follow_player_system(ctx, self.actions, dt);
         systems::pause_death_ui_system(ctx, dt);
     }
 }
@@ -175,13 +196,23 @@ mod tests {
     use game_core::audio::{Audio, AudioCommands};
     use game_core::camera::Camera2D;
     use game_core::gfx::Gfx;
-    use game_core::input::{FrameActions, Input};
+    use game_core::input::{Axis2dId, Input, InputRegistry};
     use game_core::world::{EntityId, Transform, Velocity};
 
     use crate::actor::{EnemyTag, PlayerController};
+    use crate::input::ArenaActions;
     use crate::{ArenaGame, World, spawn};
 
     const DT: f32 = 1.0 / 120.0;
+
+    // The player's movement axis is the only registered 2D axis (`Axis2dId(0)`),
+    // matching `PlayerController.move_axis`.
+    const MOVE_AXIS: Axis2dId = Axis2dId(0);
+
+    fn arena_actions() -> ArenaActions {
+        let mut registry = InputRegistry::new();
+        crate::input::register(&mut registry)
+    }
 
     fn start_arena() -> (ArenaGame, World, MapData) {
         let mut game = ArenaGame::new();
@@ -270,7 +301,7 @@ mod tests {
             &mut game,
             &mut world,
             &map,
-            Input::new(glam::vec2(1.0, 0.0), 0.0, FrameActions::default()),
+            Input::default().with_axis2d(MOVE_AXIS, glam::vec2(1.0, 0.0)),
         );
 
         assert_eq!(velocity(&world, player_id(&world)), glam::vec2(130.0, 0.0));
@@ -284,12 +315,7 @@ mod tests {
             set_pos(&mut world, id, player_pos + glam::vec2(96.0, 0.0));
         }
 
-        update_arena(
-            &mut game,
-            &mut world,
-            &map,
-            Input::new(glam::Vec2::ZERO, 0.0, FrameActions::default()),
-        );
+        update_arena(&mut game, &mut world, &map, Input::default());
 
         let enemy = enemy_ids(&world).pop().unwrap();
         assert!(velocity(&world, enemy).x < 0.0);
@@ -312,14 +338,7 @@ mod tests {
             &mut game,
             &mut world,
             &map,
-            Input::new(
-                glam::Vec2::ZERO,
-                0.0,
-                FrameActions {
-                    action_pressed: true,
-                    ..Default::default()
-                },
-            ),
+            Input::default().with_pressed(arena_actions().attack),
         );
 
         assert_eq!(world.get::<Health>(near_enemy_id).unwrap().current, 15);
@@ -339,12 +358,7 @@ mod tests {
             set_pos(&mut world, id, player_pos + glam::vec2(10.0, 0.0));
         }
 
-        update_arena(
-            &mut game,
-            &mut world,
-            &map,
-            Input::new(glam::Vec2::ZERO, 0.0, FrameActions::default()),
-        );
+        update_arena(&mut game, &mut world, &map, Input::default());
 
         assert_eq!(world.get::<Health>(player_id(&world)).unwrap().current, 94);
     }
@@ -364,14 +378,7 @@ mod tests {
             &mut game,
             &mut world,
             &map,
-            Input::new(
-                glam::Vec2::ZERO,
-                0.0,
-                FrameActions {
-                    reset_pressed: true,
-                    ..Default::default()
-                },
-            ),
+            Input::default().with_pressed(arena_actions().reset),
         );
 
         assert_eq!(world.ids().count(), 2);
@@ -394,14 +401,7 @@ mod tests {
             &mut game,
             &mut world,
             &map,
-            Input::new(
-                glam::Vec2::ZERO,
-                0.0,
-                FrameActions {
-                    pause_pressed: true,
-                    ..Default::default()
-                },
-            ),
+            Input::default().with_pressed(arena_actions().pause),
         );
 
         assert!(
@@ -421,12 +421,7 @@ mod tests {
         let health = world.get_mut::<Health>(player).unwrap();
         health.damage(health.current);
 
-        let ui_text = update_arena(
-            &mut game,
-            &mut world,
-            &map,
-            Input::new(glam::Vec2::ZERO, 0.0, FrameActions::default()),
-        );
+        let ui_text = update_arena(&mut game, &mut world, &map, Input::default());
 
         assert!(
             world

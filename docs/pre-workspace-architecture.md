@@ -1,6 +1,14 @@
-# Current Architecture
+# Pre-Workspace Architecture (historical)
 
-This project is currently a single binary crate with five top-level source
+> **Historical note.** This document describes the project *before* the
+> engine/content workspace split. The code is now a Cargo workspace of separate
+> crates — see the "Workspace layout" section of the [README](../README.md) and
+> [`docs/ARCHITECTURE.md`](ARCHITECTURE.md). This file is kept as a record of the
+> single-crate `src/` layout the split grew out of; the module paths below (e.g.
+> `engine::`, `platform::`, `renderer::`) map onto the `game-core`,
+> `game-platform-sdl`, and `game-renderer-vulkan` crates respectively.
+
+This project was originally a single binary crate with five top-level source
 areas under `src/`:
 
 - `audio` = SDL audio stream, lock-free mixer, generated tones, and audio

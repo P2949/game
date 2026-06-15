@@ -1,7 +1,7 @@
 use game_combat::{Faction, FactionId, Health, MeleeAttack, apply_damage};
 use game_core::backend::SoundHandle;
 use game_core::commands::{CommandQueue, Event};
-use game_core::input::{Action, Input};
+use game_core::input::{ActionId, Input};
 use game_core::world::{EntityId, Transform, Velocity, World};
 
 use crate::actor::PlayerController;
@@ -15,8 +15,14 @@ struct CombatEffects {
 /// Resolves a melee combat tick into engine commands: queued hit sounds and
 /// despawns of dead enemies. Enemies are identified by [`Faction`] (Enemy) rather
 /// than a content-specific tag, demonstrating reuse of `game-combat`.
-pub fn tick_commands(world: &mut World, input: &Input, hit_sound: SoundHandle, dt: f32) {
-    let effects = tick_effects(world, input, dt);
+pub fn tick_commands(
+    world: &mut World,
+    input: &Input,
+    attack: ActionId,
+    hit_sound: SoundHandle,
+    dt: f32,
+) {
+    let effects = tick_effects(world, input, attack, dt);
     let queue = world.resource_or_insert_with(CommandQueue::new);
     for _ in 0..effects.hit_sounds {
         queue.play_sound(hit_sound);
@@ -32,13 +38,13 @@ pub fn emit_player_death(world: &mut World) {
         .emit(Event::Named("testbed/player_dead".to_owned()));
 }
 
-fn tick_effects(world: &mut World, input: &Input, dt: f32) -> CombatEffects {
+fn tick_effects(world: &mut World, input: &Input, attack: ActionId, dt: f32) -> CombatEffects {
     let mut effects = CombatEffects::default();
     let Some((player_id, player_pos, player_range, player_damage)) = player_snapshot(world) else {
         return effects;
     };
 
-    if input.pressed(Action::Attack) {
+    if input.pressed(attack) {
         if let Some(target) = nearest_enemy_in_range(world, player_pos, player_range) {
             if apply_damage(world, target, player_damage) {
                 effects.hit_sounds += 1;
@@ -139,21 +145,21 @@ mod tests {
     use game_combat::{Faction, Health, MeleeAttack};
     use game_core::backend::SoundHandle;
     use game_core::commands::CommandQueue;
-    use game_core::input::{FrameActions, Input};
+    use game_core::input::{ActionId, Axis2dId, Input};
     use game_core::world::{Entity, World};
 
     use super::{kill_player, player_is_dead, tick_commands};
     use crate::actor::PlayerController;
 
+    const ATTACK: ActionId = ActionId(0);
+
     fn input(attack: bool) -> Input {
-        Input::new(
-            glam::Vec2::ZERO,
-            0.0,
-            FrameActions {
-                action_pressed: attack,
-                ..Default::default()
-            },
-        )
+        let input = Input::default();
+        if attack {
+            input.with_pressed(ATTACK)
+        } else {
+            input
+        }
     }
 
     fn world_with_player_and_enemy(enemy_pos: glam::Vec2) -> World {
@@ -161,7 +167,7 @@ mod tests {
         world.spawn(
             Entity::new(glam::Vec2::ZERO)
                 .with(PlayerController {
-                    move_axis: game_core::input::Axis2dId(0),
+                    move_axis: Axis2dId(0),
                 })
                 .with(Faction::player())
                 .with(Health::new(120))
@@ -180,7 +186,13 @@ mod tests {
     fn player_attack_despawns_dead_enemy_via_commands() {
         let mut world = world_with_player_and_enemy(glam::vec2(10.0, 0.0));
 
-        tick_commands(&mut world, &input(true), SoundHandle(0), 1.0 / 120.0);
+        tick_commands(
+            &mut world,
+            &input(true),
+            ATTACK,
+            SoundHandle(0),
+            1.0 / 120.0,
+        );
 
         // The despawn is queued as a command; draining applies it.
         let mut queue = world.remove_resource::<CommandQueue>().unwrap();
@@ -191,7 +203,13 @@ mod tests {
     fn enemy_in_range_damages_player() {
         let mut world = world_with_player_and_enemy(glam::vec2(4.0, 0.0));
 
-        tick_commands(&mut world, &input(false), SoundHandle(0), 1.0 / 120.0);
+        tick_commands(
+            &mut world,
+            &input(false),
+            ATTACK,
+            SoundHandle(0),
+            1.0 / 120.0,
+        );
 
         let player = world.ids_with::<PlayerController>()[0];
         assert_eq!(world.get::<Health>(player).unwrap().current, 113);
@@ -211,7 +229,13 @@ mod tests {
         // Enemy is far outside its attack range and the player does not attack, so
         // no hit sounds or despawns are queued.
         let mut world = world_with_player_and_enemy(glam::vec2(100.0, 0.0));
-        tick_commands(&mut world, &input(false), SoundHandle(0), 1.0 / 120.0);
+        tick_commands(
+            &mut world,
+            &input(false),
+            ATTACK,
+            SoundHandle(0),
+            1.0 / 120.0,
+        );
         let empty = world
             .get_resource::<CommandQueue>()
             .is_none_or(CommandQueue::is_empty);

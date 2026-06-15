@@ -112,6 +112,20 @@ impl AssetRegistry {
             .iter()
             .map(|(key, request)| (key.as_str(), request))
     }
+
+    /// Every distinct texture the content needs, as `(handle, path)` pairs ordered
+    /// by handle. The renderer loads these into GPU textures and records the
+    /// resulting `TextureHandle -> TextureId` mapping, so handles resolve through a
+    /// real lookup instead of being cast straight to renderer ids.
+    pub fn texture_loads(&self) -> Vec<(TextureHandle, String)> {
+        let mut loads: Vec<(TextureHandle, String)> = self
+            .texture_path_handles
+            .iter()
+            .map(|(path, handle)| (*handle, path.clone()))
+            .collect();
+        loads.sort_by_key(|(handle, _)| handle.0);
+        loads
+    }
 }
 
 pub struct AssetValidator<'a> {

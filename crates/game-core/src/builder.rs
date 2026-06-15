@@ -1,5 +1,5 @@
 use std::any::TypeId;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::app::{MapData, TileTheme};
 use crate::assets::AssetRegistry;
@@ -8,7 +8,30 @@ use crate::nav::NavGrid;
 use crate::schedule::Schedule;
 use crate::tilemap::TileMap;
 use crate::world::{Component, EntityId, World};
-pub use game_map::{MapId, PrefabId, PropertyBag};
+
+/// Registry-assigned identifier for a map, minted by [`MapRegistry`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MapId(pub u32);
+
+/// Registry-assigned identifier for a prefab, minted by [`PrefabRegistry`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PrefabId(pub u32);
+
+/// Free-form string properties attached to a spawned map object.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PropertyBag {
+    values: HashMap<String, String>,
+}
+
+impl PropertyBag {
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.values.insert(key.into(), value.into());
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.values.get(key).map(String::as_str)
+    }
+}
 
 #[derive(Default)]
 pub struct MapRegistry {
@@ -84,20 +107,37 @@ impl PrefabRegistry {
         Self::default()
     }
 
+    /// Registers a prefab under a unique `name`, panicking if the name is already
+    /// taken. Registration happens once at startup/build time, so a duplicate name
+    /// is a content-authoring bug that should fail loudly and immediately; callers
+    /// that want to handle the collision instead should use [`Self::try_register`].
     pub fn register(
         &mut self,
         name: impl Into<String>,
         spawn: impl Fn(&mut World, glam::Vec2, &PropertyBag) -> anyhow::Result<EntityId> + 'static,
     ) -> PrefabId {
+        self.try_register(name, spawn)
+            .expect("prefab names must be unique")
+    }
+
+    /// Registers a prefab under a unique `name`, erroring if the name is already
+    /// registered. Silently aliasing a duplicate to the existing prefab would hide
+    /// authoring mistakes (two different compositions under one name), so this is
+    /// rejected rather than deduplicated.
+    pub fn try_register(
+        &mut self,
+        name: impl Into<String>,
+        spawn: impl Fn(&mut World, glam::Vec2, &PropertyBag) -> anyhow::Result<EntityId> + 'static,
+    ) -> anyhow::Result<PrefabId> {
         let name = name.into();
-        if let Some(id) = self.names.get(&name) {
-            return *id;
+        if self.names.contains_key(&name) {
+            anyhow::bail!("duplicate prefab name '{name}'");
         }
 
         let id = PrefabId(self.prefabs.len() as u32);
         self.prefabs.insert(id, Prefab::new(spawn));
         self.names.insert(name, id);
-        id
+        Ok(id)
     }
 
     pub fn id(&self, name: &str) -> Option<PrefabId> {
@@ -164,11 +204,24 @@ impl<'a> PrefabValidator<'a> {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        // Group every requirement by prefab so each prefab is spawned exactly once
+        // and all of its required components are checked against that single
+        // entity. Spawning per-requirement would both waste work and mask a prefab
+        // whose composition varies between spawns. `BTreeMap` keeps the spawn and
+        // error order deterministic.
+        let mut by_prefab: BTreeMap<&str, Vec<&ComponentRequirement>> = BTreeMap::new();
         for requirement in &self.requirements {
+            by_prefab
+                .entry(requirement.prefab_name.as_str())
+                .or_default()
+                .push(requirement);
+        }
+
+        for (prefab_name, requirements) in by_prefab {
             let prefab_id = self
                 .registry
-                .id(&requirement.prefab_name)
-                .ok_or_else(|| anyhow::anyhow!("unknown prefab '{}'", requirement.prefab_name))?;
+                .id(prefab_name)
+                .ok_or_else(|| anyhow::anyhow!("unknown prefab '{}'", prefab_name))?;
             let mut world = World::new();
             let entity = self.registry.spawn(
                 prefab_id,
@@ -176,26 +229,14 @@ impl<'a> PrefabValidator<'a> {
                 glam::Vec2::ZERO,
                 &PropertyBag::default(),
             )?;
-            if !world.has_component_type(entity, requirement.component_type) {
-                anyhow::bail!(
-                    "prefab '{}' did not insert required component {}",
-                    requirement.prefab_name,
-                    requirement.component_name
-                );
-            }
-        }
-        Ok(())
-    }
-
-    pub fn validate_map_references(&self, map: &game_map::GameMap) -> anyhow::Result<()> {
-        for object in &map.objects {
-            if !self.registry.contains(object.prefab) {
-                anyhow::bail!(
-                    "map {:?} object '{}' references unknown prefab {:?}",
-                    map.id,
-                    object.id,
-                    object.prefab
-                );
+            for requirement in requirements {
+                if !world.has_component_type(entity, requirement.component_type) {
+                    anyhow::bail!(
+                        "prefab '{}' did not insert required component {}",
+                        prefab_name,
+                        requirement.component_name
+                    );
+                }
             }
         }
         Ok(())
@@ -267,5 +308,93 @@ impl GameBuilder {
 
     pub fn into_schedule(self) -> Schedule {
         self.schedule
+    }
+
+    /// Hands the runtime the content registries it consumes as the source of
+    /// truth: the asset table (which textures to load), the input bindings (which
+    /// drive [`Input`](crate::input::Input) every step), and the schedule. The
+    /// map/prefab registries are captured by the schedule's systems, so they are
+    /// not surfaced here.
+    pub fn into_parts(self) -> RuntimeContent {
+        RuntimeContent {
+            assets: self.assets,
+            input: self.input,
+            schedule: self.schedule,
+        }
+    }
+}
+
+/// The slice of a [`GameBuilder`] the runtime keeps after `GamePlugin::build`,
+/// instead of dropping every registry but the schedule.
+pub struct RuntimeContent {
+    pub assets: AssetRegistry,
+    pub input: InputRegistry,
+    pub schedule: Schedule,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use crate::world::{Entity, Transform, Velocity};
+
+    use super::{PrefabRegistry, PrefabValidator};
+
+    #[test]
+    fn try_register_rejects_duplicate_names() {
+        let mut registry = PrefabRegistry::new();
+        registry
+            .try_register("thing", |world, pos, _| Ok(world.spawn(Entity::new(pos))))
+            .unwrap();
+
+        let err = registry
+            .try_register("thing", |world, pos, _| Ok(world.spawn(Entity::new(pos))))
+            .unwrap_err();
+
+        assert!(err.to_string().contains("duplicate prefab name 'thing'"));
+    }
+
+    #[test]
+    fn validator_spawns_each_prefab_once_for_all_requirements() {
+        let spawns = Rc::new(Cell::new(0_usize));
+        let counter = Rc::clone(&spawns);
+        let mut registry = PrefabRegistry::new();
+        registry.register("thing", move |world, pos, _| {
+            counter.set(counter.get() + 1);
+            Ok(world.spawn(Entity::new(pos).with(1_i32)))
+        });
+
+        let mut validator = PrefabValidator::new(&registry);
+        validator
+            .require_component::<Transform>("thing")
+            .require_component::<Velocity>("thing")
+            .require_component::<i32>("thing");
+        validator.validate().unwrap();
+
+        assert_eq!(
+            spawns.get(),
+            1,
+            "three requirements on one prefab must spawn it exactly once"
+        );
+    }
+
+    #[test]
+    fn validator_reports_missing_component() {
+        let mut registry = PrefabRegistry::new();
+        registry.register("bare", |world, pos, _| {
+            Ok(world.spawn(Entity::empty().with(Transform::at(pos))))
+        });
+
+        let mut validator = PrefabValidator::new(&registry);
+        validator
+            .require_component::<Transform>("bare")
+            .require_component::<i32>("bare");
+
+        let err = validator.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("did not insert required component")
+        );
     }
 }
