@@ -3,7 +3,7 @@
 //! `context.rs` so the context owns frame orchestration while the imperative
 //! Vulkan command details live here.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ash::vk;
 use game_core::backend::TextureHandle;
@@ -40,14 +40,17 @@ pub fn resolve_draw_ranges(
     out: &mut Vec<RenderSpriteRange>,
     textures: &TextureRegistry,
     handle_to_id: &HashMap<TextureHandle, TextureId>,
+    warned_unmapped_handles: &mut HashSet<TextureHandle>,
 ) -> anyhow::Result<()> {
     out.reserve(batch_ranges.len());
     for range in batch_ranges {
         let Some(&texture_id) = handle_to_id.get(&range.texture) else {
-            log::debug!(
-                "dropping draw range for unmapped texture handle {:?}",
-                range.texture
-            );
+            if warned_unmapped_handles.insert(range.texture) {
+                log::warn!(
+                    "dropping draw range for unmapped texture handle {:?}",
+                    range.texture
+                );
+            }
             continue;
         };
         out.push(RenderSpriteRange {

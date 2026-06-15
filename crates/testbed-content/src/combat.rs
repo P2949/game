@@ -1,6 +1,6 @@
 use game_combat::{Faction, FactionId, Health, MeleeAttack, apply_damage};
 use game_core::backend::SoundHandle;
-use game_core::commands::{CommandQueue, Event};
+use game_core::commands::CommandQueue;
 use game_core::input::{ActionId, Input};
 use game_core::world::{EntityId, Transform, Velocity, World};
 
@@ -30,12 +30,6 @@ pub fn tick_commands(
     for id in effects.despawns {
         queue.despawn(id);
     }
-}
-
-pub fn emit_player_death(world: &mut World) {
-    world
-        .resource_or_insert_with(CommandQueue::new)
-        .emit(Event::Named("testbed/player_dead".to_owned()));
 }
 
 fn tick_effects(world: &mut World, input: &Input, attack: ActionId, dt: f32) -> CombatEffects {

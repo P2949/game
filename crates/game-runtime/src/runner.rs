@@ -282,7 +282,6 @@ fn process_core_commands(world: &mut World, audio_commands: &mut AudioCommands) 
                 volume: 0.8,
                 looping: false,
             }),
-            Command::Spawn(_, _) | Command::SetMap(_) | Command::EmitEvent(_) => {}
         }
     }
 }

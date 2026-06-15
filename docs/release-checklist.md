@@ -7,19 +7,20 @@ working tree.
 
 ```bash
 cargo fmt --all -- --check
-cargo test --locked
-cargo clippy --all-targets --locked -- -D warnings
-cargo build --release --locked
-GAME_ASSET_DIR=assets cargo run --release --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build -p game --release --locked
+GAME_ASSET_DIR=assets cargo run -p game --release --locked
 cargo deny check advisories licenses sources bans
 ```
 
-To reproduce CI exactly (SDL3 built from source), append `--features
-ci-build-sdl3` to the cargo commands. A headless render/teardown smoke check:
+To reproduce CI exactly (SDL3 built from source), use the `game/ci-build-sdl3`
+workspace feature for workspace commands and `ci-build-sdl3` on package-specific
+`game` commands. A headless render/teardown smoke check:
 
 ```bash
-GAME_SMOKE_FRAMES=120 cargo run --locked            # debug: validation layers on
-GAME_ASSET_DIR=assets GAME_SMOKE_FRAMES=120 cargo run --release --locked
+GAME_SMOKE_FRAMES=120 cargo run -p game --locked --features ci-build-sdl3
+GAME_ASSET_DIR=assets GAME_SMOKE_FRAMES=120 cargo run -p game --release --locked --features ci-build-sdl3
 ```
 
 ## Packaged-layout check
@@ -40,9 +41,9 @@ Run `GAME_ASSET_DIR=assets cargo run --release` and verify:
 
 - [ ] Window opens at the requested size
 - [ ] World sprites render (floor grid, solids, player)
-- [ ] HUD text and the frame-time graph render
-- [ ] Audio starts (looping tone; `Space`/`Enter` plays the blip)
-- [ ] Movement collides with walls and slides along them (no tunneling)
+- [ ] HUD text renders
+- [ ] Audio starts; `Space`/`Enter` plays the generated blip
+- [ ] Movement collides with walls and slides along them; very fast movement may still tunnel
 - [ ] `P` pauses and resumes; effects freeze while paused
 - [ ] `R` resets; `K` triggers the death screen
 - [ ] Window resize keeps rendering and recovers (no freeze/crash)

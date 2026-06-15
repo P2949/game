@@ -1,6 +1,6 @@
 use crate::engine::audio::Audio;
 use crate::engine::backend::SoundHandle;
-use crate::engine::commands::{CommandQueue, Event};
+use crate::engine::commands::CommandQueue;
 use crate::engine::input::{ActionId, Input};
 use crate::engine::world::{EntityId, Transform, Velocity};
 use crate::game::World;
@@ -45,12 +45,6 @@ pub fn tick_commands(
     for id in effects.despawns {
         queue.despawn(id);
     }
-}
-
-pub fn emit_player_death(world: &mut World) {
-    world
-        .resource_or_insert_with(CommandQueue::new)
-        .emit(Event::Named("arena/player_dead".to_owned()));
 }
 
 fn tick_effects(world: &mut World, input: &Input, attack: ActionId, dt: f32) -> CombatEffects {

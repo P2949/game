@@ -59,13 +59,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Test
-        run: cargo test --locked --features ci-build-sdl3
+        run: cargo test --workspace --locked --features game/ci-build-sdl3
 
       - name: Clippy
-        run: cargo clippy --all-targets --locked --features ci-build-sdl3 -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --features game/ci-build-sdl3 -- -D warnings
 
       - name: Release build
-        run: cargo build --release --locked --features ci-build-sdl3
+        run: cargo build -p game --release --locked --features ci-build-sdl3
 
   audit:
     runs-on: ubuntu-latest
@@ -120,7 +120,7 @@ jobs:
             libxss-dev libxtst-dev wayland-protocols \
             mesa-vulkan-drivers vulkan-tools vulkan-validationlayers xvfb
       - name: Build (debug, validation layers on)
-        run: cargo build --locked --features ci-build-sdl3
+        run: cargo build -p game --locked --features ci-build-sdl3
       - name: Select lavapipe Vulkan ICD
         run: |
           lvp_icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
@@ -142,7 +142,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           RUST_LOG: info
           SDL_VIDEODRIVER: x11
-        run: timeout -k 5s 120s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --locked --features ci-build-sdl3
+        run: timeout -k 5s 120s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run -p game --locked --features ci-build-sdl3
       # Release smoke test: CI builds release mode but, without running it, an
       # asset-path regression (release does not use the debug source-tree
       # fallback) could survive. Launch the release binary with assets supplied
@@ -154,7 +154,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           RUST_LOG: info
           SDL_VIDEODRIVER: x11
-        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --release --locked --features ci-build-sdl3
+        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run -p game --release --locked --features ci-build-sdl3
 
   # Minimum-supported-Rust-version gate. Cargo.toml declares rust-version = 1.87
   # (the floor is set by a dependency: sdl3 0.18.4 uses `is_multiple_of`, stable
@@ -204,4 +204,4 @@ jobs:
             vulkan-validationlayers \
             wayland-protocols
       - name: Check MSRV (1.87.0)
-        run: cargo check --locked --features ci-build-sdl3
+        run: cargo check --workspace --locked --features game/ci-build-sdl3

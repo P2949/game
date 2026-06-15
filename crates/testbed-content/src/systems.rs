@@ -87,8 +87,6 @@ pub fn state_input_system(
         .get_resource::<GameState>()
         .copied()
         .unwrap_or_default();
-    let was_dead = state.player_dead;
-
     if ctx.input.pressed(actions.pause) {
         state.paused = !state.paused;
     }
@@ -109,10 +107,6 @@ pub fn state_input_system(
         reset_world(ctx.world, map, prefabs)
             .expect("testbed map objects reference registered prefabs");
         state = GameState::default();
-    }
-
-    if state.player_dead && !was_dead {
-        combat::emit_player_death(ctx.world);
     }
 
     if state.player_dead || state.paused {
@@ -159,11 +153,7 @@ pub fn death_state_system(ctx: &mut Ctx<'_>, _dt: f32) {
         .get_resource::<GameState>()
         .copied()
         .unwrap_or_default();
-    let was_dead = state.player_dead;
     state.player_dead = combat::player_is_dead(ctx.world);
-    if state.player_dead && !was_dead {
-        combat::emit_player_death(ctx.world);
-    }
     ctx.world.insert_resource(state);
 }
 

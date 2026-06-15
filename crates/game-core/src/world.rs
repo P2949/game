@@ -363,12 +363,14 @@ impl World {
         self.components
             .store::<T>()
             .map(|store| {
-                store
+                let mut ids: Vec<_> = store
                     .entries
                     .keys()
                     .copied()
                     .filter(|id| self.is_alive(*id))
-                    .collect()
+                    .collect();
+                ids.sort_by_key(|id| (id.index, id.generation));
+                ids
             })
             .unwrap_or_default()
     }
@@ -377,12 +379,14 @@ impl World {
         self.components
             .store::<T>()
             .map(|store| {
-                store
+                let mut entries: Vec<_> = store
                     .entries
                     .iter()
                     .filter(|(id, _)| self.is_alive(**id))
                     .map(|(id, component)| (*id, component))
-                    .collect()
+                    .collect();
+                entries.sort_by_key(|(id, _)| (id.index, id.generation));
+                entries
             })
             .unwrap_or_default()
     }
@@ -427,6 +431,24 @@ mod tests {
         let even = world.spawn(Entity::new(glam::Vec2::ZERO).with(2_i32));
 
         assert_eq!(world.ids_with::<i32>(), vec![even]);
+    }
+
+    #[test]
+    fn ids_with_and_query_are_entity_ordered() {
+        let mut world = World::new();
+        let first = world.spawn(Entity::new(glam::Vec2::ZERO).with(3_i32));
+        let second = world.spawn(Entity::new(glam::Vec2::ZERO).with(2_i32));
+        let third = world.spawn(Entity::new(glam::Vec2::ZERO).with(1_i32));
+
+        assert_eq!(world.ids_with::<i32>(), vec![first, second, third]);
+        assert_eq!(
+            world
+                .query::<i32>()
+                .into_iter()
+                .map(|(id, value)| (id, *value))
+                .collect::<Vec<_>>(),
+            vec![(first, 3), (second, 2), (third, 1)]
+        );
     }
 
     #[test]
