@@ -1,265 +1,141 @@
-use std::rc::Rc;
+use game_kit::prelude::*;
 
-use anyhow::Result;
-use game_map::GameMap;
-
+use crate::ai;
 use crate::assets::ArenaAssets;
 use crate::combat;
 use crate::input::ArenaActions;
 use crate::state::GameState;
-use crate::{ai, spawn};
-use game_core::app::{Ctx, StartCtx};
-use game_core::backend::SoundHandle;
-use game_core::builder::PrefabRegistry;
-use game_core::commands::CommandQueue;
-use game_core::input::ActionId;
-use game_core::schedule::Schedule;
-use game_core::world::World;
 
-pub fn register(
-    schedule: &mut Schedule,
-    assets: ArenaAssets,
-    actions: ArenaActions,
-    map: GameMap,
-    prefabs: Rc<PrefabRegistry>,
-) {
-    let startup_map = map.clone();
-    let startup_prefabs = Rc::clone(&prefabs);
-    schedule.add_startup(move |ctx| startup_system(ctx, &startup_map, &startup_prefabs));
+pub fn register(game: &mut GameApp, assets: ArenaAssets, actions: ArenaActions) {
+    game.startup(startup_system);
 
-    let state_map = map.clone();
-    let state_prefabs = Rc::clone(&prefabs);
-    schedule
-        .add_fixed(move |ctx, _dt| state_input_system(ctx, &state_map, &state_prefabs, actions));
-    schedule.add_fixed(player_control_system);
-    schedule.add_fixed(chase_player_system);
-    schedule.add_fixed(physics_system);
+    game.fixed(move |ctx: &mut GameCtx, _dt| state_input_system(ctx, actions));
+    game.fixed(player_control_system);
+    game.fixed(chase_player_system);
+    game.fixed(physics_system);
 
     let hit_sound = assets.hit;
-    schedule.add_fixed(move |ctx, dt| combat_system(ctx, actions.attack, hit_sound, dt));
-    schedule.add_fixed(death_state_system);
-    schedule.add_update(move |ctx, dt| camera_follow_player_system(ctx, actions, dt));
-    schedule.add_ui(pause_death_ui_system);
+    game.fixed(move |ctx: &mut GameCtx, dt| combat_system(ctx, actions.attack, hit_sound, dt));
+    game.fixed(death_state_system);
 
-    // Every arena fixed system self-guards via `simulation_active`/`GameState`,
-    // so the simulation is safe to step while paused or dead. Declare that to the
-    // schedule validator (Phase 11.4).
-    schedule.mark_fixed_pause_guarded();
+    game.update(move |ctx: &mut GameCtx, dt| camera_follow_player_system(ctx, actions, dt));
+    game.ui(pause_death_ui_system);
+
+    game.fixed_systems_are_pause_guarded();
 }
 
-pub fn startup_system(
-    ctx: &mut StartCtx<'_>,
-    map: &GameMap,
-    prefabs: &PrefabRegistry,
-) -> Result<()> {
-    initialize_resources(ctx.world);
-    reset_world(ctx.world, map, prefabs)?;
-    Ok(())
+pub fn startup_system(game: &mut StartupGameCtx<'_, '_>) -> anyhow::Result<()> {
+    game.resource_or_insert_with(GameState::default);
+    game.spawn_start_map()
 }
 
-pub fn initialize_resources(world: &mut World) {
-    world.resource_or_insert_with(GameState::default);
-    world.resource_or_insert_with(CommandQueue::new);
-}
+pub fn state_input_system(game: &mut GameCtx<'_, '_>, actions: ArenaActions) {
+    let mut state = game.resource::<GameState>().copied().unwrap_or_default();
 
-pub fn reset_world(world: &mut World, map: &GameMap, prefabs: &PrefabRegistry) -> Result<()> {
-    world.clear();
-    // `World::clear` preserves resources (including the command queue), so drop
-    // any commands queued against the pre-reset world before respawning.
-    if let Some(commands) = world.get_resource_mut::<CommandQueue>() {
-        commands.clear();
-    }
-    spawn::spawn_map_objects(world, map, prefabs)
-}
-
-pub fn state_input_system(
-    ctx: &mut Ctx<'_>,
-    map: &GameMap,
-    prefabs: &PrefabRegistry,
-    actions: ArenaActions,
-) {
-    initialize_resources(ctx.world);
-    let mut state = ctx
-        .world
-        .get_resource::<GameState>()
-        .copied()
-        .unwrap_or_default();
-    if ctx.input.pressed(actions.pause) {
+    if game.input().pressed(actions.pause) {
         state.paused = !state.paused;
     }
 
-    if ctx.input.pressed(actions.reset) {
-        reset_world(ctx.world, map, prefabs)
+    if game.input().pressed(actions.reset) {
+        game.reset_to_start_map()
             .expect("arena map objects reference registered prefabs");
         state = GameState::default();
     }
 
-    if ctx.input.pressed(actions.debug_die) {
-        combat::kill_player(ctx.world);
+    if game.input().pressed(actions.debug_die) {
+        combat::kill_player(game.world_mut());
     }
 
-    state.player_dead = combat::player_is_dead(ctx.world);
-    if state.player_dead && (ctx.input.pressed(actions.attack) || ctx.input.pressed(actions.reset))
+    state.player_dead = combat::player_is_dead(game.world());
+    if state.player_dead
+        && (game.input().pressed(actions.attack) || game.input().pressed(actions.reset))
     {
-        reset_world(ctx.world, map, prefabs)
+        game.reset_to_start_map()
             .expect("arena map objects reference registered prefabs");
         state = GameState::default();
     }
 
     if state.player_dead || state.paused {
-        ai::stop_all(ctx.world);
+        stop_all_velocity(game.world_mut());
     }
 
-    ctx.world.insert_resource(state);
+    game.insert_resource(state);
 }
 
-pub fn player_control_system(ctx: &mut Ctx<'_>, _dt: f32) {
-    if simulation_active(ctx.world) {
-        ai::drive_player(ctx.world, ctx.input);
-    }
-}
-
-pub fn chase_player_system(ctx: &mut Ctx<'_>, dt: f32) {
-    if simulation_active(ctx.world) {
-        ai::chase_player(ctx.world, ctx.nav, dt);
+pub fn player_control_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    let state = game.resource::<GameState>().copied().unwrap_or_default();
+    if state.active() {
+        let (world, input) = game.world_and_input();
+        ai::drive_player(world, input);
     }
 }
 
-pub fn physics_system(ctx: &mut Ctx<'_>, dt: f32) {
-    if simulation_active(ctx.world) {
-        game_physics::movement_system(ctx.world, ctx.map, dt);
+pub fn chase_player_system(game: &mut GameCtx<'_, '_>, dt: f32) {
+    let state = game.resource::<GameState>().copied().unwrap_or_default();
+    if state.active() {
+        let (world, nav) = game.world_and_nav();
+        ai::chase_player(world, nav, dt);
     }
 }
 
-pub fn combat_system(ctx: &mut Ctx<'_>, attack: ActionId, hit_sound: SoundHandle, dt: f32) {
-    if simulation_active(ctx.world) {
-        combat::tick_commands(ctx.world, ctx.input, attack, hit_sound, dt);
+pub fn physics_system(game: &mut GameCtx<'_, '_>, dt: f32) {
+    let state = game.resource::<GameState>().copied().unwrap_or_default();
+    if state.active() {
+        let (world, map) = game.world_and_map();
+        movement_system(world, map, dt);
     }
 }
 
-pub fn death_state_system(ctx: &mut Ctx<'_>, _dt: f32) {
-    let mut state = ctx
-        .world
-        .get_resource::<GameState>()
-        .copied()
-        .unwrap_or_default();
-    state.player_dead = combat::player_is_dead(ctx.world);
-    ctx.world.insert_resource(state);
+pub fn combat_system(
+    game: &mut GameCtx<'_, '_>,
+    attack: ActionId,
+    hit_sound: SoundHandle,
+    dt: f32,
+) {
+    let state = game.resource::<GameState>().copied().unwrap_or_default();
+    if state.active() {
+        combat::tick_commands(game, attack, hit_sound, dt);
+    }
 }
 
-pub fn camera_follow_player_system(ctx: &mut Ctx<'_>, actions: ArenaActions, dt: f32) {
-    let zoom_in = ctx.input.down(actions.zoom_in);
-    let zoom_out = ctx.input.down(actions.zoom_out);
+pub fn death_state_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    let mut state = game.resource::<GameState>().copied().unwrap_or_default();
+    state.player_dead = combat::player_is_dead(game.world());
+    game.insert_resource(state);
+}
+
+pub fn camera_follow_player_system(game: &mut GameCtx<'_, '_>, actions: ArenaActions, dt: f32) {
+    let zoom_in = game.input().down(actions.zoom_in);
+    let zoom_out = game.input().down(actions.zoom_out);
     if zoom_in != zoom_out {
         let zoom_step = 1.0 + 2.0 * dt;
-        let mut zoom = ctx.camera.zoom();
+        let mut zoom = game.camera().zoom();
         if zoom_in {
             zoom *= zoom_step;
         } else {
             zoom /= zoom_step;
         }
-        ctx.camera.set_zoom(zoom.clamp(0.25, 6.0));
+        game.camera_mut().set_zoom(zoom.clamp(0.25, 6.0));
     }
 
-    if let Some(pos) = ai::player_pos(ctx.world) {
-        ctx.camera.set_center(pos);
+    if let Some(pos) = ai::player_pos(game.world()) {
+        game.camera_mut().set_center(pos);
     }
 }
 
-pub fn pause_death_ui_system(ctx: &mut Ctx<'_>, _dt: f32) {
-    let state = ctx
-        .world
-        .get_resource::<GameState>()
-        .copied()
-        .unwrap_or_default();
+pub fn pause_death_ui_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    let state = game.resource::<GameState>().copied().unwrap_or_default();
     if state.player_dead {
-        ctx.gfx.text(
+        game.text(
             "You died",
             glam::vec2(24.0, 24.0),
             glam::vec4(1.0, 0.35, 0.25, 1.0),
         );
     } else if state.paused {
-        ctx.gfx.text(
+        game.text(
             "Paused",
             glam::vec2(24.0, 24.0),
             glam::vec4(1.0, 0.95, 0.75, 1.0),
         );
-    }
-}
-
-fn simulation_active(world: &World) -> bool {
-    let state = world
-        .get_resource::<GameState>()
-        .copied()
-        .unwrap_or_default();
-    !state.paused && !state.player_dead
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::state::GameState;
-    use crate::{assets, input, level, prefabs};
-    use game_core::app::{Ctx, RenderFrame, StartCtx};
-    use game_core::audio::{Audio, AudioCommands};
-    use game_core::camera::Camera2D;
-    use game_core::gfx::Gfx;
-    use game_core::input::Input;
-    use game_core::world::Velocity;
-
-    use super::{initialize_resources, startup_system, state_input_system};
-
-    #[test]
-    fn startup_system_sets_map_and_game_state_resource() {
-        let assets = assets::ArenaAssets::load();
-        let mut input_registry = game_core::input::InputRegistry::new();
-        let actions = input::register(&mut input_registry);
-        let mut prefab_registry = game_core::builder::PrefabRegistry::new();
-        let arena_prefabs = prefabs::register(&mut prefab_registry, assets, actions);
-        let map = level::arena_map(arena_prefabs);
-        let mut world = game_core::world::World::new();
-
-        startup_system(&mut StartCtx::new(&mut world), &map, &prefab_registry).unwrap();
-
-        assert!(world.get_resource::<GameState>().is_some());
-        assert_eq!(world.ids().count(), 2);
-    }
-
-    #[test]
-    fn state_input_pause_stops_existing_velocity() {
-        let assets = assets::ArenaAssets::load();
-        let mut input_registry = game_core::input::InputRegistry::new();
-        let actions = input::register(&mut input_registry);
-        let mut prefab_registry = game_core::builder::PrefabRegistry::new();
-        let arena_prefabs = prefabs::register(&mut prefab_registry, assets, actions);
-        let map = level::arena_map(arena_prefabs);
-        let mut world = game_core::world::World::new();
-        initialize_resources(&mut world);
-        crate::spawn::spawn_map_objects(&mut world, &map, &prefab_registry).unwrap();
-        for id in world.ids_with::<Velocity>() {
-            world.get_mut::<Velocity>(id).unwrap().0 = glam::Vec2::ONE;
-        }
-
-        let collision = map.collision_tilemap();
-        let nav = game_core::nav::NavGrid::from_tilemap(&collision);
-        let mut camera = Camera2D::new(glam::Vec2::ZERO, 1.0);
-        let mut frame = RenderFrame::new(camera);
-        let mut audio_commands = AudioCommands::default();
-        let input = Input::default().with_pressed(actions.pause);
-        let mut ctx = Ctx {
-            world: &mut world,
-            map: &collision,
-            nav: &nav,
-            input: &input,
-            camera: &mut camera,
-            gfx: Gfx::new(&mut frame),
-            audio: Audio::new(&mut audio_commands),
-        };
-
-        state_input_system(&mut ctx, &map, &prefab_registry, actions);
-
-        assert!(world.get_resource::<GameState>().unwrap().paused);
-        for id in world.ids_with::<Velocity>() {
-            assert_eq!(world.get::<Velocity>(id).unwrap().0, glam::Vec2::ZERO);
-        }
     }
 }

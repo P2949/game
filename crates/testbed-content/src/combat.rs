@@ -1,10 +1,5 @@
-use game_combat::{Faction, FactionId, Health, MeleeAttack, apply_damage};
-use game_core::backend::SoundHandle;
-use game_core::commands::CommandQueue;
-use game_core::input::{ActionId, Input};
-use game_core::world::{EntityId, Transform, Velocity, World};
-
 use crate::actor::PlayerController;
+use game_kit::prelude::*;
 
 #[derive(Default)]
 struct CombatEffects {
@@ -15,20 +10,17 @@ struct CombatEffects {
 /// Resolves a melee combat tick into engine commands: queued hit sounds and
 /// despawns of dead enemies. Enemies are identified by [`Faction`] (Enemy) rather
 /// than a content-specific tag, demonstrating reuse of `game-combat`.
-pub fn tick_commands(
-    world: &mut World,
-    input: &Input,
-    attack: ActionId,
-    hit_sound: SoundHandle,
-    dt: f32,
-) {
-    let effects = tick_effects(world, input, attack, dt);
-    let queue = world.resource_or_insert_with(CommandQueue::new);
+pub fn tick_commands(game: &mut GameCtx, attack: ActionId, hit_sound: SoundHandle, dt: f32) {
+    let effects = {
+        let (world, input) = game.world_and_input();
+        tick_effects(world, input, attack, dt)
+    };
+    let mut commands = game.commands();
     for _ in 0..effects.hit_sounds {
-        queue.play_sound(hit_sound);
+        commands.play_sound(hit_sound);
     }
     for id in effects.despawns {
-        queue.despawn(id);
+        commands.despawn(id);
     }
 }
 
@@ -136,13 +128,9 @@ fn nearest_enemy_in_range(world: &World, player_pos: glam::Vec2, range: f32) -> 
 
 #[cfg(test)]
 mod tests {
-    use game_combat::{Faction, Health, MeleeAttack};
-    use game_core::backend::SoundHandle;
-    use game_core::commands::CommandQueue;
-    use game_core::input::{ActionId, Axis2dId, Input};
-    use game_core::world::{Entity, World};
+    use game_kit::prelude::*;
 
-    use super::{kill_player, player_is_dead, tick_commands};
+    use super::{kill_player, player_is_dead, tick_effects};
     use crate::actor::PlayerController;
 
     const ATTACK: ActionId = ActionId(0);
@@ -177,35 +165,22 @@ mod tests {
     }
 
     #[test]
-    fn player_attack_despawns_dead_enemy_via_commands() {
+    fn player_attack_records_dead_enemy_despawn_effect() {
         let mut world = world_with_player_and_enemy(glam::vec2(10.0, 0.0));
+        let effects = tick_effects(&mut world, &input(true), ATTACK, 1.0 / 120.0);
 
-        tick_commands(
-            &mut world,
-            &input(true),
-            ATTACK,
-            SoundHandle(0),
-            1.0 / 120.0,
-        );
-
-        // The despawn is queued as a command; draining applies it.
-        let mut queue = world.remove_resource::<CommandQueue>().unwrap();
-        assert_eq!(queue.drain().count(), 2); // hit sound + despawn
+        assert_eq!(effects.hit_sounds, 1);
+        assert_eq!(effects.despawns.len(), 1);
     }
 
     #[test]
     fn enemy_in_range_damages_player() {
         let mut world = world_with_player_and_enemy(glam::vec2(4.0, 0.0));
 
-        tick_commands(
-            &mut world,
-            &input(false),
-            ATTACK,
-            SoundHandle(0),
-            1.0 / 120.0,
-        );
+        let effects = tick_effects(&mut world, &input(false), ATTACK, 1.0 / 120.0);
 
         let player = world.ids_with::<PlayerController>()[0];
+        assert_eq!(effects.hit_sounds, 1);
         assert_eq!(world.get::<Health>(player).unwrap().current, 113);
     }
 
@@ -223,16 +198,9 @@ mod tests {
         // Enemy is far outside its attack range and the player does not attack, so
         // no hit sounds or despawns are queued.
         let mut world = world_with_player_and_enemy(glam::vec2(100.0, 0.0));
-        tick_commands(
-            &mut world,
-            &input(false),
-            ATTACK,
-            SoundHandle(0),
-            1.0 / 120.0,
-        );
-        let empty = world
-            .get_resource::<CommandQueue>()
-            .is_none_or(CommandQueue::is_empty);
-        assert!(empty);
+        let effects = tick_effects(&mut world, &input(false), ATTACK, 1.0 / 120.0);
+
+        assert_eq!(effects.hit_sounds, 0);
+        assert!(effects.despawns.is_empty());
     }
 }

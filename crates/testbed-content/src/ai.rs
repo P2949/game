@@ -1,5 +1,4 @@
-use game_core::input::Input;
-use game_core::world::{Transform, Velocity, World};
+use game_kit::prelude::*;
 use glam::Vec2;
 
 use crate::actor::{MoveSpeed, PlayerController};
@@ -35,8 +34,7 @@ pub fn drive_player(world: &mut World, input: &Input) {
 
 #[cfg(test)]
 mod tests {
-    use game_core::input::{Axis2dId, Input};
-    use game_core::world::{Entity, Velocity, World};
+    use game_kit::prelude::*;
 
     use super::{drive_player, player_pos};
     use crate::actor::{MoveSpeed, PlayerController};

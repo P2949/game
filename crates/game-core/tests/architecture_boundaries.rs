@@ -1,23 +1,6 @@
 use std::fs;
 use std::path::Path;
 
-const FUTURE_HARD_GATES: &[&str] = &[
-    // TODO(architecture): game-renderer-vulkan must not import arena-content.
-    // TODO(architecture): game-audio must not import arena-content.
-    // TODO(architecture): game-platform-sdl must not import arena-content.
-    // TODO(architecture): game-runtime must not import arena-content except through
-    // a plugin trait object passed by the binary.
-    "game-renderer-vulkan must not import arena-content",
-    "game-audio must not import arena-content",
-    "game-platform-sdl must not import arena-content",
-    "game-runtime must not import arena-content except through plugin trait object passed by bin",
-];
-
-#[test]
-fn future_architecture_gates_are_recorded() {
-    assert_eq!(FUTURE_HARD_GATES.len(), 4);
-}
-
 #[test]
 fn game_core_manifest_has_no_backend_dependencies() {
     let manifest = fs::read_to_string(workspace_root().join("crates/game-core/Cargo.toml"))
@@ -68,48 +51,181 @@ fn game_core_source_has_no_backend_imports() {
 }
 
 #[test]
-fn second_demo_only_uses_gameplay_crates() {
-    // Phase 12: the testbed demo must prove the split by depending solely on the
-    // engine-neutral gameplay crates — never on the runtime/backends or the other
-    // demo's content crate.
-    let raw = fs::read_to_string(workspace_root().join("crates/testbed-content/Cargo.toml"))
-        .expect("failed to read testbed-content manifest");
-    // Ignore comment lines so documentation mentioning forbidden crates does not
-    // trip the dependency check.
-    let manifest: String = raw
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n");
-
+fn game_kit_has_no_backend_dependencies() {
+    // Phase 1: the content-authoring facade wraps the engine-neutral gameplay
+    // crates and must never reach a runtime/backend crate.
+    let manifest = read_manifest_without_comments("crates/game-kit/Cargo.toml");
     for forbidden in [
         "game-runtime",
         "game-renderer-vulkan",
-        "game-audio",
         "game-platform-sdl",
-        "arena-content",
+        "game-audio",
         "ash",
         "sdl3",
         "gpu-allocator",
     ] {
         assert!(
             !manifest.contains(forbidden),
-            "testbed-content manifest must not depend on {forbidden}"
+            "game-kit manifest must not depend on {forbidden}"
         );
     }
 
-    for required in [
-        "game-core",
-        "game-map",
-        "game-ai",
-        "game-combat",
-        "game-physics",
-    ] {
-        assert!(
-            manifest.contains(required),
-            "testbed-content manifest should use {required}"
-        );
+    let src_dir = workspace_root().join("crates/game-kit/src");
+    let mut files = Vec::new();
+    collect_rust_files(&src_dir, &mut files);
+    for path in files {
+        // Strip comment lines: doc comments legitimately mention runtime entry
+        // points (e.g. `game_runtime::run`) without creating a dependency.
+        let source = read_code_without_comments(&path);
+        for forbidden in [
+            "game_runtime",
+            "game_renderer_vulkan",
+            "game_platform_sdl",
+            "game_audio",
+            "ash::",
+            "sdl3::",
+            "gpu_allocator",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} must not reference backend {forbidden:?}",
+                path.display()
+            );
+        }
     }
+}
+
+/// Reads Rust source with whole-line comments removed, so documentation that
+/// mentions a forbidden crate name does not trip a `contains` import check.
+fn read_code_without_comments(path: &Path) -> String {
+    let raw = fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+    raw.lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn content_crates_depend_only_on_game_kit_and_common_deps() {
+    // Phase 13: content authors use the facade. Direct gameplay-crate dependencies
+    // mean the facade has a gap; backend dependencies break the runtime boundary.
+    for crate_name in ["arena-content", "testbed-content"] {
+        let manifest = read_manifest_without_comments(&format!("crates/{crate_name}/Cargo.toml"));
+        for forbidden in [
+            "game-core",
+            "game-map",
+            "game-ai",
+            "game-combat",
+            "game-physics",
+            "game-runtime",
+            "game-renderer-vulkan",
+            "game-platform-sdl",
+            "game-audio",
+            "ash",
+            "sdl3",
+            "gpu-allocator",
+        ] {
+            assert!(
+                !manifest.contains(forbidden),
+                "{crate_name} manifest must not depend on {forbidden}"
+            );
+        }
+
+        for required in ["anyhow.workspace", "glam.workspace", "game-kit"] {
+            assert!(
+                manifest.contains(required),
+                "{crate_name} manifest should depend on {required}"
+            );
+        }
+    }
+}
+
+#[test]
+fn content_source_uses_authoring_facade_not_engine_internals() {
+    for crate_name in ["arena-content", "testbed-content"] {
+        let src_dir = workspace_root().join(format!("crates/{crate_name}/src"));
+        let mut files = Vec::new();
+        collect_rust_files(&src_dir, &mut files);
+
+        for path in files {
+            let source = read_code_without_comments(&path);
+            assert!(
+                source.contains("use game_kit::prelude::*;"),
+                "{} should import the authoring facade prelude",
+                path.display()
+            );
+
+            for forbidden in [
+                "game_core::",
+                "game_map::",
+                "game_ai::",
+                "game_combat::",
+                "game_physics::",
+                "game_runtime",
+                "game_renderer_vulkan",
+                "game_platform_sdl",
+                "game_audio",
+                "GameBuilder",
+                "Schedule",
+                "PrefabRegistry",
+                "MapRegistry",
+                "PrefabValidator",
+                "MapValidator",
+                "StartCtx",
+                "CommandQueue",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must not reach around game-kit with {forbidden:?}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn runtime_and_backends_do_not_depend_on_content_crates() {
+    for crate_name in [
+        "game-runtime",
+        "game-renderer-vulkan",
+        "game-platform-sdl",
+        "game-audio",
+    ] {
+        let manifest = read_manifest_without_comments(&format!("crates/{crate_name}/Cargo.toml"));
+        for forbidden in ["arena-content", "testbed-content"] {
+            assert!(
+                !manifest.contains(forbidden),
+                "{crate_name} manifest must not depend on {forbidden}"
+            );
+        }
+
+        let src_dir = workspace_root().join(format!("crates/{crate_name}/src"));
+        let mut files = Vec::new();
+        collect_rust_files(&src_dir, &mut files);
+        for path in files {
+            let source = read_code_without_comments(&path);
+            for forbidden in ["arena_content", "testbed_content"] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must not import {forbidden}; bin/game selects content plugins",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+/// Reads a manifest with comment lines stripped, so documentation that mentions a
+/// forbidden crate name does not trip a `contains` dependency check.
+fn read_manifest_without_comments(relative: &str) -> String {
+    let raw = fs::read_to_string(workspace_root().join(relative))
+        .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+    raw.lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn workspace_root() -> &'static Path {

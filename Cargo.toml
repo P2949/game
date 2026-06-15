@@ -8,6 +8,7 @@ members = [
     "crates/game-ai",
     "crates/game-map",
     "crates/game-physics",
+    "crates/game-kit",
     "crates/game-platform-sdl",
     "crates/game-renderer-vulkan",
     "crates/game-runtime",

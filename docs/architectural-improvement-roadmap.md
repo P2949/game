@@ -54,6 +54,9 @@ gates that must continue to hold afterward.
 
 ## Current stabilization targets
 
+- Current roadmap: [Content Authoring API 0.1](content-authoring-api-roadmap.md).
+  The workspace/content split is mechanically complete; content crates now use
+  `game-kit` as the authoring facade and do not operate engine wiring directly.
 - Keep CI commands workspace/package-qualified so the virtual workspace does not
   rely on whichever package Cargo happens to infer.
 - Keep runtime/content tests on the schedule path now that the direct

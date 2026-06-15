@@ -1,84 +1,93 @@
-use game_core::builder::{PrefabId, PrefabRegistry};
+use game_kit::prelude::*;
 
+use crate::actor::{MoveSpeed, Name, PlayerController};
 use crate::assets::TestbedAssets;
 use crate::input::TestbedActions;
 
-pub const PLAYER: &str = "testbed/player";
-pub const CHASER: &str = "testbed/chaser";
-pub const PATROLLER: &str = "testbed/patroller";
+const CHASER_REPATH_SECONDS: f32 = 0.25;
+const PATROL_SWEEP: f32 = 6.0 * crate::level::TILE;
 
-#[derive(Clone, Copy, Debug)]
-pub struct TestbedPrefabs {
-    pub player: PrefabId,
-    pub chaser: PrefabId,
-    pub patroller: PrefabId,
-}
-
-pub fn register(
-    prefabs: &mut PrefabRegistry,
-    assets: TestbedAssets,
-    actions: TestbedActions,
-) -> TestbedPrefabs {
-    let player_assets = assets;
-    let player_actions = actions;
-    let player = prefabs.register(PLAYER, move |world, position, _properties| {
-        Ok(crate::spawn::spawn_player(
-            world,
-            position,
-            &player_assets,
-            &player_actions,
-        ))
-    });
-
-    let chaser_assets = assets;
-    let chaser = prefabs.register(CHASER, move |world, position, _properties| {
-        Ok(crate::spawn::spawn_chaser(world, position, &chaser_assets))
-    });
-
-    let patroller_assets = assets;
-    let patroller = prefabs.register(PATROLLER, move |world, position, _properties| {
-        Ok(crate::spawn::spawn_patroller(
-            world,
-            position,
-            &patroller_assets,
-        ))
-    });
-
-    TestbedPrefabs {
-        player,
-        chaser,
-        patroller,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::register;
-    use crate::assets::TestbedAssets;
-    use game_core::builder::{PrefabRegistry, PropertyBag};
-    use game_core::input::InputRegistry;
-    use game_core::world::World;
-
-    #[test]
-    fn testbed_prefabs_spawn_all_three_actors() {
-        let assets = TestbedAssets::load();
-        let mut input = InputRegistry::new();
-        let actions = crate::input::register(&mut input);
-        let mut registry = PrefabRegistry::new();
-        let prefabs = register(&mut registry, assets, actions);
-        let mut world = World::new();
-
-        for prefab in [prefabs.player, prefabs.chaser, prefabs.patroller] {
-            registry
-                .spawn(
-                    prefab,
-                    &mut world,
-                    glam::Vec2::ZERO,
-                    &PropertyBag::default(),
+pub fn register(game: &mut GameApp, assets: TestbedAssets, actions: TestbedActions) {
+    game.prefab("testbed/player", move |prefab| {
+        prefab
+            .spawn(move |at| {
+                (
+                    Name::new("Player"),
+                    Transform::at(at),
+                    Velocity::default(),
+                    PlayerController {
+                        move_axis: actions.movement,
+                    },
+                    Health::new(120),
+                    MoveSpeed(140.0),
+                    MeleeAttack::new(30.0, 25),
+                    Faction::player(),
+                    Sprite::new(assets.player, vec2s(20.0))
+                        .layer(10)
+                        .tint(vec4(0.5, 0.9, 0.6, 1.0)),
+                    Collider::box_of(vec2s(20.0)),
                 )
-                .unwrap();
-        }
+            })
+            .require::<Transform>()
+            .require::<Collider>()
+            .require::<Sprite>()
+            .require::<Health>()
+            .require::<Faction>()
+            .require::<PlayerController>();
+    });
 
-        assert_eq!(world.ids().count(), 3);
-    }
+    game.prefab("testbed/chaser", move |prefab| {
+        prefab
+            .spawn(move |at| {
+                (
+                    Name::new("Chaser"),
+                    Transform::at(at),
+                    Velocity::default(),
+                    Health::new(40),
+                    MoveSpeed(90.0),
+                    Faction::enemy(),
+                    MeleeAttack::new(26.0, 6).cooldown(0.75),
+                    AiController::chase_player(),
+                    ChaseTarget::player(220.0, 22.0 * 0.8, 90.0, CHASER_REPATH_SECONDS),
+                    PathFollow::default(),
+                    Sprite::new(assets.chaser, vec2s(22.0))
+                        .layer(10)
+                        .tint(vec4(1.0, 0.4, 0.4, 1.0)),
+                    Collider::box_of(vec2s(22.0)),
+                )
+            })
+            .require::<Transform>()
+            .require::<Collider>()
+            .require::<Sprite>()
+            .require::<Health>()
+            .require::<Faction>()
+            .require::<AiController>();
+    });
+
+    game.prefab("testbed/patroller", move |prefab| {
+        prefab
+            .spawn(move |at| {
+                let waypoints = vec![at - vec2(PATROL_SWEEP, 0.0), at + vec2(PATROL_SWEEP, 0.0)];
+                (
+                    Name::new("Patroller"),
+                    Transform::at(at),
+                    Velocity::default(),
+                    Health::new(30),
+                    MoveSpeed(70.0),
+                    Faction::enemy(),
+                    MeleeAttack::new(24.0, 4).cooldown(1.0),
+                    Patrol::new(waypoints, 70.0),
+                    Sprite::new(assets.patroller, vec2s(22.0))
+                        .layer(10)
+                        .tint(vec4(1.0, 0.82, 0.3, 1.0)),
+                    Collider::box_of(vec2s(22.0)),
+                )
+            })
+            .require::<Transform>()
+            .require::<Collider>()
+            .require::<Sprite>()
+            .require::<Health>()
+            .require::<Faction>()
+            .require::<Patrol>();
+    });
 }

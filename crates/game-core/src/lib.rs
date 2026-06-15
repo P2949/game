@@ -15,6 +15,32 @@ pub mod world;
 
 #[allow(unused_imports)]
 pub mod prelude {
+    //! Low-level engine-neutral essentials.
+    //!
+    //! Game content should import `game_kit::prelude::*` instead. The raw builder,
+    //! schedule, validation, command queue, and context types live in
+    //! [`crate::internal_prelude`] for runtime/facade/tests.
+
+    pub use crate::backend::{
+        AudioCommand, FontHandle, FontLoadRequest, RenderOutcome, SoundHandle, SoundLoadRequest,
+        TextureHandle, TextureLoadRequest,
+    };
+    pub use crate::camera::Camera2D;
+    pub use crate::gfx::{Gfx, SpriteDraw, TextDraw};
+    pub use crate::input::{ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, Key};
+    pub use crate::nav::NavGrid;
+    pub use crate::tilemap::{Tile, TileMap};
+    pub use crate::world::{Component, Entity, EntityId, Sprite, Transform, Velocity, World};
+}
+
+#[allow(unused_imports)]
+pub mod internal_prelude {
+    //! Internal engine/runtime/facade convenience exports.
+    //!
+    //! This intentionally includes raw contexts, registries, validators, schedules,
+    //! and command queues. It is not the content authoring API; content crates use
+    //! `game_kit::prelude::*`.
+
     pub use crate::app::{
         Ctx, MapData, RenderFrame, StartCtx, TileTheme, extract_entity_sprites,
         extract_tilemap_sprites,

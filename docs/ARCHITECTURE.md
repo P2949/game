@@ -7,6 +7,27 @@
 > `game-physics`, and demos in `arena-content` / `testbed-content` (see the
 > README "Workspace layout" section).
 
+```text
+bin/game
+  selects plugin and runtime config
+
+content crates
+  use game-kit only
+
+game-kit
+  friendly authoring facade over core/map/ai/combat/physics
+
+engine-neutral crates
+  game-core, game-map, game-ai, game-combat, game-physics
+
+runtime/backend crates
+  game-runtime, game-renderer-vulkan, game-platform-sdl, game-audio
+```
+
+Content authors use `game_kit::prelude::*`; lower-level builder, schedule,
+registry, validator, and raw context APIs are for the runtime, facade, and
+engine tests.
+
 ## Main Loop
 
 `game-runtime`'s `runner.rs` owns platform event pumping, fixed-timestep
@@ -57,15 +78,15 @@ Content assets are registered in `AssetRegistry` and validated before backend
 startup. Runtime assets are loaded from `GAME_ASSET_DIR`, executable-adjacent
 `assets/`, or the source-tree debug fallback. Missing content assets report the
 paths that were tried, and texture/font loaders attach exact path context. The
-renderer also has a built-in font atlas dependency on `assets/fonts/DejaVuSans.ttf`.
+runtime also validates renderer built-in assets, currently
+`assets/fonts/DejaVuSans.ttf`, before creating the Vulkan context.
 
 ## Audio Mixer
 
 The SDL audio callback drains generated play commands from a bounded lock-free
-queue and mixes generated tones into an f32 stream. Content registers sound
-handles today, but runtime playback maps them to a generated blip rather than
-loading WAV assets. Real sound loading and resampling are intentionally not
-implemented yet.
+queue and mixes generated tones into an f32 stream. Content requests generated
+sound effects through `assets.generated_sound(..)`. File-backed loading,
+decoding, and resampling are intentionally not implemented yet.
 
 ## Current Limitations
 

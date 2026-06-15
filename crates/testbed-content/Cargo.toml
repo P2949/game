@@ -6,14 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# Phase 12: a second demo that proves the engine/content split. It depends ONLY on
-# the engine-neutral gameplay crates — never on game-runtime, game-renderer-vulkan,
-# game-audio, game-platform-sdl, or arena-content.
+# Second demo content. It depends on the game-kit authoring facade only — never
+# on game-runtime, game-renderer-vulkan, game-audio, game-platform-sdl, or
+# arena-content.
 [dependencies]
 anyhow.workspace = true
 glam.workspace = true
-game-core = { version = "0.1.0", path = "../game-core" }
-game-ai = { version = "0.1.0", path = "../game-ai" }
-game-combat = { version = "0.1.0", path = "../game-combat" }
-game-map = { version = "0.1.0", path = "../game-map" }
-game-physics = { version = "0.1.0", path = "../game-physics" }
+game-kit = { version = "0.1.0", path = "../game-kit" }

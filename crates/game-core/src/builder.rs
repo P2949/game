@@ -259,6 +259,10 @@ impl<'a> PrefabValidator<'a> {
     }
 }
 
+/// Low-level engine builder used by `game-kit` and the runtime.
+///
+/// Content crates should prefer `game_kit::GameApp`, which wraps this type with
+/// asset, input, prefab, map, and system authoring APIs.
 #[derive(Default)]
 pub struct GameBuilder {
     assets: AssetRegistry,

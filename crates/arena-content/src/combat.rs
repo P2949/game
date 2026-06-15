@@ -1,11 +1,5 @@
 use crate::actor::{EnemyTag, PlayerController};
-use game_combat::{Health, MeleeAttack, apply_damage};
-use game_core::audio::Audio;
-use game_core::backend::SoundHandle;
-use game_core::commands::CommandQueue;
-use game_core::input::{ActionId, Input};
-use game_core::world::World;
-use game_core::world::{EntityId, Transform, Velocity};
+use game_kit::prelude::*;
 
 #[derive(Default)]
 struct CombatEffects {
@@ -13,32 +7,15 @@ struct CombatEffects {
     despawns: Vec<EntityId>,
 }
 
-pub fn tick(
-    world: &mut World,
-    input: &Input,
-    attack: ActionId,
-    audio: &mut Audio<'_>,
-    hit_sound: SoundHandle,
-    dt: f32,
-) {
-    let effects = tick_effects(world, input, attack, dt);
-    for _ in 0..effects.hit_sounds {
-        audio.play(hit_sound, 0.8);
-    }
-    for id in effects.despawns {
-        world.despawn(id);
-    }
-}
-
 pub fn tick_commands(
-    world: &mut World,
-    input: &Input,
+    game: &mut GameCtx<'_, '_>,
     attack: ActionId,
     hit_sound: SoundHandle,
     dt: f32,
 ) {
+    let (world, input) = game.world_and_input();
     let effects = tick_effects(world, input, attack, dt);
-    let queue = world.resource_or_insert_with(CommandQueue::new);
+    let mut queue = game.commands();
     for _ in 0..effects.hit_sounds {
         queue.play_sound(hit_sound);
     }
@@ -144,14 +121,9 @@ fn damage_entity(world: &mut World, id: EntityId, amount: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::actor::{EnemyTag, PlayerController};
-    use game_combat::{Health, MeleeAttack};
-    use game_core::audio::{Audio, AudioCommands};
-    use game_core::backend::SoundHandle;
-    use game_core::input::{ActionId, Axis2dId, Input};
-    use game_core::world::Entity;
-    use game_core::world::World;
+    use game_kit::prelude::*;
 
-    use super::{kill_player, player_is_dead, tick};
+    use super::{kill_player, player_is_dead, tick_effects};
 
     const ATTACK: ActionId = ActionId(0);
 
@@ -186,46 +158,28 @@ mod tests {
     #[test]
     fn player_attack_damages_and_despawns_dead_enemy() {
         let mut world = world_with_player_and_enemy(glam::vec2(10.0, 0.0));
-        let mut commands = AudioCommands::default();
-        let mut audio = Audio::new(&mut commands);
+        let input = input(true);
+        let effects = tick_effects(&mut world, &input, ATTACK, 1.0 / 120.0);
 
-        tick(
-            &mut world,
-            &input(true),
-            ATTACK,
-            &mut audio,
-            SoundHandle(0),
-            1.0 / 120.0,
-        );
-
-        assert!(world.ids_with::<EnemyTag>().is_empty());
+        assert_eq!(effects.hit_sounds, 1);
+        assert_eq!(effects.despawns.len(), 1);
     }
 
     #[test]
     fn enemy_attack_damages_player() {
         let mut world = world_with_player_and_enemy(glam::vec2(4.0, 0.0));
-        let mut commands = AudioCommands::default();
-        let mut audio = Audio::new(&mut commands);
-
-        tick(
-            &mut world,
-            &input(false),
-            ATTACK,
-            &mut audio,
-            SoundHandle(0),
-            1.0 / 120.0,
-        );
+        let input = input(false);
+        let effects = tick_effects(&mut world, &input, ATTACK, 1.0 / 120.0);
 
         let player = world.ids_with::<PlayerController>()[0];
+        assert_eq!(effects.hit_sounds, 1);
         assert_eq!(world.get::<Health>(player).unwrap().current, 93);
     }
 
     #[test]
     fn kill_player_marks_player_dead() {
         let mut world = world_with_player_and_enemy(glam::vec2(100.0, 0.0));
-
         kill_player(&mut world);
-
         assert!(player_is_dead(&world));
     }
 }

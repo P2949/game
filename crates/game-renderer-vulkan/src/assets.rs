@@ -170,9 +170,24 @@ fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
     Ok(candidates)
 }
 
+/// Validates renderer-owned assets that are required before the Vulkan context
+/// can load built-in textures. Content assets are validated separately by the
+/// runtime through `game_core::assets::AssetValidator`.
+pub fn validate_builtin_assets(root: &Path) -> anyhow::Result<()> {
+    let font = root.join("fonts/DejaVuSans.ttf");
+    if !font.is_file() {
+        anyhow::bail!(
+            "renderer built-in font asset '{}' does not exist",
+            font.display()
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::asset_root_from_override;
+    use super::{asset_root_from_override, validate_builtin_assets};
+    use std::fs;
     use std::path::Path;
 
     #[test]
@@ -182,5 +197,24 @@ mod tests {
 
         let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("does-not-exist");
         assert!(asset_root_from_override(missing).is_err());
+    }
+
+    #[test]
+    fn validates_builtin_font_asset() {
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        validate_builtin_assets(&assets).unwrap();
+    }
+
+    #[test]
+    fn missing_builtin_font_reports_path() {
+        let root =
+            std::env::temp_dir().join(format!("game-renderer-missing-font-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("fonts")).unwrap();
+
+        let err = validate_builtin_assets(&root).unwrap_err();
+        assert!(err.to_string().contains("fonts/DejaVuSans.ttf"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

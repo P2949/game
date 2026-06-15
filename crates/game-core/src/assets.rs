@@ -16,7 +16,9 @@ pub struct AssetRegistry {
     sound_handles: HashMap<AssetKey, SoundHandle>,
     font_handles: HashMap<AssetKey, FontHandle>,
     texture_path_handles: HashMap<String, TextureHandle>,
-    sound_path_handles: HashMap<String, SoundHandle>,
+    /// Deduplicates sound handles by identity (`file:<path>` / `gen:<name>`) so a
+    /// single sound shared under several keys resolves to one handle.
+    sound_identity_handles: HashMap<String, SoundHandle>,
     font_path_handles: HashMap<String, FontHandle>,
 }
 
@@ -65,25 +67,42 @@ impl AssetRegistry {
         Ok(handle)
     }
 
-    pub fn sound(&mut self, key: impl Into<String>, path: impl Into<String>) -> SoundHandle {
-        self.try_sound(key, path)
-            .expect("sound asset keys must not be reused with different paths")
+    /// Registers a runtime-synthesized sound effect under `key`. Audio is
+    /// generated-only today, so this is the sound API content reaches for.
+    pub fn generated_sound(&mut self, key: impl Into<String>) -> SoundHandle {
+        let name = key.into();
+        self.try_register_sound(name.clone(), SoundLoadRequest::Generated { name })
+            .expect("sound asset keys must not be reused with a different source")
     }
 
-    pub fn try_sound(
+    /// Registers a file-backed sound under `key`. The runtime does not yet play
+    /// the file (audio is generated-only), but the asset validator checks the path
+    /// exists so the declaration stays honest.
+    pub fn sound_file(&mut self, key: impl Into<String>, path: impl Into<String>) -> SoundHandle {
+        self.try_sound_file(key, path)
+            .expect("sound asset keys must not be reused with a different source")
+    }
+
+    pub fn try_sound_file(
         &mut self,
         key: impl Into<String>,
         path: impl Into<String>,
     ) -> anyhow::Result<SoundHandle> {
-        let key = key.into();
-        let path = path.into();
-        if let Some(request) = self.sounds.get(&key) {
-            if request.path != path {
+        self.try_register_sound(key.into(), SoundLoadRequest::File { path: path.into() })
+    }
+
+    fn try_register_sound(
+        &mut self,
+        key: String,
+        request: SoundLoadRequest,
+    ) -> anyhow::Result<SoundHandle> {
+        if let Some(existing) = self.sounds.get(&key) {
+            if existing != &request {
                 anyhow::bail!(
-                    "sound asset key '{}' already points to '{}', not '{}'",
+                    "sound asset key '{}' already points to {:?}, not {:?}",
                     key,
-                    request.path,
-                    path
+                    existing,
+                    request
                 );
             }
             return Ok(*self
@@ -92,14 +111,18 @@ impl AssetRegistry {
                 .expect("sound request and handle maps must stay in sync"));
         }
 
-        let handle = if let Some(handle) = self.sound_path_handles.get(&path) {
+        let identity = match &request {
+            SoundLoadRequest::Generated { name } => format!("gen:{name}"),
+            SoundLoadRequest::File { path } => format!("file:{path}"),
+        };
+        let handle = if let Some(handle) = self.sound_identity_handles.get(&identity) {
             *handle
         } else {
-            let handle = SoundHandle(self.sound_path_handles.len() as u32);
-            self.sound_path_handles.insert(path.clone(), handle);
+            let handle = SoundHandle(self.sound_identity_handles.len() as u32);
+            self.sound_identity_handles.insert(identity, handle);
             handle
         };
-        self.sounds.insert(key.clone(), SoundLoadRequest { path });
+        self.sounds.insert(key.clone(), request);
         self.sound_handles.insert(key, handle);
         Ok(handle)
     }
@@ -191,7 +214,6 @@ impl AssetRegistry {
 pub struct AssetValidator<'a> {
     registry: &'a AssetRegistry,
     root: PathBuf,
-    allow_generated_sounds: bool,
 }
 
 impl<'a> AssetValidator<'a> {
@@ -199,17 +221,11 @@ impl<'a> AssetValidator<'a> {
         Self {
             registry,
             root: PathBuf::from("assets"),
-            allow_generated_sounds: false,
         }
     }
 
     pub fn root(mut self, root: impl Into<PathBuf>) -> Self {
         self.root = root.into();
-        self
-    }
-
-    pub fn allow_generated_sounds(mut self) -> Self {
-        self.allow_generated_sounds = true;
         self
     }
 
@@ -220,14 +236,11 @@ impl<'a> AssetValidator<'a> {
         for (key, request) in self.registry.font_requests() {
             validate_file(&self.root, key, &request.path, "font")?;
         }
+        // Generated sounds are synthesized at runtime and have no file to check;
+        // only file-backed sounds are validated on disk.
         for (key, request) in self.registry.sound_requests() {
-            let path = self.root.join(&request.path);
-            if !path.is_file() && !self.allow_generated_sounds {
-                anyhow::bail!(
-                    "sound asset '{}' path '{}' does not exist",
-                    key,
-                    path.display()
-                );
+            if let SoundLoadRequest::File { path } = request {
+                validate_file(&self.root, key, path, "sound")?;
             }
         }
         Ok(())
@@ -283,19 +296,20 @@ mod tests {
     }
 
     #[test]
-    fn sound_and_font_handles_reuse_matching_paths() {
+    fn sound_and_font_handles_reuse_matching_sources() {
         let mut registry = AssetRegistry::new();
-        let hit = registry.sound("arena/hit", "audio/hit.wav");
-        let hit_alias = registry.sound("arena/hit_alias", "audio/hit.wav");
+        let hit = registry.generated_sound("arena/hit");
+        let hit_alias = registry.generated_sound("arena/hit");
         let ui = registry.font("ui/body", "fonts/DejaVuSans.ttf");
         let ui_alias = registry.font("ui/body_alias", "fonts/DejaVuSans.ttf");
 
+        // Same generated identity -> same handle; distinct keys, same file -> same.
         assert_eq!(hit, hit_alias);
         assert_eq!(ui, ui_alias);
     }
 
     #[test]
-    fn asset_validator_checks_texture_paths_and_allows_generated_sounds() {
+    fn asset_validator_checks_files_and_skips_generated_sounds() {
         let root = std::env::temp_dir().join(format!(
             "game-core-assets-{}",
             SystemTime::now()
@@ -308,13 +322,21 @@ mod tests {
 
         let mut registry = AssetRegistry::new();
         registry.texture("arena/player", "textures/test.png");
-        registry.sound("arena/hit", "audio/generated.wav");
+        // Generated sounds have no file to validate.
+        registry.generated_sound("arena/hit");
 
         AssetValidator::new(&registry)
             .root(&root)
-            .allow_generated_sounds()
             .validate()
             .unwrap();
+
+        // A file-backed sound with a missing path must fail validation.
+        registry.sound_file("arena/music", "audio/missing.wav");
+        let err = AssetValidator::new(&registry)
+            .root(&root)
+            .validate()
+            .unwrap_err();
+        assert!(err.to_string().contains("audio/missing.wav"));
 
         fs::remove_dir_all(root).unwrap();
     }

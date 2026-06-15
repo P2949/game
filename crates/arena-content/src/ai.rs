@@ -1,10 +1,5 @@
-use glam::Vec2;
-
 use crate::actor::{MoveSpeed, PlayerController};
-use game_core::input::Input;
-use game_core::nav::NavGrid;
-use game_core::world::World;
-use game_core::world::{Transform, Velocity};
+use game_kit::prelude::*;
 
 pub fn player_pos(world: &World) -> Option<Vec2> {
     world
@@ -39,18 +34,13 @@ pub fn chase_player(world: &mut World, nav: &NavGrid, dt: f32) {
     // Reuse the shared chase behavior from `game-ai`, resolving the arena's
     // player position as the chase target.
     let target = player_pos(world);
-    game_ai::chase_system(world, nav, target, dt);
+    chase_system(world, nav, target, dt);
 }
 
 #[cfg(test)]
 mod tests {
     use crate::actor::{MoveSpeed, PlayerController};
-    use game_ai::{AiController, ChaseTarget, PathFollow};
-    use game_core::input::{Axis2dId, Input};
-    use game_core::nav::NavGrid;
-    use game_core::tilemap::TileMap;
-    use game_core::world::World;
-    use game_core::world::{Entity, Transform, Velocity};
+    use game_kit::prelude::*;
 
     use super::{chase_player, drive_player, player_pos};
 
@@ -77,7 +67,7 @@ mod tests {
         let nav = NavGrid::from_tilemap(&map);
         let mut world = World::new();
         world.spawn(Entity::new(glam::vec2(5.0, 5.0)).with(PlayerController {
-            move_axis: game_core::input::Axis2dId(0),
+            move_axis: Axis2dId(0),
         }));
         let enemy = world.spawn(
             Entity::new(glam::vec2(35.0, 5.0))

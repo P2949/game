@@ -12,6 +12,7 @@ plugin to run:
 - engine/runtime: `game-core`, `game-runtime`, `game-renderer-vulkan`,
   `game-platform-sdl`, `game-audio`
 - gameplay building blocks: `game-map`, `game-ai`, `game-combat`, `game-physics`
+- content authoring facade: `game-kit`
 - content plugins (demos): `arena-content` (default) and `testbed-content`
 
 The binary picks a demo from the `GAME_DEMO` environment variable (`arena` by
@@ -33,6 +34,7 @@ It is **not** yet:
 - a full engine
 - a finished game
 - a general asset pipeline
+- a file-backed audio pipeline; sound effects are generated today
 
 ## Features
 
@@ -42,6 +44,35 @@ It is **not** yet:
   steady-state GPU buffer allocation for normal sprite submission
 - Fixed-timestep update loop
 - Bitmap (ASCII) UI text rendered from a runtime-built font atlas
+
+## Content Authoring Model
+
+Content crates import the facade:
+
+```rust
+use game_kit::prelude::*;
+```
+
+They declare assets, controls, prefabs, maps, and systems through `GameApp`.
+For example:
+
+```rust
+game.prefab("demo/player", |prefab| {
+    prefab.spawn(|at| {
+        (
+            Transform::at(at),
+            Velocity::default(),
+            Sprite::new(assets.player, vec2s(20.0)),
+            Collider::box_of(vec2s(20.0)),
+        )
+    });
+});
+```
+
+Content crates do not talk to SDL, Vulkan, audio devices, memory allocation,
+swapchains, descriptor sets, renderer texture IDs, event pumps, or fixed
+timestep internals. See [`docs/content-authoring.md`](docs/content-authoring.md)
+for the author-facing guide.
 
 ## Requirements
 

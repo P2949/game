@@ -16,7 +16,7 @@ use game_core::plugin::GamePlugin;
 use game_core::schedule::ScheduleValidator;
 use game_core::world::World;
 use game_platform_sdl::window::Platform;
-use game_renderer_vulkan::assets::asset_root;
+use game_renderer_vulkan::assets::{asset_root, validate_builtin_assets};
 use game_renderer_vulkan::context::{RenderOutcome as VulkanRenderOutcome, VulkanContext};
 
 use crate::fixed_timestep::FixedTimestep;
@@ -85,11 +85,10 @@ fn validate_builder(builder: &GameBuilder) -> Result<()> {
 
     let root = asset_root().context("failed to resolve asset root for validation")?;
     AssetValidator::new(builder.assets())
-        .root(root)
-        // Sounds are currently synthesized at runtime rather than loaded from disk.
-        .allow_generated_sounds()
+        .root(&root)
         .validate()
         .context("asset validation failed")?;
+    validate_builtin_assets(&root).context("renderer built-in asset validation failed")?;
 
     Ok(())
 }
@@ -284,8 +283,7 @@ fn process_core_commands(world: &mut World, audio_commands: &mut AudioCommands) 
 
 fn submit_audio_command(audio: &AudioSystem, command: AudioCommand) {
     match command {
-        AudioCommand::Play { .. } | AudioCommand::PlayMusic { .. } => audio.play_blip(),
-        AudioCommand::StopMusic => {}
+        AudioCommand::Play { .. } => audio.play_blip(),
     }
 }
 

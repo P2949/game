@@ -1,4 +1,4 @@
-use game_core::input::Axis2dId;
+use game_kit::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Name(pub String);

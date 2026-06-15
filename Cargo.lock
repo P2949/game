@@ -84,11 +84,7 @@ name = "arena-content"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "game-ai",
- "game-combat",
- "game-core",
- "game-map",
- "game-physics",
+ "game-kit",
  "glam",
 ]
 
@@ -313,6 +309,19 @@ dependencies = [
  "anyhow",
  "glam",
  "log",
+]
+
+[[package]]
+name = "game-kit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-ai",
+ "game-combat",
+ "game-core",
+ "game-map",
+ "game-physics",
+ "glam",
 ]
 
 [[package]]
@@ -831,11 +840,7 @@ name = "testbed-content"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "game-ai",
- "game-combat",
- "game-core",
- "game-map",
- "game-physics",
+ "game-kit",
  "glam",
 ]
 
