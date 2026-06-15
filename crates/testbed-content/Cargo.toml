@@ -1,0 +1,19 @@
+[package]
+name = "testbed-content"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Phase 12: a second demo that proves the engine/content split. It depends ONLY on
+# the engine-neutral gameplay crates — never on game-runtime, game-renderer-vulkan,
+# game-audio, game-platform-sdl, or arena-content.
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+game-core = { path = "../game-core" }
+game-ai = { path = "../game-ai" }
+game-combat = { path = "../game-combat" }
+game-map = { path = "../game-map" }
+game-physics = { path = "../game-physics" }

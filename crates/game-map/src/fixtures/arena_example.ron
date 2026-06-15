@@ -1,0 +1,24 @@
+GameMap(
+    id: "arena",
+    tile_size: 32.0,
+    layers: [
+        TileLayer(
+            id: "collision",
+            rows: [
+                "###############",
+                "#.............#",
+                "#....#####....#",
+                "#....#...#....#",
+                "#.............#",
+                "#....#...#....#",
+                "#....#####....#",
+                "#.............#",
+                "###############",
+            ],
+        ),
+    ],
+    objects: [
+        MapObject(id: "player_start", prefab: "arena/player", cell: (2, 4)),
+        MapObject(id: "enemy_01", prefab: "arena/slime", cell: (9, 4)),
+    ],
+)

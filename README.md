@@ -10,7 +10,7 @@ This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 - explicit, RAII-driven Vulkan renderer lifetime handling
 - 2D sprite rendering with layered, texture-batched draws
 - fixed-timestep gameplay with render interpolation
-- swept-AABB collision with wall sliding
+- axis-separated AABB collision with wall sliding
 - simple generated audio through a lock-free mixer
 
 It is **not** yet:
@@ -132,6 +132,7 @@ cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 GAME_SMOKE_FRAMES=120 cargo run --locked
+GAME_ASSET_DIR=assets GAME_SMOKE_FRAMES=120 cargo run --release --locked
 ```
 
 These commands use your system SDL3 development libraries. CI instead builds
@@ -144,6 +145,7 @@ cargo test --locked --features ci-build-sdl3
 cargo clippy --all-targets --locked --features ci-build-sdl3 -- -D warnings
 cargo build --release --locked --features ci-build-sdl3
 GAME_SMOKE_FRAMES=120 cargo run --locked --features ci-build-sdl3
+GAME_ASSET_DIR=assets GAME_SMOKE_FRAMES=120 cargo run --release --locked --features ci-build-sdl3
 ```
 
 ## Known limitations

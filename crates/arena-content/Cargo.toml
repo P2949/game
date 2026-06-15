@@ -1,0 +1,16 @@
+[package]
+name = "arena-content"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+game-core = { path = "../game-core" }
+game-ai = { path = "../game-ai" }
+game-combat = { path = "../game-combat" }
+game-map = { path = "../game-map" }
+game-physics = { path = "../game-physics" }

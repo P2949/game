@@ -1,0 +1,12 @@
+[package]
+name = "game-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+glam.workspace = true
+game-core = { path = "../game-core" }
+game-map = { path = "../game-map" }

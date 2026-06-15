@@ -1,0 +1,17 @@
+[package]
+name = "game-platform-sdl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+log.workspace = true
+sdl3.workspace = true
+game-core = { path = "../game-core" }
+
+[features]
+ci-build-sdl3 = ["sdl3/build-from-source"]

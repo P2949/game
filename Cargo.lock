@@ -80,6 +80,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "arena-content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-ai",
+ "game-combat",
+ "game-core",
+ "game-map",
+ "game-physics",
+ "glam",
+]
+
+[[package]]
 name = "ash"
 version = "0.38.0+1.3.281"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -99,6 +112,9 @@ name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "bytemuck"
@@ -256,17 +272,108 @@ name = "game"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arena-content",
+ "env_logger",
+ "game-audio",
+ "game-platform-sdl",
+ "game-runtime",
+ "testbed-content",
+]
+
+[[package]]
+name = "game-ai"
+version = "0.1.0"
+dependencies = [
+ "game-core",
+ "game-map",
+ "glam",
+]
+
+[[package]]
+name = "game-audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-queue",
+ "log",
+ "sdl3",
+]
+
+[[package]]
+name = "game-combat"
+version = "0.1.0"
+dependencies = [
+ "game-core",
+]
+
+[[package]]
+name = "game-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-map",
+ "glam",
+ "log",
+]
+
+[[package]]
+name = "game-map"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "ron",
+ "serde",
+]
+
+[[package]]
+name = "game-physics"
+version = "0.1.0"
+dependencies = [
+ "game-core",
+ "game-map",
+ "glam",
+]
+
+[[package]]
+name = "game-platform-sdl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-core",
+ "glam",
+ "log",
+ "sdl3",
+]
+
+[[package]]
+name = "game-renderer-vulkan"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "ash",
  "bytemuck",
- "crossbeam-queue",
- "env_logger",
  "fontdue",
+ "game-core",
  "glam",
  "gpu-allocator",
  "image",
  "log",
  "sdl3",
  "walkdir",
+]
+
+[[package]]
+name = "game-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-audio",
+ "game-core",
+ "game-platform-sdl",
+ "game-renderer-vulkan",
+ "glam",
+ "log",
 ]
 
 [[package]]
@@ -439,6 +546,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "once_cell"
+version = "1.21.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
 name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -536,6 +649,20 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "ron"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4147b952f3f819eca0e99527022f7d6a8d05f111aeb0a62960c74eb283bec8fc"
+dependencies = [
+ "bitflags",
+ "once_cell",
+ "serde",
+ "serde_derive",
+ "typeid",
+ "unicode-ident",
+]
 
 [[package]]
 name = "rpkg-config"
@@ -647,6 +774,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde"
+version = "1.0.228"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
+dependencies = [
+ "serde_core",
+ "serde_derive",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -690,6 +827,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "testbed-content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-ai",
+ "game-combat",
+ "game-core",
+ "game-map",
+ "game-physics",
+ "glam",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -714,6 +864,12 @@ name = "ttf-parser"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c591d83f69777866b9126b24c6dd9a18351f177e49d625920d19f989fd31cf8"
+
+[[package]]
+name = "typeid"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
 
 [[package]]
 name = "unicode-ident"
