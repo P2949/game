@@ -17,7 +17,7 @@ gpu-allocator.workspace = true
 image.workspace = true
 log.workspace = true
 sdl3.workspace = true
-game-core = { path = "../game-core" }
+game-core = { version = "0.1.0", path = "../game-core" }
 
 [build-dependencies]
 walkdir.workspace = true

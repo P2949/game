@@ -9,8 +9,8 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 glam.workspace = true
-game-core = { path = "../game-core" }
-game-ai = { path = "../game-ai" }
-game-combat = { path = "../game-combat" }
-game-map = { path = "../game-map" }
-game-physics = { path = "../game-physics" }
+game-core = { version = "0.1.0", path = "../game-core" }
+game-ai = { version = "0.1.0", path = "../game-ai" }
+game-combat = { version = "0.1.0", path = "../game-combat" }
+game-map = { version = "0.1.0", path = "../game-map" }
+game-physics = { version = "0.1.0", path = "../game-physics" }

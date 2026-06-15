@@ -8,5 +8,5 @@ repository.workspace = true
 
 [dependencies]
 glam.workspace = true
-game-core = { path = "../game-core" }
-game-map = { path = "../game-map" }
+game-core = { version = "0.1.0", path = "../game-core" }
+game-map = { version = "0.1.0", path = "../game-map" }

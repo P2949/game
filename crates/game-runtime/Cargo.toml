@@ -10,7 +10,7 @@ repository.workspace = true
 anyhow.workspace = true
 glam.workspace = true
 log.workspace = true
-game-audio = { path = "../game-audio" }
-game-core = { path = "../game-core" }
-game-platform-sdl = { path = "../game-platform-sdl" }
-game-renderer-vulkan = { path = "../game-renderer-vulkan" }
+game-audio = { version = "0.1.0", path = "../game-audio" }
+game-core = { version = "0.1.0", path = "../game-core" }
+game-platform-sdl = { version = "0.1.0", path = "../game-platform-sdl" }
+game-renderer-vulkan = { version = "0.1.0", path = "../game-renderer-vulkan" }

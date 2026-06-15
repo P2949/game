@@ -9,11 +9,11 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 env_logger.workspace = true
-game-audio = { path = "../../crates/game-audio" }
-game-platform-sdl = { path = "../../crates/game-platform-sdl" }
-game-runtime = { path = "../../crates/game-runtime" }
-arena-content = { path = "../../crates/arena-content" }
-testbed-content = { path = "../../crates/testbed-content" }
+game-audio = { version = "0.1.0", path = "../../crates/game-audio" }
+game-platform-sdl = { version = "0.1.0", path = "../../crates/game-platform-sdl" }
+game-runtime = { version = "0.1.0", path = "../../crates/game-runtime" }
+arena-content = { version = "0.1.0", path = "../../crates/arena-content" }
+testbed-content = { version = "0.1.0", path = "../../crates/testbed-content" }
 
 [features]
 ci-build-sdl3 = [
