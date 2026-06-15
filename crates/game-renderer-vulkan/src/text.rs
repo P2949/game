@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context;
 use game_core::backend::TextureHandle;
 
-use crate::renderer::SpriteDraw;
+use crate::SpriteDraw;
 
 // The atlas is a fixed grid of equally-sized cells covering printable ASCII.
 // These values are tuned for the bundled DejaVu Sans at FONT_SIZE: every glyph in
@@ -233,7 +233,7 @@ pub fn build_ascii_atlas(
 }
 
 pub fn draw_text(
-    batch: &mut crate::renderer::sprite_batch::SpriteBatch,
+    batch: &mut crate::sprite_batch::SpriteBatch,
     atlas: &FontAtlas,
     text: &str,
     mut pos: glam::Vec2,
@@ -286,8 +286,8 @@ pub fn draw_text(
 #[cfg(test)]
 mod tests {
     use super::{FontAtlas, GlyphInfo, draw_text};
-    use crate::renderer::FONT_TEXTURE_HANDLE;
-    use crate::renderer::sprite_batch::SpriteBatch;
+    use crate::FONT_TEXTURE_HANDLE;
+    use crate::sprite_batch::SpriteBatch;
     use std::collections::HashMap;
 
     fn glyph(advance: f32) -> GlyphInfo {

@@ -1,13 +1,12 @@
-use anyhow::Result;
 use glam::Vec2;
 
-use crate::engine::audio::Audio;
-use crate::engine::camera::Camera2D;
-use crate::engine::gfx::{Gfx, SpriteDraw, TextDraw};
-use crate::engine::input::Input;
-use crate::engine::nav::NavGrid;
-use crate::engine::tilemap::{Tile, TileMap};
-use crate::engine::world::{Sprite, Transform, World};
+use crate::audio::Audio;
+use crate::camera::Camera2D;
+use crate::gfx::{Gfx, SpriteDraw, TextDraw};
+use crate::input::Input;
+use crate::nav::NavGrid;
+use crate::tilemap::{Tile, TileMap};
+use crate::world::{Sprite, Transform, World};
 
 #[derive(Clone, Copy)]
 pub struct TileTheme {
@@ -15,36 +14,20 @@ pub struct TileTheme {
     pub wall: Sprite,
 }
 
+#[derive(Clone)]
 pub struct MapData {
     pub tilemap: TileMap,
     pub nav: NavGrid,
     pub theme: TileTheme,
 }
 
-pub trait Game {
-    fn start(&mut self, ctx: &mut StartCtx) -> Result<()>;
-    fn update(&mut self, ctx: &mut Ctx, dt: f32);
-
-    fn record_frame_time(&mut self, _ms: f32) {}
-}
-
 pub struct StartCtx<'a> {
     pub world: &'a mut World,
-    map: &'a mut Option<MapData>,
 }
 
 impl<'a> StartCtx<'a> {
-    pub fn new(world: &'a mut World, map: &'a mut Option<MapData>) -> Self {
-        Self { world, map }
-    }
-
-    pub fn set_map(&mut self, tilemap: TileMap, theme: TileTheme) {
-        let nav = NavGrid::from_tilemap(&tilemap);
-        *self.map = Some(MapData {
-            tilemap,
-            nav,
-            theme,
-        });
+    pub fn new(world: &'a mut World) -> Self {
+        Self { world }
     }
 }
 

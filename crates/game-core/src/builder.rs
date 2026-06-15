@@ -1,5 +1,6 @@
 use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 
 use crate::app::{MapData, TileTheme};
 use crate::assets::AssetRegistry;
@@ -263,7 +264,7 @@ pub struct GameBuilder {
     assets: AssetRegistry,
     input: InputRegistry,
     maps: MapRegistry,
-    prefabs: PrefabRegistry,
+    prefabs: Rc<PrefabRegistry>,
     schedule: Schedule,
     start_map: Option<MapId>,
 }
@@ -302,7 +303,11 @@ impl GameBuilder {
     }
 
     pub fn prefabs_mut(&mut self) -> &mut PrefabRegistry {
-        &mut self.prefabs
+        Rc::get_mut(&mut self.prefabs).expect("prefab registry is already shared")
+    }
+
+    pub fn prefabs_shared(&self) -> Rc<PrefabRegistry> {
+        Rc::clone(&self.prefabs)
     }
 
     pub fn schedule(&self) -> &Schedule {
@@ -325,25 +330,31 @@ impl GameBuilder {
         self.schedule
     }
 
-    /// Hands the runtime the content registries it consumes as the source of
-    /// truth: the asset table (which textures to load), the input bindings (which
-    /// drive [`Input`](crate::input::Input) every step), and the schedule. The
-    /// map/prefab registries are captured by the schedule's systems, so they are
-    /// not surfaced here.
-    pub fn into_parts(self) -> RuntimeContent {
-        RuntimeContent {
+    /// Hands the runtime the finalized content registries it consumes as the
+    /// source of truth. Maps/prefabs stay owned by runtime content instead of
+    /// being merely parallel data captured by schedule closures.
+    pub fn into_parts(self) -> anyhow::Result<RuntimeContent> {
+        let start_map = self
+            .start_map
+            .ok_or_else(|| anyhow::anyhow!("runtime content has no start map"))?;
+        Ok(RuntimeContent {
             assets: self.assets,
             input: self.input,
+            maps: self.maps,
+            prefabs: self.prefabs,
+            start_map,
             schedule: self.schedule,
-        }
+        })
     }
 }
 
-/// The slice of a [`GameBuilder`] the runtime keeps after `GamePlugin::build`,
-/// instead of dropping every registry but the schedule.
+/// Finalized content handed to the runtime after `GamePlugin::build`.
 pub struct RuntimeContent {
     pub assets: AssetRegistry,
     pub input: InputRegistry,
+    pub maps: MapRegistry,
+    pub prefabs: Rc<PrefabRegistry>,
+    pub start_map: MapId,
     pub schedule: Schedule,
 }
 

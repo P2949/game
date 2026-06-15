@@ -12,9 +12,9 @@ use anyhow::Context;
 use ash::vk;
 use game_core::backend::TextureHandle;
 
-use crate::renderer::texture::{Texture, TextureColorSpace, TextureUpload};
-use crate::renderer::texture_registry::TextureRegistryGuard;
-use crate::renderer::{FONT_TEXTURE_HANDLE, FONT_TEXTURE_ID, TextureId, text};
+use crate::texture::{Texture, TextureColorSpace, TextureUpload};
+use crate::texture_registry::TextureRegistryGuard;
+use crate::{FONT_TEXTURE_HANDLE, FONT_TEXTURE_ID, TextureId, text};
 
 /// Creates and registers the renderer's built-in textures into `registry_guard`,
 /// returning the font atlas metadata the renderer needs for text layout.

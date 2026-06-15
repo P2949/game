@@ -7,6 +7,7 @@ use crate::tilemap::TileMap;
 
 const SQRT2: f32 = std::f32::consts::SQRT_2;
 
+#[derive(Clone)]
 pub struct NavGrid {
     width: i32,
     height: i32,

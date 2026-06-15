@@ -4,21 +4,19 @@ use game_core::backend::TextureHandle;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use crate::renderer::commands::{
+use crate::commands::{
     RenderSpriteBatch, RenderSpriteRange, present_frame, record_sprite_commands,
     resolve_draw_ranges, submit_frame, ui_projection, upload_sprite_vertices,
 };
-use crate::renderer::owned::{
-    OwnedCommandPool, OwnedDescriptorSetLayout, OwnedFence, OwnedSemaphore,
-};
-use crate::renderer::recreate::{
+use crate::owned::{OwnedCommandPool, OwnedDescriptorSetLayout, OwnedFence, OwnedSemaphore};
+use crate::recreate::{
     SwapchainRecreateAction, SwapchainRecreateReason, request_soft_recreate,
     request_suboptimal_recreate, swapchain_recreate_action,
 };
-use crate::renderer::sprite_batch::{SpriteBatch, SpriteBatchRange};
-use crate::renderer::texture_registry::{TextureRegistry, TextureRegistryGuard};
-use crate::renderer::vertex::SpriteVertex;
-use crate::renderer::{
+use crate::sprite_batch::{SpriteBatch, SpriteBatchRange};
+use crate::texture_registry::{TextureRegistry, TextureRegistryGuard};
+use crate::vertex::SpriteVertex;
+use crate::{
     DrawCommands, SpriteDraw, TextureId, assets, buffer, device, frame, instance, pipeline,
     swapchain, text, texture,
 };
@@ -83,7 +81,7 @@ impl SwapchainSync {
 // `request_swapchain_recreate`, and the `DrawCommands` trait.
 pub struct VulkanContext {
     // Declared before the instance so it drops first once Surface becomes RAII.
-    surface: crate::renderer::surface::Surface,
+    surface: crate::surface::Surface,
     // Keep the Vulkan loader/instance/debug messenger alive for objects created
     // from them. This RAII owner must remain intact during construction.
     instance: instance::VulkanInstance,
@@ -136,8 +134,7 @@ impl VulkanContext {
     ) -> anyhow::Result<Self> {
         let instance = instance::VulkanInstance::new(window)?;
 
-        let surface =
-            crate::renderer::surface::Surface::new(instance.entry(), instance.handle(), window)?;
+        let surface = crate::surface::Surface::new(instance.entry(), instance.handle(), window)?;
         let selected_device =
             device::select_physical_device(instance.handle(), surface.loader(), surface.handle())?;
         let logical_device = device::LogicalDevice::new(
@@ -419,10 +416,8 @@ impl VulkanContext {
         window: &sdl3::video::Window,
         render_frame: RenderFrame,
     ) -> anyhow::Result<RenderOutcome> {
-        let camera = crate::renderer::RenderCamera::new(
-            render_frame.camera.center(),
-            render_frame.camera.zoom(),
-        );
+        let camera =
+            crate::RenderCamera::new(render_frame.camera.center(), render_frame.camera.zoom());
         self.submit_render_frame(render_frame);
 
         if let Some(reason) = self.swapchain_recreate_request {

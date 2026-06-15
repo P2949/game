@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Context;
 
-use crate::renderer::buffer;
+use crate::buffer;
 
 const MAX_TEXTURE_DIMENSION: u32 = 16_384;
 const MAX_TEXTURE_BYTES: usize = 256 * 1024 * 1024;

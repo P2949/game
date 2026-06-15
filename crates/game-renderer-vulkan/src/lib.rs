@@ -97,14 +97,3 @@ pub trait DrawCommands {
     fn draw_ui_sprite(&mut self, sprite: SpriteDraw);
     fn draw_ui_text(&mut self, text: &str, pos: glam::Vec2, color: glam::Vec4);
 }
-
-// TEMP: compatibility module for Phase 2's mechanical move from `src/renderer`.
-// Later phases can replace these old single-crate paths with direct crate paths.
-pub mod renderer {
-    pub use crate::{
-        DrawCommands, FONT_TEXTURE_HANDLE, FONT_TEXTURE_ID, RenderCamera, TextureId, assets,
-        buffer, commands, context, debug, device, frame, instance, owned, pipeline, recreate,
-        sprite_batch, surface, swapchain, text, texture, texture_registry, vertex,
-    };
-    pub use game_core::gfx::SpriteDraw;
-}

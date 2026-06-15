@@ -13,7 +13,7 @@ use game_map::GameMap;
 use crate::assets::TestbedAssets;
 use crate::input::TestbedActions;
 use crate::state::GameState;
-use crate::{ai, combat, level, spawn};
+use crate::{ai, combat, spawn};
 
 pub fn register(
     schedule: &mut Schedule,
@@ -22,12 +22,9 @@ pub fn register(
     map: GameMap,
     prefabs: Rc<PrefabRegistry>,
 ) {
-    let startup_assets = assets;
     let startup_map = map.clone();
     let startup_prefabs = Rc::clone(&prefabs);
-    schedule.add_startup(move |ctx| {
-        startup_system(ctx, startup_assets, &startup_map, &startup_prefabs)
-    });
+    schedule.add_startup(move |ctx| startup_system(ctx, &startup_map, &startup_prefabs));
 
     let state_map = map.clone();
     let state_prefabs = Rc::clone(&prefabs);
@@ -50,13 +47,11 @@ pub fn register(
 
 pub fn startup_system(
     ctx: &mut StartCtx<'_>,
-    assets: TestbedAssets,
     map: &GameMap,
     prefabs: &PrefabRegistry,
 ) -> Result<()> {
     initialize_resources(ctx.world);
     reset_world(ctx.world, map, prefabs)?;
-    ctx.set_map(map.collision_tilemap(), level::theme(&assets));
     Ok(())
 }
 
@@ -237,19 +232,11 @@ mod tests {
 
     #[test]
     fn startup_spawns_player_and_two_enemies() {
-        let (mut world, map, prefab_registry, assets) = build_world_and_map();
-        let mut map_slot = None;
+        let (mut world, map, prefab_registry, _assets) = build_world_and_map();
 
-        startup_system(
-            &mut StartCtx::new(&mut world, &mut map_slot),
-            assets,
-            &map,
-            &prefab_registry,
-        )
-        .unwrap();
+        startup_system(&mut StartCtx::new(&mut world), &map, &prefab_registry).unwrap();
 
         assert!(world.get_resource::<GameState>().is_some());
-        assert!(map_slot.is_some());
         assert_eq!(world.ids().count(), 3);
         assert_eq!(world.ids_with::<Patrol>().len(), 1);
     }

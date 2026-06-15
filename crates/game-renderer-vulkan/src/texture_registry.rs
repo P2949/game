@@ -4,15 +4,15 @@
 //! registered once at startup (or later) and looked up by id while recording
 //! draws, so adding a texture never means editing a `match`/`if` in the
 //! command recorder. Ids are assigned sequentially in registration order; the
-//! built-in [`crate::renderer::TEST_TEXTURE_ID`] / [`crate::renderer::FONT_TEXTURE_ID`]
+//! built-in [`crate::TEST_TEXTURE_ID`] / [`crate::FONT_TEXTURE_ID`]
 //! are simply the first two registrations.
 
 use ash::vk;
 use gpu_allocator::vulkan::Allocator;
 
-use crate::renderer::TextureId;
-use crate::renderer::owned::OwnedDescriptorPool;
-use crate::renderer::texture::{self, Texture};
+use crate::TextureId;
+use crate::owned::OwnedDescriptorPool;
+use crate::texture::{self, Texture};
 
 trait Cleanup<T> {
     fn cleanup(&mut self, value: T);
@@ -272,7 +272,7 @@ impl<'a> TextureRegistryGuard<'a> {
 #[cfg(test)]
 mod tests {
     use super::{Cleanup, CleanupGuard, TextureRegistry};
-    use crate::renderer::TextureId;
+    use crate::TextureId;
     use std::cell::Cell;
     use std::rc::Rc;
 

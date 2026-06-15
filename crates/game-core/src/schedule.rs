@@ -60,17 +60,6 @@ impl Schedule {
         self
     }
 
-    pub fn has_startup_systems(&self) -> bool {
-        !self.startup.is_empty()
-    }
-
-    pub fn has_frame_systems(&self) -> bool {
-        !(self.fixed.is_empty()
-            && self.update.is_empty()
-            && self.render_extract.is_empty()
-            && self.ui.is_empty())
-    }
-
     pub fn has_render_extract_systems(&self) -> bool {
         !self.render_extract.is_empty()
     }
@@ -116,13 +105,6 @@ impl Schedule {
         for system in &mut self.ui {
             system(ctx, dt);
         }
-    }
-
-    pub fn run_frame(&mut self, ctx: &mut Ctx<'_>, dt: f32) {
-        self.run_fixed(ctx, dt);
-        self.run_update(ctx, dt);
-        self.run_render_extract(ctx, dt);
-        self.run_ui(ctx, dt);
     }
 }
 
@@ -219,9 +201,8 @@ mod tests {
         schedule.mark_fixed_pause_guarded();
 
         let mut world = World::new();
-        let mut map_slot = None;
         schedule
-            .run_startup(&mut StartCtx::new(&mut world, &mut map_slot))
+            .run_startup(&mut StartCtx::new(&mut world))
             .unwrap();
 
         let mut camera = Camera2D::new(glam::Vec2::ZERO, 1.0);
@@ -239,7 +220,10 @@ mod tests {
             gfx: Gfx::new(&mut frame),
             audio: Audio::new(&mut audio_commands),
         };
-        schedule.run_frame(&mut ctx, 1.0 / 120.0);
+        schedule.run_fixed(&mut ctx, 1.0 / 120.0);
+        schedule.run_update(&mut ctx, 1.0 / 120.0);
+        schedule.run_render_extract(&mut ctx, 1.0 / 120.0);
+        schedule.run_ui(&mut ctx, 1.0 / 120.0);
 
         assert_eq!(
             world.get_resource::<Vec<&'static str>>().unwrap(),

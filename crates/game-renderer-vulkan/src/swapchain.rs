@@ -191,7 +191,7 @@ impl Swapchain {
         physical_device: vk::PhysicalDevice,
         surface_loader: &ash::khr::surface::Instance,
         surface: vk::SurfaceKHR,
-        queue_families: crate::renderer::device::QueueFamilies,
+        queue_families: crate::device::QueueFamilies,
         window_size: (u32, u32),
         old_swapchain: vk::SwapchainKHR,
     ) -> anyhow::Result<Self> {

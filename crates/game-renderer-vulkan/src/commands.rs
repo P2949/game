@@ -9,10 +9,10 @@ use ash::vk;
 use game_core::backend::TextureHandle;
 use gpu_allocator::MemoryLocation;
 
-use crate::renderer::sprite_batch::SpriteBatchRange;
-use crate::renderer::texture_registry::TextureRegistry;
-use crate::renderer::vertex::SpriteVertex;
-use crate::renderer::{TextureId, buffer, texture};
+use crate::sprite_batch::SpriteBatchRange;
+use crate::texture_registry::TextureRegistry;
+use crate::vertex::SpriteVertex;
+use crate::{TextureId, buffer, texture};
 
 const INITIAL_SPRITE_VERTEX_BUFFER_BYTES: vk::DeviceSize = 1024 * 1024;
 

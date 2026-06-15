@@ -37,7 +37,7 @@ cp -r assets /tmp/game-package/
 
 ## Manual smoke (interactive)
 
-Run `GAME_ASSET_DIR=assets cargo run --release` and verify:
+Run `GAME_ASSET_DIR=assets cargo run -p game --release` and verify:
 
 - [ ] Window opens at the requested size
 - [ ] World sprites render (floor grid, solids, player)

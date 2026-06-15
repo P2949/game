@@ -1,5 +1,5 @@
-use crate::renderer::SpriteDraw;
-use crate::renderer::vertex::SpriteVertex;
+use crate::SpriteDraw;
+use crate::vertex::SpriteVertex;
 use game_core::backend::TextureHandle;
 
 #[derive(Clone, Copy, Debug)]

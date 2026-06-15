@@ -1,5 +1,5 @@
-use crate::engine::assets::AssetRegistry;
-use crate::engine::backend::{SoundHandle, TextureHandle};
+use game_core::assets::AssetRegistry;
+use game_core::backend::{SoundHandle, TextureHandle};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ArenaAssets {
@@ -30,7 +30,7 @@ pub fn register(assets: &mut AssetRegistry) -> ArenaAssets {
 #[cfg(test)]
 mod tests {
     use super::register;
-    use crate::engine::assets::AssetRegistry;
+    use game_core::assets::AssetRegistry;
 
     #[test]
     fn arena_assets_register_current_texture_and_hit_sound() {

@@ -30,7 +30,8 @@ impl Patrol {
 
 /// Steers every entity with a [`Patrol`] toward its current waypoint, advancing to
 /// the next (looping) once within `arrive_radius`. Sets [`Velocity`]; the physics
-/// `movement_system` applies it with wall collision, so patrol routes never tunnel.
+/// `movement_system` applies axis-separated wall collision, subject to the usual
+/// discrete-step tunneling limits.
 pub fn patrol_system(world: &mut World, _dt: f32) {
     for id in world.ids_with::<Patrol>() {
         let Some(pos) = world.get::<Transform>(id).map(|transform| transform.pos) else {

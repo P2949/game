@@ -1,6 +1,6 @@
 use crate::assets::ArenaAssets;
-use crate::engine::builder::{MapId, MapRegistry};
 use crate::prefabs::ArenaPrefabs;
+use game_core::builder::{MapId, MapRegistry};
 use game_map::GameMap;
 
 pub fn register(
@@ -21,16 +21,16 @@ pub fn register(
 mod tests {
     use super::register;
     use crate::assets::ArenaAssets;
-    use crate::engine::builder::MapRegistry;
-    use crate::engine::input::InputRegistry;
     use crate::prefabs;
+    use game_core::builder::MapRegistry;
+    use game_core::input::InputRegistry;
 
     #[test]
     fn arena_map_registers_as_startable_map_data() {
         let assets = ArenaAssets::load();
         let mut input = InputRegistry::new();
         let actions = crate::input::register(&mut input);
-        let mut prefab_registry = crate::engine::builder::PrefabRegistry::new();
+        let mut prefab_registry = game_core::builder::PrefabRegistry::new();
         let prefabs = prefabs::register(&mut prefab_registry, assets, actions);
         let mut registry = MapRegistry::new();
         let (id, game_map) = register(&mut registry, &assets, prefabs);
