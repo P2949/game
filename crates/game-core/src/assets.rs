@@ -27,6 +27,9 @@ impl AssetRegistry {
         Self::default()
     }
 
+    /// Low-level convenience wrapper around [`Self::try_texture`] that panics on
+    /// duplicate/conflicting keys. Content should use `game-kit::AssetAuthor`,
+    /// which returns `Result`.
     pub fn texture(&mut self, key: impl Into<String>, path: impl Into<String>) -> TextureHandle {
         self.try_texture(key, path)
             .expect("texture asset keys must not be reused with different paths")
@@ -67,8 +70,9 @@ impl AssetRegistry {
         Ok(handle)
     }
 
-    /// Registers a runtime-synthesized sound effect under `key`. Audio is
-    /// generated-only today, so this is the sound API content reaches for.
+    /// Low-level convenience wrapper around [`Self::try_generated_sound`] that
+    /// panics on duplicate/conflicting keys. Content should use
+    /// `game-kit::AssetAuthor`, which returns `Result`.
     pub fn generated_sound(&mut self, key: impl Into<String>) -> SoundHandle {
         self.try_generated_sound(key)
             .expect("sound asset keys must not be reused with a different source")
@@ -79,9 +83,9 @@ impl AssetRegistry {
         self.try_register_sound(name.clone(), SoundLoadRequest::Generated { name })
     }
 
-    /// Registers a file-backed sound under `key`. The runtime does not yet play
-    /// the file (audio is generated-only), but the asset validator checks the path
-    /// exists so the declaration stays honest.
+    /// Low-level convenience wrapper around [`Self::try_sound_file`] that panics
+    /// on duplicate/conflicting keys. File-backed sounds are not exposed through
+    /// `game-kit` until runtime playback exists.
     pub fn sound_file(&mut self, key: impl Into<String>, path: impl Into<String>) -> SoundHandle {
         self.try_sound_file(key, path)
             .expect("sound asset keys must not be reused with a different source")
@@ -131,6 +135,9 @@ impl AssetRegistry {
         Ok(handle)
     }
 
+    /// Low-level convenience wrapper around [`Self::try_font`] that panics on
+    /// duplicate/conflicting keys. Content should use `game-kit::AssetAuthor`,
+    /// which returns `Result`.
     pub fn font(&mut self, key: impl Into<String>, path: impl Into<String>) -> FontHandle {
         self.try_font(key, path)
             .expect("font asset keys must not be reused with different paths")

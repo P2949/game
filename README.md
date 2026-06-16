@@ -53,10 +53,24 @@ Content crates import the facade:
 use game_kit::prelude::*;
 ```
 
+This is the intended foundation milestone: content code now talks to
+`game-kit`, not to runtime/backend/registry/schedule internals.
+
 They declare assets, controls, prefabs, maps, and systems through `GameApp`.
 For example:
 
 ```rust
+impl GamePlugin for DemoPlugin {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let assets = game.assets(assets::register)?;
+        let input = game.input(input::register)?;
+        prefabs::register(game, &assets, &input)?;
+        level::register(game, &assets)?;
+        systems::register(game, &assets, &input);
+        Ok(())
+    }
+}
+
 game.prefab("demo/player", |prefab| {
     prefab
         .spawn(|at| {

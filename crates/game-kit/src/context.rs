@@ -6,7 +6,7 @@
 //! never name `Ctx`, `StartCtx`, raw `World`, or `CommandQueue`.
 
 use anyhow::Result;
-use game_combat::{Faction, FactionId, Health};
+use game_combat::{Faction, FactionId, Health, MeleeAttack};
 use game_core::app::{Ctx, StartCtx};
 use game_core::backend::SoundHandle;
 use game_core::camera::Camera2D;
@@ -100,9 +100,18 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         self.inner.world.ids_with::<T>()
     }
 
-    /// Backwards-compatible alias for [`Self::entities_with`].
-    pub fn ids_with<T: Component>(&self) -> Vec<EntityId> {
+    /// Live entity ids carrying component `T` and matching `predicate`.
+    pub fn entities_where<T: Component>(
+        &self,
+        mut predicate: impl FnMut(EntityId, &T) -> bool,
+    ) -> Vec<EntityId> {
         self.entities_with::<T>()
+            .into_iter()
+            .filter(|id| {
+                self.component::<T>(*id)
+                    .is_some_and(|component| predicate(*id, component))
+            })
+            .collect()
     }
 
     /// Reads component `T` from `id`.
@@ -126,6 +135,41 @@ impl<'a, 'w> GameCtx<'a, 'w> {
             .map(|transform| transform.pos)
     }
 
+    pub fn nearest_by_position<T: Component>(
+        &self,
+        origin: Vec2,
+        max_distance: f32,
+        mut predicate: impl FnMut(EntityId) -> bool,
+    ) -> Option<EntityId> {
+        let max_distance_sq = max_distance * max_distance;
+
+        self.entities_with::<T>()
+            .into_iter()
+            .filter(|id| predicate(*id))
+            .filter_map(|id| {
+                let position = self.position(id)?;
+                let dist_sq = position.distance_squared(origin);
+                (dist_sq <= max_distance_sq).then_some((id, dist_sq))
+            })
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(id, _)| id)
+    }
+
+    pub fn living_entities_with<T: Component>(&self) -> Vec<EntityId> {
+        self.entities_with::<T>()
+            .into_iter()
+            .filter(|id| !self.is_dead(*id))
+            .collect()
+    }
+
+    pub fn nearest_living_with<T: Component>(
+        &self,
+        origin: Vec2,
+        max_distance: f32,
+    ) -> Option<EntityId> {
+        self.nearest_by_position::<T>(origin, max_distance, |id| !self.is_dead(id))
+    }
+
     pub fn first_entity_with<T: Component>(&self) -> Option<EntityId> {
         self.entities_with::<T>().into_iter().next()
     }
@@ -144,6 +188,10 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         }
     }
 
+    pub fn each<T: Component>(&self, f: impl FnMut(EntityId, &T)) {
+        self.for_each::<T>(f);
+    }
+
     pub fn for_each2<A: Component, B: Component>(&self, mut f: impl FnMut(EntityId, &A, &B)) {
         for id in self.entities_with::<A>() {
             let Some(a) = self.component::<A>(id) else {
@@ -154,6 +202,10 @@ impl<'a, 'w> GameCtx<'a, 'w> {
             };
             f(id, a, b);
         }
+    }
+
+    pub fn each2<A: Component, B: Component>(&self, f: impl FnMut(EntityId, &A, &B)) {
+        self.for_each2::<A, B>(f);
     }
 
     pub fn for_each1_mut<T: Component>(&mut self, mut f: impl FnMut(EntityId, &mut T)) {
@@ -261,6 +313,10 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub fn damage(&mut self, id: EntityId, amount: i32) -> bool {
         game_combat::apply_damage(self.inner.world, id, amount)
+    }
+
+    pub fn melee_attack_mut(&mut self, id: EntityId) -> Option<&mut MeleeAttack> {
+        self.component_mut::<MeleeAttack>(id)
     }
 
     pub fn is_dead(&self, id: EntityId) -> bool {

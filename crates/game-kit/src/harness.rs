@@ -8,18 +8,19 @@
 use anyhow::Result;
 use game_core::app::{Ctx, MapData, RenderFrame, StartCtx};
 use game_core::audio::{Audio, AudioCommands};
-use game_core::backend::AudioCommand;
+use game_core::backend::{AudioCommand, SoundHandle};
 use game_core::builder::{GameBuilder, RuntimeContent};
 use game_core::camera::Camera2D;
 use game_core::commands::{Command, CommandQueue};
 use game_core::gfx::Gfx;
-use game_core::input::{ActionId, Axis2dId, Input};
+use game_core::input::{ActionId, Axis2dId, Input, InputRegistry};
 use game_core::plugin::GamePlugin as CoreGamePlugin;
 use game_core::schedule::Schedule;
-use game_core::world::World;
+use game_core::world::{EntityId, World};
 use glam::Vec2;
 
 use crate::app::{GamePlugin, plugin};
+use crate::map::{ContentRuntime, reset_to_start_map_world};
 
 /// Drives a content plugin headlessly for tests: build → startup → step frames,
 /// inspecting UI text and the world.
@@ -27,6 +28,7 @@ pub struct GameTestHarness {
     schedule: Schedule,
     world: World,
     map: MapData,
+    input_registry: InputRegistry,
     input: Input,
     camera: Camera2D,
     ui_text: Vec<String>,
@@ -44,6 +46,7 @@ impl GameTestHarness {
         let RuntimeContent {
             maps,
             start_map,
+            input,
             mut schedule,
             ..
         } = builder.into_parts()?;
@@ -60,6 +63,7 @@ impl GameTestHarness {
             schedule,
             world,
             map,
+            input_registry: input,
             input: Input::default(),
             camera: Camera2D::new(Vec2::ZERO, 1.0),
             ui_text: Vec::new(),
@@ -73,8 +77,28 @@ impl GameTestHarness {
         self
     }
 
+    /// Marks a named action pressed (and held) for subsequent frames.
+    pub fn press_action(mut self, name: &str) -> Self {
+        let action = self
+            .input_registry
+            .action_id(name)
+            .unwrap_or_else(|| panic!("unknown action '{name}'"));
+        self.input = self.input.with_pressed(action);
+        self
+    }
+
     /// Sets a 2D axis value for subsequent frames.
     pub fn axis(mut self, axis: Axis2dId, value: Vec2) -> Self {
+        self.input = self.input.with_axis2d(axis, value);
+        self
+    }
+
+    /// Sets a named 2D axis value for subsequent frames.
+    pub fn set_axis(mut self, name: &str, value: Vec2) -> Self {
+        let axis = self
+            .input_registry
+            .axis2d_id(name)
+            .unwrap_or_else(|| panic!("unknown axis '{name}'"));
         self.input = self.input.with_axis2d(axis, value);
         self
     }
@@ -138,9 +162,36 @@ impl GameTestHarness {
         &mut self.world
     }
 
+    /// Resets the simulated world through the same content-runtime path as
+    /// [`GameCtx::reset_to_start_map`](crate::GameCtx::reset_to_start_map).
+    pub fn reset_to_start_map(&mut self) -> Result<()> {
+        reset_to_start_map_world(&mut self.world)
+    }
+
+    /// Queues a despawn command without running a frame.
+    pub fn queue_despawn(&mut self, entity: EntityId) {
+        self.world
+            .resource_or_insert_with(CommandQueue::new)
+            .despawn(entity);
+    }
+
+    /// Queues a sound command without running a frame.
+    pub fn queue_play_sound(&mut self, sound: SoundHandle) {
+        self.world
+            .resource_or_insert_with(CommandQueue::new)
+            .play_sound(sound);
+    }
+
     /// The start map's collision tilemap dimensions and data.
     pub fn map(&self) -> &MapData {
         &self.map
+    }
+
+    /// Name of the content-runtime map currently spawned.
+    pub fn current_map_name(&self) -> Option<String> {
+        self.world
+            .get_resource::<ContentRuntime>()
+            .map(|runtime| runtime.current_map_name().to_owned())
     }
 
     /// UI text produced by the most recent [`Self::frame`] call.

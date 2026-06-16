@@ -44,14 +44,4 @@ impl<'a> AssetAuthor<'a> {
     pub fn generated_sound(&mut self, key: impl Into<String>) -> Result<SoundHandle> {
         self.registry.try_generated_sound(key)
     }
-
-    /// A file-backed sound. Validated on disk, but not yet played from the file by
-    /// the runtime (audio is generated-only) — prefer [`Self::generated_sound`].
-    pub fn sound_file(
-        &mut self,
-        key: impl Into<String>,
-        path: impl Into<String>,
-    ) -> Result<SoundHandle> {
-        self.registry.try_sound_file(key, path)
-    }
 }

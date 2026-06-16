@@ -95,6 +95,43 @@ fn game_kit_has_no_backend_dependencies() {
     }
 }
 
+#[test]
+fn game_kit_normal_prelude_has_no_testing_or_raw_exports() {
+    let source = fs::read_to_string(workspace_root().join("crates/game-kit/src/lib.rs"))
+        .expect("failed to read game-kit lib");
+    let prelude = extract_pub_module_body(&source, "prelude");
+
+    for forbidden in [
+        "GameTestHarness",
+        "World",
+        "Entity,",
+        "Input,",
+        "TileMap",
+        "NavGrid",
+        "PrefabId",
+        "movement_system",
+        "chase_system",
+        "patrol_system",
+        "apply_damage",
+    ] {
+        assert!(
+            !prelude.contains(forbidden),
+            "game_kit::prelude must not export {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn game_test_harness_is_not_root_reexported() {
+    let source = fs::read_to_string(workspace_root().join("crates/game-kit/src/lib.rs"))
+        .expect("failed to read game-kit lib");
+
+    assert!(
+        !source.contains("pub use harness::GameTestHarness;"),
+        "GameTestHarness should be exposed through game_kit::testing, not the crate root"
+    );
+}
+
 /// Reads Rust source with whole-line comments removed, so documentation that
 /// mentions a forbidden crate name does not trip a `contains` import check.
 fn read_code_without_comments(path: &Path) -> String {
@@ -182,6 +219,26 @@ fn content_source_uses_authoring_facade_not_engine_internals() {
                     path.display()
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn content_does_not_import_game_core_internal_prelude() {
+    for crate_name in ["arena-content", "testbed-content"] {
+        let src_dir = workspace_root().join(format!("crates/{crate_name}/src"));
+        let mut files = Vec::new();
+        collect_rust_files(&src_dir, &mut files);
+
+        for path in files {
+            let source = read_code_without_comments(&path);
+            let production = strip_cfg_test_modules(&source);
+
+            assert!(
+                !production.contains("game_core::internal_prelude"),
+                "{} production content must use game_kit::prelude, not game_core::internal_prelude",
+                path.display()
+            );
         }
     }
 }
@@ -289,6 +346,34 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
             out.push(path);
         }
     }
+}
+
+fn extract_pub_module_body<'a>(source: &'a str, module_name: &str) -> &'a str {
+    let marker = format!("pub mod {module_name}");
+    let module_start = source
+        .find(&marker)
+        .unwrap_or_else(|| panic!("failed to find {marker}"));
+    let open_brace = module_start
+        + source[module_start..]
+            .find('{')
+            .unwrap_or_else(|| panic!("failed to find opening brace for {marker}"));
+    let mut depth = 0usize;
+
+    for (offset, ch) in source[open_brace..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let close_brace = open_brace + offset;
+                    return &source[open_brace + 1..close_brace];
+                }
+            }
+            _ => {}
+        }
+    }
+
+    panic!("failed to find closing brace for {marker}");
 }
 
 fn strip_cfg_test_modules(source: &str) -> String {

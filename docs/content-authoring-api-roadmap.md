@@ -1,8 +1,25 @@
-# Content Authoring API roadmap
+# Content Authoring API status and stabilization roadmap
 
-The engine/content split is mechanically complete. The next target is to reduce
-content crates to a friendly game-authoring facade so they do not operate
-builder, schedule, registry, validation, or raw world plumbing directly.
+## Status
+
+The Content Authoring API 1.0 foundation is implemented.
+
+Content crates depend only on `game-kit`; production content imports
+`game_kit::prelude::*`; raw ECS/world access is restricted to tests via
+`game_kit::testing::prelude::*`; systems use `GameCtx` helpers; prefabs use
+tuple bundles; maps use `MapAuthor`; architecture tests enforce the boundary.
+
+Remaining items are API polish and future feature decisions, not blockers for
+the foundation milestone.
+
+## What not to do next
+
+Do not split more crates just for neatness.
+Do not rewrite the renderer/runtime for this milestone.
+Do not add scripting/editor support yet.
+Do not replace the ECS/query model until real content pressure justifies it.
+
+The next work should stabilize the current authoring API and add small examples.
 
 ## Target
 
@@ -28,13 +45,13 @@ Content should express **assets, controls, prefabs, maps, and systems**. It must
 not manually operate `GameBuilder`, `Schedule`, `PrefabRegistry`, `MapRegistry`,
 `StartCtx`, raw `Ctx`, validators, or runtime internals.
 
-## Final polish target
+## Stabilization checks
 
-The remaining goal is to remove raw `World`, `Input`, `NavGrid`, and `TileMap`
-access from production content systems. Content may use `GameCtx`, authoring
-builders, and high-level `game-kit` helpers only.
+Production content should stay free of raw `World`, `Input`, `NavGrid`, and
+`TileMap` access. Content may use `GameCtx`, authoring builders, and high-level
+`game-kit` helpers only.
 
-Use these measurements while polishing the facade:
+Use these measurements while stabilizing the facade:
 
 ```bash
 rg "World|Entity::new|ids_with|get::<|get_mut::<|world_and_|world_mut\(|world\(" \
@@ -60,7 +77,7 @@ runtime/backend crates   game-runtime, game-renderer-vulkan, game-platform-sdl, 
 Content never sees SDL, Vulkan, audio devices, swapchains, descriptor sets,
 renderer texture ids, event pumps, or the fixed-timestep loop.
 
-## Status
+## Cross-references
 
 This roadmap is implemented by the `game-kit` facade. See
 [content-authoring.md](content-authoring.md) for the author-facing guide and

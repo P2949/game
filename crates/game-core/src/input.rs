@@ -120,6 +120,9 @@ impl InputRegistry {
         Self::default()
     }
 
+    /// Low-level convenience wrapper around [`Self::try_action`] that panics on
+    /// duplicate action names. Content should use `game-kit::InputAuthor`,
+    /// which returns `Result`.
     pub fn action(&mut self, name: impl Into<String>) -> ActionBindingBuilder<'_> {
         self.try_action(name)
             .expect("input action names must be unique")
@@ -141,6 +144,9 @@ impl InputRegistry {
         Ok(ActionBindingBuilder { registry: self, id })
     }
 
+    /// Low-level convenience wrapper around [`Self::try_axis2d`] that panics on
+    /// duplicate axis names. Content should use `game-kit::InputAuthor`, which
+    /// returns `Result`.
     pub fn axis2d(&mut self, name: impl Into<String>) -> Axis2dBindingBuilder<'_> {
         self.try_axis2d(name)
             .expect("input axis2d names must be unique")
@@ -171,6 +177,20 @@ impl InputRegistry {
 
     pub fn axis2d_binding(&self, id: Axis2dId) -> Option<&Axis2dBinding> {
         self.axes2d.get(id.0 as usize)
+    }
+
+    pub fn action_id(&self, name: &str) -> Option<ActionId> {
+        self.actions
+            .iter()
+            .position(|binding| binding.name == name)
+            .map(|index| ActionId(index as u32))
+    }
+
+    pub fn axis2d_id(&self, name: &str) -> Option<Axis2dId> {
+        self.axes2d
+            .iter()
+            .position(|binding| binding.name == name)
+            .map(|index| Axis2dId(index as u32))
     }
 
     /// Registered action bindings in id order (`ActionId(i)` is `actions()[i]`).

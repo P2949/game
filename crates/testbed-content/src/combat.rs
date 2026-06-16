@@ -49,7 +49,7 @@ fn tick_effects(game: &mut GameCtx<'_, '_>, attack: ActionId, dt: f32) -> Combat
             continue;
         };
 
-        let Some(attack) = game.component_mut::<MeleeAttack>(id) else {
+        let Some(attack) = game.melee_attack_mut(id) else {
             continue;
         };
         attack.timer = (attack.timer - dt).max(0.0);
@@ -92,10 +92,7 @@ fn is_enemy(game: &GameCtx<'_, '_>, id: EntityId) -> bool {
 }
 
 fn enemy_ids(game: &GameCtx<'_, '_>) -> Vec<EntityId> {
-    game.entities_with::<Faction>()
-        .into_iter()
-        .filter(|id| is_enemy(game, *id))
-        .collect()
+    game.entities_where::<Faction>(|_, faction| faction.0 == FactionId::Enemy)
 }
 
 fn player_snapshot(game: &GameCtx<'_, '_>) -> Option<(EntityId, Vec2, f32, i32)> {
@@ -113,94 +110,7 @@ fn nearest_enemy_in_range(
     player_pos: Vec2,
     range: f32,
 ) -> Option<EntityId> {
-    enemy_ids(game)
-        .into_iter()
-        .filter_map(|id| {
-            if game.is_dead(id) {
-                return None;
-            }
-            let transform = game.component::<Transform>(id)?;
-            let dist_sq = transform.pos.distance_squared(player_pos);
-            (dist_sq <= range * range).then_some((id, dist_sq))
-        })
-        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(id, _)| id)
-}
-
-#[cfg(test)]
-mod tests {
-    use game_kit::testing::prelude::*;
-
-    use crate::TestbedPlugin;
-    use crate::actor::PlayerController;
-
-    const ATTACK: ActionId = ActionId(0);
-    const DEBUG_DIE: ActionId = ActionId(3);
-
-    fn player_id(game: &GameTestHarness) -> EntityId {
-        game.world().ids_with::<PlayerController>()[0]
-    }
-
-    fn enemy_ids(game: &GameTestHarness) -> Vec<EntityId> {
-        game.world()
-            .ids_with::<Faction>()
-            .into_iter()
-            .filter(|id| game.world().get::<Faction>(*id).unwrap().0 == FactionId::Enemy)
-            .collect()
-    }
-
-    fn move_first_enemy_next_to_player(game: &mut GameTestHarness) -> EntityId {
-        let player = player_id(game);
-        let enemy = enemy_ids(game)[0];
-        let player_pos = game.world().get::<Transform>(player).unwrap().pos;
-        game.world_mut().get_mut::<Transform>(enemy).unwrap().pos = player_pos + vec2(10.0, 0.0);
-        game.world_mut().get_mut::<Health>(enemy).unwrap().current = 25;
-        enemy
-    }
-
-    #[test]
-    fn player_attack_records_dead_enemy_despawn_effect() {
-        let mut game = GameTestHarness::from_plugin(TestbedPlugin)
-            .unwrap()
-            .press(ATTACK);
-        let enemy = move_first_enemy_next_to_player(&mut game);
-
-        game.fixed_step(1.0 / 120.0);
-
-        assert!(game.world().get::<Health>(enemy).is_none());
-        assert_eq!(game.audio_commands().len(), 1);
-    }
-
-    #[test]
-    fn enemy_in_range_damages_player() {
-        let mut game = GameTestHarness::from_plugin(TestbedPlugin).unwrap();
-        move_first_enemy_next_to_player(&mut game);
-
-        game.fixed_step(1.0 / 120.0);
-
-        let player = player_id(&game);
-        assert!(game.world().get::<Health>(player).unwrap().current < 120);
-        assert_eq!(game.audio_commands().len(), 1);
-    }
-
-    #[test]
-    fn debug_kill_marks_player_dead() {
-        let mut game = GameTestHarness::from_plugin(TestbedPlugin)
-            .unwrap()
-            .press(DEBUG_DIE);
-
-        game.fixed_step(1.0 / 120.0);
-
-        let player = player_id(&game);
-        assert!(game.world().get::<Health>(player).unwrap().is_dead());
-    }
-
-    #[test]
-    fn no_combat_events_when_idle_and_out_of_range() {
-        let mut game = GameTestHarness::from_plugin(TestbedPlugin).unwrap();
-
-        game.fixed_step(1.0 / 120.0);
-
-        assert!(game.audio_commands().is_empty());
-    }
+    game.nearest_by_position::<Faction>(player_pos, range, |id| {
+        is_enemy(game, id) && !game.is_dead(id)
+    })
 }

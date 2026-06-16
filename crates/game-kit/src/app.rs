@@ -203,6 +203,14 @@ impl<'app> GameApp<'app> {
                 theme,
             )?;
             if start {
+                if let Some(previous) = &start_map_name {
+                    anyhow::bail!(
+                        "multiple start maps declared: '{}' and '{}'; runtime map switching is not implemented",
+                        previous,
+                        game_map.name
+                    );
+                }
+
                 self.builder.set_start_map(map_id);
                 start_map_name = Some(game_map.name.clone());
             }
@@ -246,11 +254,21 @@ pub fn plugin<P: GamePlugin>(plugin: P) -> Plugin<P> {
 
 #[cfg(test)]
 mod tests {
+    use game_core::backend::TextureHandle;
     use game_core::builder::GameBuilder;
     use game_core::input::Key;
-    use game_core::world::Transform;
+    use game_core::world::{Sprite, Transform};
+    use game_map::cell;
 
     use super::GameApp;
+    use crate::map::TileTheme;
+
+    fn test_theme() -> TileTheme {
+        TileTheme {
+            floor: Sprite::new(TextureHandle(1), glam::Vec2::splat(16.0)),
+            wall: Sprite::new(TextureHandle(2), glam::Vec2::splat(16.0)),
+        }
+    }
 
     #[test]
     fn duplicate_prefab_name_returns_error() {
@@ -303,5 +321,55 @@ mod tests {
             .unwrap_err();
 
         assert!(err.to_string().contains("texture asset key"));
+    }
+
+    #[test]
+    fn ron_map_rejects_in_code_authoring_calls() {
+        let mut builder = GameBuilder::new();
+        let mut game = GameApp::new(&mut builder);
+
+        game.map_from_ron("")
+            .tile_size(16.0)
+            .tiles(["."])
+            .spawn("player_start", "demo/player", cell(0, 0))
+            .theme(test_theme())
+            .start();
+
+        let err = game.finish().unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("map '<ron>' has invalid authoring calls"));
+        assert!(message.contains("tile_size() is only valid on in-code maps"));
+        assert!(message.contains("tiles() is only valid on in-code maps"));
+        assert!(message.contains("spawn() is only valid on in-code maps"));
+    }
+
+    #[test]
+    fn no_start_map_returns_error() {
+        let mut builder = GameBuilder::new();
+        let game = GameApp::new(&mut builder);
+
+        let err = game.finish().unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("no start map declared; call .start() on one map")
+        );
+    }
+
+    #[test]
+    fn multiple_start_maps_return_error() {
+        let mut builder = GameBuilder::new();
+        let mut game = GameApp::new(&mut builder);
+
+        game.map("first").tiles(["."]).theme(test_theme()).start();
+        game.map("second").tiles(["."]).theme(test_theme()).start();
+
+        let err = game.finish().unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("multiple start maps declared: 'first' and 'second'")
+        );
     }
 }

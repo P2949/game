@@ -17,6 +17,23 @@ Content can define gameplay components/resources, register content through
 owns the event loop, fixed timestep, backend startup, renderer extraction, asset
 preflight, and command application.
 
+## Minimal Plugin Shape
+
+```rust
+pub struct DemoPlugin;
+
+impl GamePlugin for DemoPlugin {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let assets = game.assets(assets::register)?;
+        let input = game.input(input::register)?;
+        prefabs::register(game, &assets, &input)?;
+        level::register(game, &assets)?;
+        systems::register(game, &assets, &input);
+        Ok(())
+    }
+}
+```
+
 ## Assets
 
 Use `game.assets(..)` and `AssetAuthor`:
@@ -30,8 +47,9 @@ let assets = game.assets(|assets| {
 })?;
 ```
 
-Audio is generated-only today. File-backed sound requests are modeled and
-validated, but the runtime does not decode or mix file audio yet.
+Audio exposed through `game-kit` is generated-only today. File-backed sound
+requests remain a lower-level future capability until the runtime can decode and
+mix file audio.
 
 ## Input
 
@@ -91,6 +109,8 @@ game.map("demo")
 ```
 
 Map objects reference prefabs by name. The facade resolves and validates them.
+Declare exactly one `.start()` map today. Additional registered maps and runtime
+map switching are future work.
 
 ## Systems
 
@@ -117,6 +137,31 @@ fn physics(game: &mut GameCtx<'_, '_>, dt: f32) {
 }
 ```
 
+Query-style helpers keep common component scans inside `GameCtx`:
+
+```rust
+game.each2::<Transform, Sprite>(|entity, transform, sprite| {
+    let _ = (entity, transform, sprite);
+});
+
+let input = game.input().clone();
+game.for_each3_copy_mut::<PlayerController, MoveSpeed, Velocity>(
+    |_, controller, speed, velocity| {
+        velocity.0 = input.axis2d(controller.move_axis) * speed.0;
+    },
+);
+```
+
+Use the explicit `for_each*` names when they make borrowing or copy behavior
+clearer. The facade intentionally does not provide query macros or automatic
+system-parameter injection yet.
+
+Startup systems are fallible because content initialization can fail.
+Fixed/update/UI systems are infallible by design. Runtime operations that should
+not fail after validation expose infallible helpers such as
+`reset_to_start_map_or_log`, which logs invariant failures instead of making
+every gameplay system return `Result`.
+
 ## Commands
 
 Deferred commands are available through `game.commands()`:
@@ -138,13 +183,13 @@ and renderer built-in assets before backend creation. Authoring mistakes return
 
 ## Testing
 
-Production content uses:
+Production content:
 
 ```rust
 use game_kit::prelude::*;
 ```
 
-Tests that need raw ECS inspection use:
+Tests needing raw inspection:
 
 ```rust
 use game_kit::testing::prelude::*;

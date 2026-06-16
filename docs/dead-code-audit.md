@@ -33,16 +33,15 @@ for runtime/facade/tests. Content crates use `game_kit::prelude::*`.
 
 `game-kit` keeps raw world inspection in `game_kit::testing::prelude::*` and
 `GameTestHarness`; the normal prelude exposes authoring builders, component
-types, and `GameCtx` helpers only. `MapAuthor` currently exposes only `.start()`
-because runtime map switching is not implemented.
+types, and `GameCtx` helpers only. `MapAuthor` currently exposes only `.start()`;
+additional registered maps and runtime map switching are future work.
 
 ## Runtime Reality Checks
 
 - The runtime validates content asset registrations and renderer built-in assets
   before backend startup; the font atlas image is still built during renderer
   creation after that preflight.
-- Sound registrations are honest about generated-vs-file sources. Runtime
-  playback is generated-only today; file-backed sound requests are validated but
-  not decoded or mixed yet.
+- File-backed sound requests exist in `game-core` but are not exposed through
+  `game-kit` until runtime playback exists.
 - Query order is deterministic for `World::ids_with` / `query` / `query2`; code
   should not depend on `HashMap` iteration order.

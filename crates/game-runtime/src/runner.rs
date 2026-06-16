@@ -108,6 +108,8 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("start map {:?} is not registered", start_map))?
         .data
         .clone();
+    // Runtime map switching is not wired yet: the loop owns this fixed MapData
+    // and its derived nav/render state for the duration of the run.
     let _runtime_maps = maps;
     let _runtime_prefabs = prefabs;
 

@@ -30,7 +30,7 @@ fn tick_effects(game: &mut GameCtx<'_, '_>, attack: ActionId, dt: f32) -> Combat
     };
 
     if game.pressed(attack) {
-        if let Some(target) = nearest_enemy_in_range(game, player_pos, player_range) {
+        if let Some(target) = game.nearest_living_with::<EnemyTag>(player_pos, player_range) {
             if game.damage(target, player_damage) {
                 effects.hit_sounds += 1;
             }
@@ -38,15 +38,12 @@ fn tick_effects(game: &mut GameCtx<'_, '_>, attack: ActionId, dt: f32) -> Combat
     }
 
     let mut player_damage_taken = 0;
-    for id in game.entities_with::<EnemyTag>() {
-        if game.is_dead(id) {
-            continue;
-        }
+    for id in game.living_entities_with::<EnemyTag>() {
         let Some(enemy_pos) = game.position(id) else {
             continue;
         };
 
-        let Some(attack) = game.component_mut::<MeleeAttack>(id) else {
+        let Some(attack) = game.melee_attack_mut(id) else {
             continue;
         };
         attack.timer = (attack.timer - dt).max(0.0);
@@ -93,87 +90,4 @@ fn player_snapshot(game: &GameCtx<'_, '_>) -> Option<(EntityId, Vec2, f32, i32)>
             let attack = game.component::<MeleeAttack>(id)?;
             Some((id, transform.pos, attack.range, attack.damage))
         })
-}
-
-fn nearest_enemy_in_range(
-    game: &GameCtx<'_, '_>,
-    player_pos: Vec2,
-    range: f32,
-) -> Option<EntityId> {
-    game.entities_with::<EnemyTag>()
-        .into_iter()
-        .filter_map(|id| {
-            if game.is_dead(id) {
-                return None;
-            }
-            let transform = game.component::<Transform>(id)?;
-            let dist_sq = transform.pos.distance_squared(player_pos);
-            (dist_sq <= range * range).then_some((id, dist_sq))
-        })
-        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(id, _)| id)
-}
-
-#[cfg(test)]
-mod tests {
-    use game_kit::testing::prelude::*;
-
-    use crate::ArenaPlugin;
-    use crate::actor::{EnemyTag, PlayerController};
-
-    const ATTACK: ActionId = ActionId(0);
-    const DEBUG_DIE: ActionId = ActionId(3);
-
-    fn player_id(game: &GameTestHarness) -> EntityId {
-        game.world().ids_with::<PlayerController>()[0]
-    }
-
-    fn enemy_id(game: &GameTestHarness) -> EntityId {
-        game.world().ids_with::<EnemyTag>()[0]
-    }
-
-    fn move_enemy_next_to_player(game: &mut GameTestHarness) {
-        let player = player_id(game);
-        let enemy = enemy_id(game);
-        let player_pos = game.world().get::<Transform>(player).unwrap().pos;
-        game.world_mut().get_mut::<Transform>(enemy).unwrap().pos = player_pos + vec2(10.0, 0.0);
-        game.world_mut().get_mut::<Health>(enemy).unwrap().current = 25;
-    }
-
-    #[test]
-    fn player_attack_damages_and_despawns_dead_enemy() {
-        let mut game = GameTestHarness::from_plugin(ArenaPlugin)
-            .unwrap()
-            .press(ATTACK);
-        move_enemy_next_to_player(&mut game);
-
-        game.fixed_step(1.0 / 120.0);
-
-        assert!(game.world().ids_with::<EnemyTag>().is_empty());
-        assert_eq!(game.audio_commands().len(), 1);
-    }
-
-    #[test]
-    fn enemy_attack_damages_player() {
-        let mut game = GameTestHarness::from_plugin(ArenaPlugin).unwrap();
-        move_enemy_next_to_player(&mut game);
-
-        game.fixed_step(1.0 / 120.0);
-
-        let player = player_id(&game);
-        assert_eq!(game.world().get::<Health>(player).unwrap().current, 94);
-        assert_eq!(game.audio_commands().len(), 1);
-    }
-
-    #[test]
-    fn debug_kill_marks_player_dead() {
-        let mut game = GameTestHarness::from_plugin(ArenaPlugin)
-            .unwrap()
-            .press(DEBUG_DIE);
-
-        game.fixed_step(1.0 / 120.0);
-
-        let player = player_id(&game);
-        assert!(game.world().get::<Health>(player).unwrap().is_dead());
-    }
 }

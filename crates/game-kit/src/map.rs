@@ -44,12 +44,21 @@ pub(crate) struct PendingMap {
     required_objects: Vec<String>,
     theme: Option<TileTheme>,
     start: bool,
+    misuse_errors: Vec<String>,
 }
 
 impl PendingMap {
     /// Resolves prefab names, builds and validates the [`GameMap`], and returns it
     /// alongside its theme and start flag for registration.
     pub(crate) fn resolve(self, prefabs: &PrefabRegistry) -> Result<(GameMap, TileTheme, bool)> {
+        if !self.misuse_errors.is_empty() {
+            anyhow::bail!(
+                "map '{}' has invalid authoring calls:\n{}",
+                self.name,
+                self.misuse_errors.join("\n")
+            );
+        }
+
         let theme = self
             .theme
             .ok_or_else(|| anyhow!("map '{}' has no theme; call .theme(..)", self.name))?;
@@ -117,6 +126,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                 required_objects: Vec::new(),
                 theme: None,
                 start: false,
+                misuse_errors: Vec::new(),
             },
         }
     }
@@ -130,14 +140,22 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                 required_objects: Vec::new(),
                 theme: None,
                 start: false,
+                misuse_errors: Vec::new(),
             },
         }
     }
 
     /// Sets the tile size in world units (in-code maps only; RON maps carry it).
     pub fn tile_size(mut self, tile_size: f32) -> Self {
-        if let MapSource::InCode { tile_size: t, .. } = &mut self.pending.source {
-            *t = tile_size;
+        match &mut self.pending.source {
+            MapSource::InCode { tile_size: t, .. } => {
+                *t = tile_size;
+            }
+            MapSource::Ron { .. } => {
+                self.pending
+                    .misuse_errors
+                    .push("tile_size() is only valid on in-code maps, not RON maps".to_owned());
+            }
         }
         self
     }
@@ -145,8 +163,15 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
     /// Sets the collision layer from rows of `.` (floor) / `#` (wall) (in-code
     /// maps only).
     pub fn tiles<const N: usize>(mut self, rows: [&str; N]) -> Self {
-        if let MapSource::InCode { rows: r, .. } = &mut self.pending.source {
-            *r = rows.iter().map(|row| (*row).to_owned()).collect();
+        match &mut self.pending.source {
+            MapSource::InCode { rows: r, .. } => {
+                *r = rows.iter().map(|row| (*row).to_owned()).collect();
+            }
+            MapSource::Ron { .. } => {
+                self.pending
+                    .misuse_errors
+                    .push("tiles() is only valid on in-code maps, not RON maps".to_owned());
+            }
         }
         self
     }
@@ -159,8 +184,15 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         prefab: impl Into<String>,
         cell: MapCell,
     ) -> Self {
-        if let MapSource::InCode { objects, .. } = &mut self.pending.source {
-            objects.push((id.into(), prefab.into(), cell));
+        match &mut self.pending.source {
+            MapSource::InCode { objects, .. } => {
+                objects.push((id.into(), prefab.into(), cell));
+            }
+            MapSource::Ron { .. } => {
+                self.pending
+                    .misuse_errors
+                    .push("spawn() is only valid on in-code maps, not RON maps".to_owned());
+            }
         }
         self
     }
@@ -193,6 +225,10 @@ pub struct ContentRuntime {
     prefabs: Rc<PrefabRegistry>,
     maps: HashMap<String, GameMap>,
     start_map: String,
+    // Runtime map switching is intentionally not exposed yet. `current_map`
+    // exists so reset/start-map behavior has one generic path and future
+    // switching has a place to land, but GameCtx does not expose change_map
+    // until game-runtime can update MapData/nav/render extraction too.
     current_map: String,
 }
 

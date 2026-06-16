@@ -3,6 +3,10 @@
 Repeatable validation before tagging or packaging a build. Run from a clean
 working tree.
 
+This checklist protects the achieved content-authoring foundation: production
+content goes through `game-kit`, while lower-level runtime, backend, registry,
+schedule, and raw world APIs stay behind the facade.
+
 ## Automated checks
 
 ```bash

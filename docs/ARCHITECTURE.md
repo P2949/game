@@ -27,7 +27,10 @@ runtime/backend crates
 Production content authors use `game_kit::prelude::*`; tests that need raw
 inspection use `game_kit::testing::prelude::*`. Lower-level builder, schedule,
 registry, validator, raw world/query, and raw context APIs are for the runtime,
-facade internals, and tests.
+facade internals, and tests; the grouped escape hatch for those internals is
+`game_core::internal_prelude`, not a content API. This is the achieved content
+foundation: content code talks to `game-kit`, not to
+runtime/backend/registry/schedule internals.
 
 ## Main Loop
 
@@ -41,6 +44,12 @@ shutdown. Rendering is skipped while the drawable size is zero.
 caps catch-up steps per rendered frame. Excess accumulated lag is discarded with
 a rate-limited warning. The runtime extracts the current simulation state for
 rendering; it does not currently interpolate between previous/current transforms.
+
+Startup systems are fallible because content initialization happens before the
+loop. Fixed/update/UI systems are intentionally infallible; gameplay operations
+that should not fail after validation use logging helpers such as
+`reset_to_start_map_or_log` rather than forcing every frame system to return
+`Result`.
 
 ## Input
 
@@ -87,7 +96,8 @@ runtime also validates renderer built-in assets, currently
 The SDL audio callback drains generated play commands from a bounded lock-free
 queue and mixes generated tones into an f32 stream. Content requests generated
 sound effects through `assets.generated_sound(..)`. File-backed loading,
-decoding, and resampling are intentionally not implemented yet.
+decoding, resampling, and game-kit exposure are intentionally not implemented
+yet.
 
 ## Current Limitations
 

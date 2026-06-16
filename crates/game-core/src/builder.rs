@@ -49,6 +49,9 @@ impl MapRegistry {
         Self::default()
     }
 
+    /// Low-level convenience wrapper around [`Self::try_register`] that panics
+    /// on duplicate map names. Content should use `game-kit::MapAuthor`, which
+    /// returns `Result`.
     pub fn register(
         &mut self,
         name: impl Into<String>,
@@ -123,10 +126,9 @@ impl PrefabRegistry {
         Self::default()
     }
 
-    /// Registers a prefab under a unique `name`, panicking if the name is already
-    /// taken. Registration happens once at startup/build time, so a duplicate name
-    /// is a content-authoring bug that should fail loudly and immediately; callers
-    /// that want to handle the collision instead should use [`Self::try_register`].
+    /// Low-level convenience wrapper around [`Self::try_register`] that panics
+    /// on duplicate prefab names. Content should use `game-kit::PrefabAuthor`,
+    /// which returns `Result`.
     pub fn register(
         &mut self,
         name: impl Into<String>,

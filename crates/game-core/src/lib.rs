@@ -35,7 +35,8 @@ pub mod prelude {
 
 #[allow(unused_imports)]
 pub mod internal_prelude {
-    //! Internal engine/runtime/facade convenience exports.
+    //! Engine/runtime/facade internals. Content crates must use
+    //! `game_kit::prelude` instead of this module.
     //!
     //! This intentionally includes raw contexts, registries, validators, schedules,
     //! and command queues. It is not the content authoring API; content crates use
