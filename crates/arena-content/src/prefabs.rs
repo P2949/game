@@ -6,7 +6,7 @@ use game_kit::prelude::*;
 pub const PLAYER: &str = "arena/player";
 pub const SLIME: &str = "arena/slime";
 
-pub fn register(game: &mut GameApp, assets: ArenaAssets, actions: ArenaActions) {
+pub fn register(game: &mut GameApp, assets: ArenaAssets, actions: ArenaActions) -> Result<()> {
     game.prefab(PLAYER, |prefab| {
         let size = vec2(20.0, 20.0);
         prefab
@@ -27,14 +27,15 @@ pub fn register(game: &mut GameApp, assets: ArenaAssets, actions: ArenaActions) 
                         .tint(vec4(0.4, 0.7, 1.0, 1.0)),
                     Collider::box_of(size),
                 )
-            })
+            })?
             .require::<Transform>()
             .require::<Collider>()
             .require::<Sprite>()
             .require::<Health>()
             .require::<Faction>()
             .require::<PlayerController>();
-    });
+        Ok(())
+    })?;
 
     game.prefab(SLIME, |prefab| {
         let size = vec2(22.0, 22.0);
@@ -57,7 +58,7 @@ pub fn register(game: &mut GameApp, assets: ArenaAssets, actions: ArenaActions) 
                         .tint(vec4(1.0, 0.4, 0.4, 1.0)),
                     Collider::box_of(size),
                 )
-            })
+            })?
             .require::<Transform>()
             .require::<Collider>()
             .require::<Sprite>()
@@ -65,5 +66,8 @@ pub fn register(game: &mut GameApp, assets: ArenaAssets, actions: ArenaActions) 
             .require::<Faction>()
             .require::<EnemyTag>()
             .require::<AiController>();
-    });
+        Ok(())
+    })?;
+
+    Ok(())
 }

@@ -58,21 +58,33 @@ For example:
 
 ```rust
 game.prefab("demo/player", |prefab| {
-    prefab.spawn(|at| {
-        (
-            Transform::at(at),
-            Velocity::default(),
-            Sprite::new(assets.player, vec2s(20.0)),
-            Collider::box_of(vec2s(20.0)),
-        )
-    });
-});
+    prefab
+        .spawn(|at| {
+            (
+                Transform::at(at),
+                Velocity::default(),
+                PlayerController {
+                    move_axis: actions.movement,
+                },
+                Health::new(100),
+                Sprite::new(assets.player, vec2s(20.0)),
+                Collider::box_of(vec2s(20.0)),
+            )
+        })?
+        .require::<Transform>()
+        .require::<Collider>();
+    Ok(())
+})?;
+
+game.fixed_active::<GameState>(player_control_system);
 ```
 
 Content crates do not talk to SDL, Vulkan, audio devices, memory allocation,
-swapchains, descriptor sets, renderer texture IDs, event pumps, or fixed
-timestep internals. See [`docs/content-authoring.md`](docs/content-authoring.md)
-for the author-facing guide.
+swapchains, descriptor sets, renderer texture IDs, event pumps, fixed timestep
+internals, raw `World`/`Input`/`TileMap`/`NavGrid`, or direct low-level AI,
+physics, and combat systems. See
+[`docs/content-authoring.md`](docs/content-authoring.md) for the author-facing
+guide.
 
 ## Requirements
 

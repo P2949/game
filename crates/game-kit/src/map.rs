@@ -96,8 +96,8 @@ impl PendingMap {
 }
 
 /// Builder for one map. Created by [`GameApp::map`] (in-code) or
-/// [`GameApp::map_from_ron`] (external content). Finalized lazily by [`Self::start`]
-/// (the start map) or [`Self::add`] (a secondary map).
+/// [`GameApp::map_from_ron`] (external content). Finalized lazily by
+/// [`Self::start`].
 pub struct MapAuthor<'a, 'app> {
     app: &'a mut GameApp<'app>,
     pending: PendingMap,
@@ -181,11 +181,6 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
     /// Declares this as the game's start map and records it for finalization.
     pub fn start(mut self) {
         self.pending.start = true;
-        self.app.push_pending_map(self.pending);
-    }
-
-    /// Records a secondary (non-start) map for finalization.
-    pub fn add(self) {
         self.app.push_pending_map(self.pending);
     }
 }

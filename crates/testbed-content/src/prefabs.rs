@@ -7,7 +7,7 @@ use crate::input::TestbedActions;
 const CHASER_REPATH_SECONDS: f32 = 0.25;
 const PATROL_SWEEP: f32 = 6.0 * crate::level::TILE;
 
-pub fn register(game: &mut GameApp, assets: TestbedAssets, actions: TestbedActions) {
+pub fn register(game: &mut GameApp, assets: TestbedAssets, actions: TestbedActions) -> Result<()> {
     game.prefab("testbed/player", move |prefab| {
         prefab
             .spawn(move |at| {
@@ -27,14 +27,15 @@ pub fn register(game: &mut GameApp, assets: TestbedAssets, actions: TestbedActio
                         .tint(vec4(0.5, 0.9, 0.6, 1.0)),
                     Collider::box_of(vec2s(20.0)),
                 )
-            })
+            })?
             .require::<Transform>()
             .require::<Collider>()
             .require::<Sprite>()
             .require::<Health>()
             .require::<Faction>()
             .require::<PlayerController>();
-    });
+        Ok(())
+    })?;
 
     game.prefab("testbed/chaser", move |prefab| {
         prefab
@@ -55,14 +56,15 @@ pub fn register(game: &mut GameApp, assets: TestbedAssets, actions: TestbedActio
                         .tint(vec4(1.0, 0.4, 0.4, 1.0)),
                     Collider::box_of(vec2s(22.0)),
                 )
-            })
+            })?
             .require::<Transform>()
             .require::<Collider>()
             .require::<Sprite>()
             .require::<Health>()
             .require::<Faction>()
             .require::<AiController>();
-    });
+        Ok(())
+    })?;
 
     game.prefab("testbed/patroller", move |prefab| {
         prefab
@@ -82,12 +84,15 @@ pub fn register(game: &mut GameApp, assets: TestbedAssets, actions: TestbedActio
                         .tint(vec4(1.0, 0.82, 0.3, 1.0)),
                     Collider::box_of(vec2s(22.0)),
                 )
-            })
+            })?
             .require::<Transform>()
             .require::<Collider>()
             .require::<Sprite>()
             .require::<Health>()
             .require::<Faction>()
             .require::<Patrol>();
-    });
+        Ok(())
+    })?;
+
+    Ok(())
 }

@@ -31,6 +31,11 @@ No split-era compatibility modules remain. The old `game_core::engine`,
 builder/schedule/context/registry exports lives under `game_core::internal_prelude`
 for runtime/facade/tests. Content crates use `game_kit::prelude::*`.
 
+`game-kit` keeps raw world inspection in `game_kit::testing::prelude::*` and
+`GameTestHarness`; the normal prelude exposes authoring builders, component
+types, and `GameCtx` helpers only. `MapAuthor` currently exposes only `.start()`
+because runtime map switching is not implemented.
+
 ## Runtime Reality Checks
 
 - The runtime validates content asset registrations and renderer built-in assets

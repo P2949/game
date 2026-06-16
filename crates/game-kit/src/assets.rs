@@ -3,6 +3,7 @@
 //! [`AssetAuthor`] names the textures/fonts/sounds a game uses without exposing
 //! the engine's `AssetRegistry`. Reached through [`GameApp::assets`].
 
+use anyhow::Result;
 use game_core::assets::AssetRegistry;
 use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
 
@@ -25,24 +26,32 @@ impl<'a> AssetAuthor<'a> {
 
     /// A texture loaded from `path` (relative to the asset root), addressed by the
     /// content-chosen `key`.
-    pub fn texture(&mut self, key: impl Into<String>, path: impl Into<String>) -> TextureHandle {
-        self.registry.texture(key, path)
+    pub fn texture(
+        &mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<TextureHandle> {
+        self.registry.try_texture(key, path)
     }
 
     /// A font loaded from `path` (relative to the asset root).
-    pub fn font(&mut self, key: impl Into<String>, path: impl Into<String>) -> FontHandle {
-        self.registry.font(key, path)
+    pub fn font(&mut self, key: impl Into<String>, path: impl Into<String>) -> Result<FontHandle> {
+        self.registry.try_font(key, path)
     }
 
     /// A runtime-synthesized sound effect. Audio is generated-only today, so this
     /// is the sound API content reaches for.
-    pub fn generated_sound(&mut self, key: impl Into<String>) -> SoundHandle {
-        self.registry.generated_sound(key)
+    pub fn generated_sound(&mut self, key: impl Into<String>) -> Result<SoundHandle> {
+        self.registry.try_generated_sound(key)
     }
 
     /// A file-backed sound. Validated on disk, but not yet played from the file by
     /// the runtime (audio is generated-only) — prefer [`Self::generated_sound`].
-    pub fn sound_file(&mut self, key: impl Into<String>, path: impl Into<String>) -> SoundHandle {
-        self.registry.sound_file(key, path)
+    pub fn sound_file(
+        &mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<SoundHandle> {
+        self.registry.try_sound_file(key, path)
     }
 }

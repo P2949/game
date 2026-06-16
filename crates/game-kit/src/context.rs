@@ -6,16 +6,16 @@
 //! never name `Ctx`, `StartCtx`, raw `World`, or `CommandQueue`.
 
 use anyhow::Result;
+use game_combat::{Faction, FactionId, Health};
 use game_core::app::{Ctx, StartCtx};
 use game_core::backend::SoundHandle;
 use game_core::camera::Camera2D;
 use game_core::commands::CommandQueue;
-use game_core::input::Input;
-use game_core::nav::NavGrid;
-use game_core::tilemap::TileMap;
-use game_core::world::{Component, EntityId, World};
+use game_core::input::{ActionId, Axis2dId, Input};
+use game_core::world::{Component, EntityId, Transform, Velocity};
 use glam::{Vec2, Vec4};
 
+use crate::helpers::{InputDriven, MovementSpeed};
 use crate::map::{ContentRuntime, reset_to_start_map_world};
 
 /// Per-step context handed to fixed/update/render/ui systems.
@@ -43,40 +43,19 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         self.inner.camera
     }
 
-    /// The current map's collision tilemap.
-    pub fn map(&self) -> &TileMap {
-        self.inner.map
+    /// True if `action` was pressed this frame.
+    pub fn pressed(&self, action: ActionId) -> bool {
+        self.input().pressed(action)
     }
 
-    /// The current map's navigation grid.
-    pub fn nav(&self) -> &NavGrid {
-        self.inner.nav
+    /// True while `action` is held.
+    pub fn down(&self, action: ActionId) -> bool {
+        self.input().down(action)
     }
 
-    /// Read-only access to the entity world.
-    pub fn world(&self) -> &World {
-        self.inner.world
-    }
-
-    /// Mutable access to the entity world.
-    pub fn world_mut(&mut self) -> &mut World {
-        self.inner.world
-    }
-
-    /// World and input together (disjoint borrows), for systems that drive
-    /// entities from input: `let (world, input) = game.world_and_input();`.
-    pub fn world_and_input(&mut self) -> (&mut World, &Input) {
-        (&mut *self.inner.world, self.inner.input)
-    }
-
-    /// World and collision tilemap together (disjoint borrows), for movement.
-    pub fn world_and_map(&mut self) -> (&mut World, &TileMap) {
-        (&mut *self.inner.world, self.inner.map)
-    }
-
-    /// World and navigation grid together (disjoint borrows), for pathfinding.
-    pub fn world_and_nav(&mut self) -> (&mut World, &NavGrid) {
-        (&mut *self.inner.world, self.inner.nav)
+    /// Current value of a logical 2D axis.
+    pub fn axis2d(&self, axis: Axis2dId) -> Vec2 {
+        self.input().axis2d(axis)
     }
 
     /// Queues UI text for this frame.
@@ -117,8 +96,186 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     }
 
     /// Live entity ids carrying component `T`.
-    pub fn ids_with<T: Component>(&self) -> Vec<EntityId> {
+    pub fn entities_with<T: Component>(&self) -> Vec<EntityId> {
         self.inner.world.ids_with::<T>()
+    }
+
+    /// Backwards-compatible alias for [`Self::entities_with`].
+    pub fn ids_with<T: Component>(&self) -> Vec<EntityId> {
+        self.entities_with::<T>()
+    }
+
+    /// Reads component `T` from `id`.
+    pub fn component<T: Component>(&self, id: EntityId) -> Option<&T> {
+        self.inner.world.get::<T>(id)
+    }
+
+    /// Mutates component `T` on `id`.
+    pub fn component_mut<T: Component>(&mut self, id: EntityId) -> Option<&mut T> {
+        self.inner.world.get_mut::<T>(id)
+    }
+
+    /// True when `id` has component `T`.
+    pub fn has<T: Component>(&self, id: EntityId) -> bool {
+        self.inner.world.has::<T>(id)
+    }
+
+    /// Entity world position.
+    pub fn position(&self, id: EntityId) -> Option<Vec2> {
+        self.component::<Transform>(id)
+            .map(|transform| transform.pos)
+    }
+
+    pub fn first_entity_with<T: Component>(&self) -> Option<EntityId> {
+        self.entities_with::<T>().into_iter().next()
+    }
+
+    pub fn first_position<T: Component>(&self) -> Option<Vec2> {
+        self.entities_with::<T>()
+            .into_iter()
+            .find_map(|id| self.position(id))
+    }
+
+    pub fn for_each<T: Component>(&self, mut f: impl FnMut(EntityId, &T)) {
+        for id in self.entities_with::<T>() {
+            if let Some(component) = self.component::<T>(id) {
+                f(id, component);
+            }
+        }
+    }
+
+    pub fn for_each2<A: Component, B: Component>(&self, mut f: impl FnMut(EntityId, &A, &B)) {
+        for id in self.entities_with::<A>() {
+            let Some(a) = self.component::<A>(id) else {
+                continue;
+            };
+            let Some(b) = self.component::<B>(id) else {
+                continue;
+            };
+            f(id, a, b);
+        }
+    }
+
+    pub fn for_each1_mut<T: Component>(&mut self, mut f: impl FnMut(EntityId, &mut T)) {
+        for id in self.entities_with::<T>() {
+            if let Some(component) = self.component_mut::<T>(id) {
+                f(id, component);
+            }
+        }
+    }
+
+    pub fn for_each2_copy_mut<A, B>(&mut self, mut f: impl FnMut(EntityId, A, &mut B))
+    where
+        A: Component + Copy,
+        B: Component,
+    {
+        for id in self.entities_with::<A>() {
+            let Some(a) = self.component::<A>(id).copied() else {
+                continue;
+            };
+            let Some(b) = self.component_mut::<B>(id) else {
+                continue;
+            };
+            f(id, a, b);
+        }
+    }
+
+    pub fn for_each3_copy_mut<A, B, C>(&mut self, mut f: impl FnMut(EntityId, A, B, &mut C))
+    where
+        A: Component + Copy,
+        B: Component + Copy,
+        C: Component,
+    {
+        for id in self.entities_with::<A>() {
+            let Some(a) = self.component::<A>(id).copied() else {
+                continue;
+            };
+            let Some(b) = self.component::<B>(id).copied() else {
+                continue;
+            };
+            let Some(c) = self.component_mut::<C>(id) else {
+                continue;
+            };
+            f(id, a, b, c);
+        }
+    }
+
+    /// Drives entities with input component `C`, speed component `S`, and
+    /// velocity using the content-defined movement traits.
+    pub fn drive_input<C, S>(&mut self)
+    where
+        C: Component + Copy + InputDriven,
+        S: Component + Copy + MovementSpeed,
+    {
+        let input = self.input().clone();
+        self.for_each3_copy_mut::<C, S, Velocity>(|_, controller, speed, velocity| {
+            velocity.0 = input.axis2d(controller.movement_axis()) * speed.units_per_second();
+        });
+    }
+
+    pub fn move_and_collide(&mut self, dt: f32) {
+        game_physics::movement_system(self.inner.world, self.inner.map, dt);
+    }
+
+    pub fn run_patrol(&mut self, dt: f32) {
+        game_ai::patrol_system(self.inner.world, dt);
+    }
+
+    pub fn chase_target(&mut self, target: Option<Vec2>, dt: f32) {
+        game_ai::chase_system(self.inner.world, self.inner.nav, target, dt);
+    }
+
+    pub fn chase_first<T: Component>(&mut self, dt: f32) {
+        let target = self.first_position::<T>();
+        self.chase_target(target, dt);
+    }
+
+    pub fn camera_follow_first<T: Component>(&mut self) {
+        if let Some(position) = self.first_position::<T>() {
+            self.camera_mut().set_center(position);
+        }
+    }
+
+    pub fn zoom_camera_from_actions(&mut self, zoom_in: ActionId, zoom_out: ActionId, dt: f32) {
+        let zoom_in = self.down(zoom_in);
+        let zoom_out = self.down(zoom_out);
+        if zoom_in == zoom_out {
+            return;
+        }
+
+        let zoom_step = 1.0 + 2.0 * dt;
+        let mut zoom = self.camera().zoom();
+        if zoom_in {
+            zoom *= zoom_step;
+        } else {
+            zoom /= zoom_step;
+        }
+        self.camera_mut().set_zoom(zoom.clamp(0.25, 6.0));
+    }
+
+    pub fn stop_all_velocity(&mut self) {
+        self.for_each1_mut::<Velocity>(|_, velocity| {
+            velocity.0 = Vec2::ZERO;
+        });
+    }
+
+    pub fn damage(&mut self, id: EntityId, amount: i32) -> bool {
+        game_combat::apply_damage(self.inner.world, id, amount)
+    }
+
+    pub fn is_dead(&self, id: EntityId) -> bool {
+        self.component::<Health>(id).is_some_and(Health::is_dead)
+    }
+
+    pub fn faction(&self, id: EntityId) -> Option<FactionId> {
+        self.component::<Faction>(id).map(|faction| faction.0)
+    }
+
+    pub fn entities_in_faction(&self, faction: FactionId) -> Vec<EntityId> {
+        self.entities_with::<Faction>()
+            .into_iter()
+            .filter(|id| self.faction(*id) == Some(faction))
+            .collect()
     }
 
     /// (Re)spawns the start map's objects, clearing the world first.
@@ -130,6 +287,21 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     /// respawns map objects).
     pub fn reset_to_start_map(&mut self) -> Result<()> {
         reset_to_start_map_world(self.inner.world)
+    }
+
+    /// Resets to the start map and logs any failure. Production content can use
+    /// this when it wants an infallible runtime action while keeping reset errors
+    /// visible.
+    pub fn reset_to_start_map_or_log(&mut self) {
+        if let Err(err) = self.reset_to_start_map() {
+            log::error!("failed to reset start map: {err:?}");
+        }
+    }
+
+    pub fn reset_start_map_and_resource<T: Default + 'static>(&mut self) -> Result<()> {
+        self.reset_to_start_map()?;
+        self.insert_resource(T::default());
+        Ok(())
     }
 
     /// The author name of the map currently spawned, if the content runtime is
@@ -171,16 +343,6 @@ impl<'a, 'w> StartupGameCtx<'a, 'w> {
         Self { inner }
     }
 
-    /// Read-only access to the entity world.
-    pub fn world(&self) -> &World {
-        self.inner.world
-    }
-
-    /// Mutable access to the entity world.
-    pub fn world_mut(&mut self) -> &mut World {
-        self.inner.world
-    }
-
     /// Inserts a world resource, returning any previous value.
     pub fn insert_resource<T: 'static>(&mut self, value: T) -> Option<T> {
         self.inner.world.insert_resource(value)
@@ -191,6 +353,10 @@ impl<'a, 'w> StartupGameCtx<'a, 'w> {
         self.inner.world.resource_or_insert_with(create)
     }
 
+    pub fn init_resource<T: Default + 'static>(&mut self) {
+        self.resource_or_insert_with(T::default);
+    }
+
     /// Reads a world resource.
     pub fn resource<T: 'static>(&self) -> Option<&T> {
         self.inner.world.get_resource::<T>()
@@ -199,5 +365,84 @@ impl<'a, 'w> StartupGameCtx<'a, 'w> {
     /// Spawns the start map's objects (clearing the world first).
     pub fn spawn_start_map(&mut self) -> Result<()> {
         reset_to_start_map_world(self.inner.world)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use game_core::app::{Ctx, RenderFrame};
+    use game_core::audio::{Audio, AudioCommands};
+    use game_core::camera::Camera2D;
+    use game_core::gfx::Gfx;
+    use game_core::input::Input;
+    use game_core::nav::NavGrid;
+    use game_core::tilemap::TileMap;
+    use game_core::world::{Entity, Velocity, World};
+    use glam::{Vec2, vec2};
+
+    use super::GameCtx;
+
+    #[derive(Clone, Copy)]
+    struct Marker;
+
+    #[derive(Clone, Copy)]
+    struct Speed(f32);
+
+    fn with_game_ctx<R>(world: &mut World, f: impl FnOnce(&mut GameCtx<'_, '_>) -> R) -> R {
+        let map = TileMap::from_rows(&["..."], 16.0);
+        let nav = NavGrid::from_tilemap(&map);
+        let input = Input::default();
+        let mut camera = Camera2D::new(Vec2::ZERO, 1.0);
+        let mut frame = RenderFrame::new(camera);
+        let mut audio_commands = AudioCommands::default();
+        let mut ctx = Ctx {
+            world,
+            map: &map,
+            nav: &nav,
+            input: &input,
+            camera: &mut camera,
+            gfx: Gfx::new(&mut frame),
+            audio: Audio::new(&mut audio_commands),
+        };
+        let mut game = GameCtx::new(&mut ctx);
+        f(&mut game)
+    }
+
+    #[test]
+    fn first_position_returns_marker_entity_transform_position() {
+        let mut world = World::new();
+        world.spawn(Entity::new(vec2(3.0, 4.0)).with(Marker));
+
+        let position = with_game_ctx(&mut world, |game| game.first_position::<Marker>());
+
+        assert_eq!(position, Some(vec2(3.0, 4.0)));
+    }
+
+    #[test]
+    fn for_each2_copy_mut_reads_speed_and_mutates_velocity() {
+        let mut world = World::new();
+        let id = world.spawn(Entity::new(Vec2::ZERO).with(Speed(7.0)));
+
+        with_game_ctx(&mut world, |game| {
+            game.for_each2_copy_mut::<Speed, Velocity>(|_, speed, velocity| {
+                velocity.0 = vec2(speed.0, 0.0);
+            });
+        });
+
+        assert_eq!(world.get::<Velocity>(id).unwrap().0, vec2(7.0, 0.0));
+    }
+
+    #[test]
+    fn for_each1_mut_mutates_velocity() {
+        let mut world = World::new();
+        let id = world.spawn(Entity::new(Vec2::ZERO));
+
+        with_game_ctx(&mut world, |game| {
+            game.for_each1_mut::<Velocity>(|_, velocity| {
+                velocity.0 = vec2(1.0, 2.0);
+            });
+        });
+
+        assert_eq!(world.get::<Velocity>(id).unwrap().0, vec2(1.0, 2.0));
     }
 }

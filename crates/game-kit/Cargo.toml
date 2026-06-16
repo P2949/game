@@ -14,6 +14,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 glam.workspace = true
+log.workspace = true
 game-core = { version = "0.1.0", path = "../game-core" }
 game-map = { version = "0.1.0", path = "../game-map" }
 game-ai = { version = "0.1.0", path = "../game-ai" }

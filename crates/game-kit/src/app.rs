@@ -16,6 +16,7 @@ use game_map::GameMap;
 
 use crate::assets::AssetAuthor;
 use crate::context::{GameCtx, StartupGameCtx};
+use crate::helpers::SimulationState;
 use crate::input::InputAuthor;
 use crate::map::{ContentRuntime, MapAuthor, PendingMap};
 use crate::prefab::PrefabAuthor;
@@ -71,26 +72,30 @@ impl<'app> GameApp<'app> {
 
     /// Declares assets, returning whatever the closure builds (typically the
     /// content's asset-handle struct).
-    pub fn assets<R>(&mut self, f: impl FnOnce(&mut AssetAuthor<'_>) -> R) -> R {
+    pub fn assets<R>(&mut self, f: impl FnOnce(&mut AssetAuthor<'_>) -> Result<R>) -> Result<R> {
         let mut author = AssetAuthor::new(self.builder.assets_mut());
         f(&mut author)
     }
 
     /// Declares logical controls, returning whatever the closure builds (typically
     /// the content's controls struct).
-    pub fn input<R>(&mut self, f: impl FnOnce(&mut InputAuthor<'_>) -> R) -> R {
+    pub fn input<R>(&mut self, f: impl FnOnce(&mut InputAuthor<'_>) -> Result<R>) -> Result<R> {
         let mut author = InputAuthor::new(self.builder.input_mut());
         f(&mut author)
     }
 
     /// Defines a prefab under `name`.
-    pub fn prefab(&mut self, name: impl Into<String>, build: impl FnOnce(&mut PrefabAuthor<'_>)) {
+    pub fn prefab(
+        &mut self,
+        name: impl Into<String>,
+        build: impl FnOnce(&mut PrefabAuthor<'_>) -> Result<()>,
+    ) -> Result<()> {
         let mut author = PrefabAuthor::new(
             name.into(),
             self.builder.prefabs_mut(),
             &mut self.prefab_requirements,
         );
-        build(&mut author);
+        build(&mut author)
     }
 
     /// Begins declaring an in-code map.
@@ -123,11 +128,37 @@ impl<'app> GameApp<'app> {
         });
     }
 
+    /// Registers a fixed-timestep system that runs only while resource `S` is
+    /// present and active.
+    pub fn fixed_active<S>(&mut self, mut system: impl GameSystem)
+    where
+        S: SimulationState + 'static,
+    {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, dt| {
+            if game.resource::<S>().is_some_and(SimulationState::active) {
+                system.run(game, dt);
+            }
+        });
+    }
+
     /// Registers a per-frame update system.
     pub fn update(&mut self, mut system: impl GameSystem) {
         self.builder.schedule_mut().add_update(move |ctx, dt| {
             let mut game = GameCtx::new(ctx);
             system.run(&mut game, dt);
+        });
+    }
+
+    /// Registers an update system that runs only while resource `S` is present
+    /// and active.
+    pub fn update_active<S>(&mut self, mut system: impl GameSystem)
+    where
+        S: SimulationState + 'static,
+    {
+        self.update(move |game: &mut GameCtx<'_, '_>, dt| {
+            if game.resource::<S>().is_some_and(SimulationState::active) {
+                system.run(game, dt);
+            }
         });
     }
 
@@ -211,4 +242,66 @@ impl<P: GamePlugin> game_core::plugin::GamePlugin for Plugin<P> {
 /// `pub fn plugin()` returns `game_kit::plugin(MyPlugin)`.
 pub fn plugin<P: GamePlugin>(plugin: P) -> Plugin<P> {
     Plugin(plugin)
+}
+
+#[cfg(test)]
+mod tests {
+    use game_core::builder::GameBuilder;
+    use game_core::input::Key;
+    use game_core::world::Transform;
+
+    use super::GameApp;
+
+    #[test]
+    fn duplicate_prefab_name_returns_error() {
+        let mut builder = GameBuilder::new();
+        let mut game = GameApp::new(&mut builder);
+
+        game.prefab("duplicate", |prefab| {
+            prefab.spawn(|at| (Transform::at(at),))?;
+            Ok(())
+        })
+        .unwrap();
+
+        let err = game
+            .prefab("duplicate", |prefab| {
+                prefab.spawn(|at| (Transform::at(at),))?;
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("duplicate prefab"));
+    }
+
+    #[test]
+    fn duplicate_input_action_returns_error() {
+        let mut builder = GameBuilder::new();
+        let mut game = GameApp::new(&mut builder);
+
+        let err = game
+            .input(|input| {
+                input.action("pause")?.key(Key::P);
+                input.action("pause")?.key(Key::R);
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("duplicate input action"));
+    }
+
+    #[test]
+    fn conflicting_texture_key_returns_error() {
+        let mut builder = GameBuilder::new();
+        let mut game = GameApp::new(&mut builder);
+
+        let err = game
+            .assets(|assets| {
+                assets.texture("hero", "textures/a.png")?;
+                assets.texture("hero", "textures/b.png")?;
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("texture asset key"));
+    }
 }

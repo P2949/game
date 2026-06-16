@@ -4,6 +4,7 @@
 //! keys, without exposing the engine's `InputRegistry`. Reached through
 //! [`GameApp::input`].
 
+use anyhow::Result;
 use game_core::input::{
     ActionBindingBuilder, ActionId, Axis2dBindingBuilder, Axis2dId, InputRegistry, Key,
 };
@@ -20,18 +21,18 @@ impl<'a> InputAuthor<'a> {
 
     /// Begins declaring a single action (e.g. `"attack"`), then bind keys with
     /// [`ActionAuthor::key`]/[`ActionAuthor::keys`].
-    pub fn action(&mut self, name: impl Into<String>) -> ActionAuthor<'_> {
-        ActionAuthor {
-            builder: self.registry.action(name),
-        }
+    pub fn action(&mut self, name: impl Into<String>) -> Result<ActionAuthor<'_>> {
+        Ok(ActionAuthor {
+            builder: self.registry.try_action(name)?,
+        })
     }
 
     /// Begins declaring a 2D movement axis (e.g. `"move"`), then bind directions
     /// with [`Axis2dAuthor::wasd`]/[`Axis2dAuthor::arrows`]/[`Axis2dAuthor::keys`].
-    pub fn axis2d(&mut self, name: impl Into<String>) -> Axis2dAuthor<'_> {
-        Axis2dAuthor {
-            builder: self.registry.axis2d(name),
-        }
+    pub fn axis2d(&mut self, name: impl Into<String>) -> Result<Axis2dAuthor<'_>> {
+        Ok(Axis2dAuthor {
+            builder: self.registry.try_axis2d(name)?,
+        })
     }
 }
 

@@ -150,8 +150,9 @@ fn content_source_uses_authoring_facade_not_engine_internals() {
 
         for path in files {
             let source = read_code_without_comments(&path);
+            let production = strip_cfg_test_modules(&source);
             assert!(
-                source.contains("use game_kit::prelude::*;"),
+                production.contains("use game_kit::prelude::*;"),
                 "{} should import the authoring facade prelude",
                 path.display()
             );
@@ -176,9 +177,50 @@ fn content_source_uses_authoring_facade_not_engine_internals() {
                 "CommandQueue",
             ] {
                 assert!(
-                    !source.contains(forbidden),
+                    !production.contains(forbidden),
                     "{} must not reach around game-kit with {forbidden:?}",
                     path.display()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn production_content_does_not_use_raw_world_escape_hatches() {
+    for crate_name in ["arena-content", "testbed-content"] {
+        let src_dir = workspace_root().join(format!("crates/{crate_name}/src"));
+        let mut files = Vec::new();
+        collect_rust_files(&src_dir, &mut files);
+
+        for path in files {
+            let source = read_code_without_comments(&path);
+            let production = strip_cfg_test_modules(&source);
+
+            for forbidden in [
+                "World",
+                "Entity::new",
+                ".ids_with::<",
+                ".get::<",
+                ".get_mut::<",
+                ".world()",
+                ".world_mut()",
+                ".world_and_input()",
+                ".world_and_map()",
+                ".world_and_nav()",
+                "TileMap",
+                "NavGrid",
+                "movement_system(",
+                "chase_system(",
+                "patrol_system(",
+                "apply_damage(",
+                "game_kit::testing::prelude",
+            ] {
+                assert!(
+                    !production.contains(forbidden),
+                    "{} production content must not use raw ECS/helper {:?}",
+                    path.display(),
+                    forbidden
                 );
             }
         }
@@ -247,4 +289,49 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
             out.push(path);
         }
     }
+}
+
+fn strip_cfg_test_modules(source: &str) -> String {
+    let mut output = Vec::new();
+    let mut pending_cfg_test = false;
+    let mut skipping_test_module = false;
+    let mut brace_depth = 0usize;
+
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+
+        if skipping_test_module {
+            brace_depth = apply_brace_delta(brace_depth, line);
+            if brace_depth == 0 {
+                skipping_test_module = false;
+            }
+            continue;
+        }
+
+        if pending_cfg_test {
+            pending_cfg_test = false;
+            if trimmed.starts_with("mod tests") {
+                brace_depth = apply_brace_delta(0, line);
+                if brace_depth > 0 {
+                    skipping_test_module = true;
+                }
+                continue;
+            }
+        }
+
+        if trimmed.starts_with("#[cfg(test)]") {
+            pending_cfg_test = true;
+            continue;
+        }
+
+        output.push(line);
+    }
+
+    output.join("\n")
+}
+
+fn apply_brace_delta(depth: usize, line: &str) -> usize {
+    let opens = line.chars().filter(|ch| *ch == '{').count();
+    let closes = line.chars().filter(|ch| *ch == '}').count();
+    depth.saturating_add(opens).saturating_sub(closes)
 }

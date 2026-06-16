@@ -70,9 +70,13 @@ impl AssetRegistry {
     /// Registers a runtime-synthesized sound effect under `key`. Audio is
     /// generated-only today, so this is the sound API content reaches for.
     pub fn generated_sound(&mut self, key: impl Into<String>) -> SoundHandle {
+        self.try_generated_sound(key)
+            .expect("sound asset keys must not be reused with a different source")
+    }
+
+    pub fn try_generated_sound(&mut self, key: impl Into<String>) -> anyhow::Result<SoundHandle> {
         let name = key.into();
         self.try_register_sound(name.clone(), SoundLoadRequest::Generated { name })
-            .expect("sound asset keys must not be reused with a different source")
     }
 
     /// Registers a file-backed sound under `key`. The runtime does not yet play

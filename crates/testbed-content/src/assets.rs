@@ -10,13 +10,13 @@ pub struct TestbedAssets {
     pub hit: SoundHandle,
 }
 
-pub fn register(game: &mut GameApp) -> TestbedAssets {
-    game.assets(|assets| TestbedAssets {
-        floor: assets.texture("testbed/floor", "textures/test.png"),
-        wall: assets.texture("testbed/wall", "textures/test.png"),
-        player: assets.texture("testbed/player", "textures/test.png"),
-        chaser: assets.texture("testbed/chaser", "textures/test.png"),
-        patroller: assets.texture("testbed/patroller", "textures/test.png"),
-        hit: assets.generated_sound("testbed/hit"),
+pub fn register(assets: &mut AssetAuthor<'_>) -> Result<TestbedAssets> {
+    Ok(TestbedAssets {
+        floor: assets.texture("testbed/floor", "textures/test.png")?,
+        wall: assets.texture("testbed/wall", "textures/test.png")?,
+        player: assets.texture("testbed/player", "textures/test.png")?,
+        chaser: assets.texture("testbed/chaser", "textures/test.png")?,
+        patroller: assets.texture("testbed/patroller", "textures/test.png")?,
+        hit: assets.generated_sound("testbed/hit")?,
     })
 }

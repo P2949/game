@@ -16,3 +16,15 @@ pub struct PlayerController {
 
 #[derive(Clone, Copy, Debug)]
 pub struct MoveSpeed(pub f32);
+
+impl InputDriven for PlayerController {
+    fn movement_axis(&self) -> Axis2dId {
+        self.move_axis
+    }
+}
+
+impl MovementSpeed for MoveSpeed {
+    fn units_per_second(&self) -> f32 {
+        self.0
+    }
+}

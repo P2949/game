@@ -25,7 +25,9 @@ pub use assets::AssetAuthor;
 pub use bundle::{Bundle, vec2s};
 pub use context::{Commands, GameCtx, StartupGameCtx};
 pub use harness::GameTestHarness;
-pub use helpers::{SimulationState, camera_follow_first, stop_all_velocity};
+pub use helpers::{
+    InputDriven, MovementSpeed, SimulationState, camera_follow_first, stop_all_velocity,
+};
 pub use input::{ActionAuthor, Axis2dAuthor, InputAuthor};
 pub use map::{MapAuthor, TileTheme};
 pub use prefab::PrefabAuthor;
@@ -38,26 +40,49 @@ pub mod prelude {
 
     // Engine-neutral gameplay types and behaviors, surfaced through one prelude so
     // content never reaches into `game_core`/`game_map`/`game_ai`/... directly.
-    pub use game_ai::{AiController, ChaseTarget, PathFollow, Patrol, chase_system, patrol_system};
-    pub use game_combat::{Faction, FactionId, Health, MeleeAttack, apply_damage};
+    pub use game_ai::{AiController, ChaseTarget, PathFollow, Patrol};
+    pub use game_combat::{Faction, FactionId, Health, MeleeAttack};
     pub use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
-    pub use game_core::builder::PrefabId;
     pub use game_core::camera::Camera2D;
-    pub use game_core::input::{ActionId, Axis2dId, Input, Key};
-    pub use game_core::nav::NavGrid;
-    pub use game_core::tilemap::TileMap;
-    pub use game_core::world::{Component, Entity, EntityId, Sprite, Transform, Velocity, World};
+    pub use game_core::input::{ActionId, Axis2dId, Key};
+    pub use game_core::world::{Component, EntityId, Sprite, Transform, Velocity};
     pub use game_map::{MapCell, cell};
-    pub use game_physics::{Collider, movement_system};
+    pub use game_physics::Collider;
 
     // The authoring facade itself.
     pub use crate::app::{GameApp, GamePlugin, plugin};
     pub use crate::assets::AssetAuthor;
     pub use crate::bundle::{Bundle, vec2s};
     pub use crate::context::{Commands, GameCtx, StartupGameCtx};
-    pub use crate::harness::GameTestHarness;
-    pub use crate::helpers::{SimulationState, camera_follow_first, stop_all_velocity};
+    pub use crate::helpers::{InputDriven, MovementSpeed, SimulationState};
     pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor};
     pub use crate::map::{MapAuthor, TileTheme};
     pub use crate::prefab::PrefabAuthor;
+}
+
+/// Test imports for content tests that need raw ECS/world inspection.
+pub mod testing {
+    pub mod prelude {
+        pub use anyhow::{Context, Result};
+        pub use glam::{Vec2, Vec4, vec2, vec4};
+
+        pub use game_ai::{
+            AiController, ChaseTarget, PathFollow, Patrol, chase_system, patrol_system,
+        };
+        pub use game_combat::{Faction, FactionId, Health, MeleeAttack, apply_damage};
+        pub use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
+        pub use game_core::builder::PrefabId;
+        pub use game_core::camera::Camera2D;
+        pub use game_core::input::{ActionId, Axis2dId, Input, Key};
+        pub use game_core::nav::NavGrid;
+        pub use game_core::tilemap::TileMap;
+        pub use game_core::world::{
+            Component, Entity, EntityId, Sprite, Transform, Velocity, World,
+        };
+        pub use game_map::{MapCell, cell};
+        pub use game_physics::{Collider, movement_system};
+
+        pub use crate::harness::GameTestHarness;
+        pub use crate::prelude::*;
+    }
 }

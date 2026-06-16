@@ -3,8 +3,8 @@
 //! These reduce duplication between content crates without forcing a game design:
 //! content keeps its own state/components and opts into the helpers it wants.
 
-use game_core::world::{Component, Transform, Velocity, World};
-use glam::Vec2;
+use game_core::input::Axis2dId;
+use game_core::world::Component;
 
 use crate::context::GameCtx;
 
@@ -19,24 +19,25 @@ pub trait SimulationState {
     }
 }
 
+/// Content components implement this to tell [`GameCtx::drive_input`] which
+/// logical 2D axis drives an entity.
+pub trait InputDriven {
+    fn movement_axis(&self) -> Axis2dId;
+}
+
+/// Content speed components implement this to expose movement speed without
+/// forcing a shared component type.
+pub trait MovementSpeed {
+    fn units_per_second(&self) -> f32;
+}
+
 /// Centers the camera on the first live entity carrying component `T` (typically a
 /// player marker). No-op if none exists.
 pub fn camera_follow_first<T: Component>(game: &mut GameCtx<'_, '_>) {
-    let position = game
-        .world()
-        .ids_with::<T>()
-        .into_iter()
-        .find_map(|id| game.world().get::<Transform>(id).map(|t| t.pos));
-    if let Some(position) = position {
-        game.camera_mut().set_center(position);
-    }
+    game.camera_follow_first::<T>();
 }
 
 /// Zeroes every entity's velocity (used when pausing or on death).
-pub fn stop_all_velocity(world: &mut World) {
-    for id in world.ids_with::<Velocity>() {
-        if let Some(velocity) = world.get_mut::<Velocity>(id) {
-            velocity.0 = Vec2::ZERO;
-        }
-    }
+pub fn stop_all_velocity(game: &mut GameCtx<'_, '_>) {
+    game.stop_all_velocity();
 }

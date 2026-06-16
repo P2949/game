@@ -4,6 +4,7 @@
 //! components a valid spawn must carry — without content touching `PrefabRegistry`
 //! or `PrefabValidator`. Reached through [`GameApp::prefab`].
 
+use anyhow::Result;
 use game_core::builder::PrefabRegistry;
 use game_core::world::Component;
 use glam::Vec2;
@@ -34,7 +35,7 @@ impl<'a> PrefabAuthor<'a> {
 
     /// Registers how this prefab spawns: `build` receives the map-object position
     /// and returns a tuple [`Bundle`] of components.
-    pub fn spawn<B, F>(&mut self, build: F) -> &mut Self
+    pub fn spawn<B, F>(&mut self, build: F) -> Result<&mut Self>
     where
         B: Bundle,
         F: Fn(Vec2) -> B + 'static,
@@ -42,9 +43,8 @@ impl<'a> PrefabAuthor<'a> {
         self.prefabs
             .try_register(self.name.clone(), move |world, position, _properties| {
                 Ok(world.spawn(build(position).build()))
-            })
-            .expect("prefab names must be unique");
-        self
+            })?;
+        Ok(self)
     }
 
     /// Declares that a valid spawn of this prefab must carry component `T`. Checked

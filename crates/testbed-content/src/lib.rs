@@ -3,7 +3,6 @@
 //! author-facing `game-kit` facade rather than runtime/backend crates.
 
 pub mod actor;
-pub mod ai;
 pub mod assets;
 pub mod combat;
 pub mod input;
@@ -22,10 +21,10 @@ pub fn plugin() -> game_kit::Plugin<TestbedPlugin> {
 
 impl GamePlugin for TestbedPlugin {
     fn build(&self, game: &mut GameApp) -> anyhow::Result<()> {
-        let assets = assets::register(game);
-        let actions = input::register(game);
+        let assets = game.assets(assets::register)?;
+        let actions = game.input(input::register)?;
 
-        prefabs::register(game, assets, actions);
+        prefabs::register(game, assets, actions)?;
 
         game.map_from_ron(level::TESTBED_MAP_RON)
             .theme(level::theme(&assets))
@@ -39,7 +38,7 @@ impl GamePlugin for TestbedPlugin {
 
 #[cfg(test)]
 mod tests {
-    use game_kit::prelude::*;
+    use game_kit::testing::prelude::*;
 
     use super::TestbedPlugin;
     use crate::actor::PlayerController;

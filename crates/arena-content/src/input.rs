@@ -11,22 +11,14 @@ pub struct ArenaActions {
     pub movement: Axis2dId,
 }
 
-pub fn register(input: &mut InputAuthor<'_>) -> ArenaActions {
-    let attack = input.action("attack").keys([Key::Space, Key::Enter]);
-    let pause = input.action("pause").key(Key::P);
-    let reset = input.action("reset").key(Key::R);
-    let debug_die = input.action("debug_die").key(Key::K);
-    let zoom_in = input.action("zoom_in").key(Key::Plus);
-    let zoom_out = input.action("zoom_out").key(Key::Minus);
-    let movement = input.axis2d("move").wasd().arrows();
-
-    ArenaActions {
-        attack,
-        pause,
-        reset,
-        debug_die,
-        zoom_in,
-        zoom_out,
-        movement,
-    }
+pub fn register(input: &mut InputAuthor<'_>) -> Result<ArenaActions> {
+    Ok(ArenaActions {
+        attack: input.action("attack")?.keys([Key::Space, Key::Enter]),
+        pause: input.action("pause")?.key(Key::P),
+        reset: input.action("reset")?.key(Key::R),
+        debug_die: input.action("debug_die")?.key(Key::K),
+        zoom_in: input.action("zoom_in")?.key(Key::Plus),
+        zoom_out: input.action("zoom_out")?.key(Key::Minus),
+        movement: input.axis2d("move")?.wasd().arrows(),
+    })
 }

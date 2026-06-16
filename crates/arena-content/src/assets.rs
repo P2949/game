@@ -9,12 +9,12 @@ pub struct ArenaAssets {
     pub hit: SoundHandle,
 }
 
-pub fn register(assets: &mut AssetAuthor<'_>) -> ArenaAssets {
-    ArenaAssets {
-        floor: assets.texture("arena/floor", "textures/test.png"),
-        wall: assets.texture("arena/wall", "textures/test.png"),
-        player: assets.texture("arena/player", "textures/test.png"),
-        enemy: assets.texture("arena/enemy", "textures/test.png"),
-        hit: assets.generated_sound("arena/hit"),
-    }
+pub fn register(assets: &mut AssetAuthor<'_>) -> Result<ArenaAssets> {
+    Ok(ArenaAssets {
+        floor: assets.texture("arena/floor", "textures/test.png")?,
+        wall: assets.texture("arena/wall", "textures/test.png")?,
+        player: assets.texture("arena/player", "textures/test.png")?,
+        enemy: assets.texture("arena/enemy", "textures/test.png")?,
+        hit: assets.generated_sound("arena/hit")?,
+    })
 }

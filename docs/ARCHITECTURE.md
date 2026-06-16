@@ -24,9 +24,10 @@ runtime/backend crates
   game-runtime, game-renderer-vulkan, game-platform-sdl, game-audio
 ```
 
-Content authors use `game_kit::prelude::*`; lower-level builder, schedule,
-registry, validator, and raw context APIs are for the runtime, facade, and
-engine tests.
+Production content authors use `game_kit::prelude::*`; tests that need raw
+inspection use `game_kit::testing::prelude::*`. Lower-level builder, schedule,
+registry, validator, raw world/query, and raw context APIs are for the runtime,
+facade internals, and tests.
 
 ## Main Loop
 
