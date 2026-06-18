@@ -15,6 +15,6 @@ pub fn register(assets: &mut AssetAuthor<'_>) -> Result<ArenaAssets> {
         wall: assets.texture("arena/wall", "textures/test.png")?,
         player: assets.texture("arena/player", "textures/test.png")?,
         enemy: assets.texture("arena/enemy", "textures/test.png")?,
-        hit: assets.generated_sound("arena/hit")?,
+        hit: assets.sound("arena/hit", "sounds/hit.wav")?,
     })
 }

@@ -9,6 +9,7 @@ use anyhow::Result;
 use game_combat::{Faction, FactionId, Health, MeleeAttack};
 use game_core::app::{Ctx, StartCtx};
 use game_core::backend::SoundHandle;
+use game_core::builder::{PrefabId, PropertyBag};
 use game_core::camera::Camera2D;
 use game_core::commands::CommandQueue;
 use game_core::input::{ActionId, Axis2dId, Input};
@@ -16,7 +17,10 @@ use game_core::world::{Component, EntityId, Transform, Velocity};
 use glam::{Vec2, Vec4};
 
 use crate::helpers::{InputDriven, MovementSpeed};
-use crate::map::{ContentRuntime, reset_to_start_map_world};
+use crate::map::{
+    ContentRuntime, change_to_map_world, reset_to_start_map_world, restart_current_map_world,
+    restart_start_map_world,
+};
 
 /// Per-step context handed to fixed/update/render/ui systems.
 pub struct GameCtx<'a, 'w> {
@@ -56,6 +60,21 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     /// Current value of a logical 2D axis.
     pub fn axis2d(&self, axis: Axis2dId) -> Vec2 {
         self.input().axis2d(axis)
+    }
+
+    /// Current mouse position in window pixels.
+    pub fn mouse_position(&self) -> Vec2 {
+        self.input().mouse_position()
+    }
+
+    /// Current mouse position in world coordinates, using the active 2D camera.
+    pub fn mouse_world_position(&self) -> Vec2 {
+        let viewport = self.input().viewport_size();
+        if viewport.x <= 0.0 || viewport.y <= 0.0 {
+            return self.camera().center();
+        }
+        let centered = self.input().mouse_position() - viewport * 0.5;
+        self.camera().center() + centered / self.camera().zoom()
     }
 
     /// Queues UI text for this frame.
@@ -342,20 +361,76 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     /// Resets the world to the start map (clears entities and queued commands, then
     /// respawns map objects).
     pub fn reset_to_start_map(&mut self) -> Result<()> {
-        reset_to_start_map_world(self.inner.world)
+        self.restart_start_map()
     }
 
     /// Resets to the start map and logs any failure. Production content can use
     /// this when it wants an infallible runtime action while keeping reset errors
     /// visible.
     pub fn reset_to_start_map_or_log(&mut self) {
-        if let Err(err) = self.reset_to_start_map() {
-            log::error!("failed to reset start map: {err:?}");
+        self.restart_start_map_or_log();
+    }
+
+    pub fn restart_level(&mut self) {
+        self.restart_map_or_log();
+    }
+
+    pub fn change_map(&mut self, map: &str) -> Result<()> {
+        let map_id = change_to_map_world(self.inner.world, map)?;
+        self.commands().change_map(map_id);
+        Ok(())
+    }
+
+    pub fn change_map_or_log(&mut self, map: &str) {
+        if let Err(err) = self.change_map(map) {
+            log::error!("failed to change map to '{map}': {err:?}");
+        }
+    }
+
+    pub fn restart_map(&mut self) -> Result<()> {
+        restart_current_map_world(self.inner.world)?;
+        self.commands().restart_map();
+        Ok(())
+    }
+
+    pub fn restart_map_or_log(&mut self) {
+        if let Err(err) = self.restart_map() {
+            log::error!("failed to restart current map: {err:?}");
+        }
+    }
+
+    pub fn restart_start_map(&mut self) -> Result<()> {
+        restart_start_map_world(self.inner.world)?;
+        self.commands().restart_start_map();
+        Ok(())
+    }
+
+    pub fn restart_start_map_or_log(&mut self) {
+        if let Err(err) = self.restart_start_map() {
+            log::error!("failed to restart start map: {err:?}");
+        }
+    }
+
+    pub fn spawn_prefab_at(&mut self, prefab: &str, position: Vec2) -> Result<()> {
+        let prefab_id = self
+            .inner
+            .world
+            .get_resource::<ContentRuntime>()
+            .and_then(|runtime| runtime.prefab_id(prefab))
+            .ok_or_else(|| anyhow::anyhow!("unknown prefab '{prefab}'"))?;
+        self.commands()
+            .spawn_prefab(prefab_id, position, PropertyBag::default());
+        Ok(())
+    }
+
+    pub fn spawn_prefab_or_log(&mut self, prefab: &str, position: Vec2) {
+        if let Err(err) = self.spawn_prefab_at(prefab, position) {
+            log::error!("failed to queue spawn for prefab '{prefab}': {err:?}");
         }
     }
 
     pub fn reset_start_map_and_resource<T: Default + 'static>(&mut self) -> Result<()> {
-        self.reset_to_start_map()?;
+        self.restart_start_map()?;
         self.insert_resource(T::default());
         Ok(())
     }
@@ -385,6 +460,22 @@ impl Commands<'_> {
     /// Plays `sound` after the current step.
     pub fn play_sound(&mut self, sound: SoundHandle) {
         self.queue.play_sound(sound);
+    }
+
+    pub fn spawn_prefab(&mut self, prefab: PrefabId, position: Vec2, properties: PropertyBag) {
+        self.queue.spawn_prefab(prefab, position, properties);
+    }
+
+    pub fn change_map(&mut self, map: game_core::builder::MapId) {
+        self.queue.change_map(map);
+    }
+
+    pub fn restart_map(&mut self) {
+        self.queue.restart_map();
+    }
+
+    pub fn restart_start_map(&mut self) {
+        self.queue.restart_start_map();
     }
 }
 
@@ -426,17 +517,24 @@ impl<'a, 'w> StartupGameCtx<'a, 'w> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
     use game_core::app::{Ctx, RenderFrame};
     use game_core::audio::{Audio, AudioCommands};
+    use game_core::builder::{MapId, PrefabRegistry, PropertyBag};
     use game_core::camera::Camera2D;
+    use game_core::commands::{Command, CommandQueue};
     use game_core::gfx::Gfx;
     use game_core::input::Input;
     use game_core::nav::NavGrid;
     use game_core::tilemap::TileMap;
     use game_core::world::{Entity, Velocity, World};
+    use game_map::MapBuilder;
     use glam::{Vec2, vec2};
 
     use super::GameCtx;
+    use crate::map::ContentRuntime;
 
     #[derive(Clone, Copy)]
     struct Marker;
@@ -462,6 +560,13 @@ mod tests {
         };
         let mut game = GameCtx::new(&mut ctx);
         f(&mut game)
+    }
+
+    fn empty_game_map(name: &str) -> game_map::GameMap {
+        MapBuilder::new(name, 16.0)
+            .try_tile_layer("collision", &["."])
+            .unwrap()
+            .finish()
     }
 
     #[test]
@@ -500,5 +605,76 @@ mod tests {
         });
 
         assert_eq!(world.get::<Velocity>(id).unwrap().0, vec2(1.0, 2.0));
+    }
+
+    #[test]
+    fn spawn_prefab_at_queues_resolved_prefab() {
+        let mut prefabs = PrefabRegistry::new();
+        let prefab = prefabs.register("marker", |world, position, _| {
+            Ok(world.spawn(Entity::new(position)))
+        });
+
+        let mut world = World::new();
+        world.insert_resource(ContentRuntime::new(
+            Rc::new(prefabs),
+            HashMap::new(),
+            HashMap::new(),
+            "test".to_owned(),
+        ));
+
+        with_game_ctx(&mut world, |game| {
+            game.spawn_prefab_at("marker", vec2(5.0, 6.0)).unwrap();
+        });
+
+        let commands = world
+            .get_resource_mut::<CommandQueue>()
+            .unwrap()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commands,
+            vec![Command::SpawnPrefab {
+                prefab,
+                position: vec2(5.0, 6.0),
+                properties: PropertyBag::default(),
+            }]
+        );
+    }
+
+    #[test]
+    fn change_map_switches_content_runtime_and_queues_active_map_command() {
+        let mut maps = HashMap::new();
+        maps.insert("first".to_owned(), empty_game_map("first"));
+        maps.insert("second".to_owned(), empty_game_map("second"));
+        let map_ids = HashMap::from([
+            ("first".to_owned(), MapId(0)),
+            ("second".to_owned(), MapId(1)),
+        ]);
+
+        let mut world = World::new();
+        world.insert_resource(ContentRuntime::new(
+            Rc::new(PrefabRegistry::new()),
+            maps,
+            map_ids,
+            "first".to_owned(),
+        ));
+
+        with_game_ctx(&mut world, |game| {
+            game.change_map("second").unwrap();
+        });
+
+        assert_eq!(
+            world
+                .get_resource::<ContentRuntime>()
+                .unwrap()
+                .current_map_name(),
+            "second"
+        );
+        let commands = world
+            .get_resource_mut::<CommandQueue>()
+            .unwrap()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(commands, vec![Command::ChangeMap(MapId(1))]);
     }
 }

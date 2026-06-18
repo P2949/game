@@ -2,7 +2,6 @@
 //! chasing enemy, patrolling enemy), and its own systems while depending on the
 //! author-facing `game-kit` facade rather than runtime/backend crates.
 
-pub mod actor;
 pub mod assets;
 pub mod combat;
 pub mod input;

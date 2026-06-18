@@ -5,21 +5,26 @@
 //! exercise the real plugin/schedule wiring without hand-constructing `Ctx`,
 //! `RenderFrame`, `World`, and friends.
 
+use std::rc::Rc;
+
 use anyhow::Result;
+use game_combat::Health;
 use game_core::app::{Ctx, MapData, RenderFrame, StartCtx};
 use game_core::audio::{Audio, AudioCommands};
 use game_core::backend::{AudioCommand, SoundHandle};
-use game_core::builder::{GameBuilder, RuntimeContent};
+use game_core::builder::{GameBuilder, MapId, MapRegistry, PrefabRegistry, RuntimeContent};
 use game_core::camera::Camera2D;
 use game_core::commands::{Command, CommandQueue};
 use game_core::gfx::Gfx;
 use game_core::input::{ActionId, Axis2dId, Input, InputRegistry};
 use game_core::plugin::GamePlugin as CoreGamePlugin;
 use game_core::schedule::Schedule;
-use game_core::world::{EntityId, World};
+use game_core::world::{Component, EntityId, Transform, World};
 use glam::Vec2;
 
 use crate::app::{GamePlugin, plugin};
+use crate::beginner::actors::{Enemy, Player};
+use crate::beginner::testing::TestEntity;
 use crate::map::{ContentRuntime, reset_to_start_map_world};
 
 /// Drives a content plugin headlessly for tests: build → startup → step frames,
@@ -27,6 +32,10 @@ use crate::map::{ContentRuntime, reset_to_start_map_world};
 pub struct GameTestHarness {
     schedule: Schedule,
     world: World,
+    prefabs: Rc<PrefabRegistry>,
+    maps: MapRegistry,
+    start_map: MapId,
+    active_map: MapId,
     map: MapData,
     input_registry: InputRegistry,
     input: Input,
@@ -47,6 +56,7 @@ impl GameTestHarness {
             maps,
             start_map,
             input,
+            prefabs,
             mut schedule,
             ..
         } = builder.into_parts()?;
@@ -62,6 +72,10 @@ impl GameTestHarness {
         Ok(Self {
             schedule,
             world,
+            prefabs,
+            maps,
+            start_map,
+            active_map: start_map,
             map,
             input_registry: input,
             input: Input::default(),
@@ -106,6 +120,124 @@ impl GameTestHarness {
     /// Resets all input back to neutral.
     pub fn clear_input(&mut self) {
         self.input = Input::default();
+    }
+
+    pub fn release_input(&mut self) {
+        self.clear_input();
+    }
+
+    pub fn step(&mut self) {
+        self.step_seconds(1.0 / 120.0);
+    }
+
+    pub fn step_seconds(&mut self, dt: f32) {
+        self.fixed_step(dt);
+    }
+
+    pub fn tap_action(&mut self, name: &str) {
+        let action = self.action_id(name);
+        self.input = Input::default().with_pressed(action);
+        self.step();
+        self.release_input();
+    }
+
+    pub fn hold_action(&mut self, name: &str) {
+        let action = self.action_id(name);
+        self.input = self.input.clone().with_down(action);
+    }
+
+    pub fn player(&self) -> TestEntity {
+        let id = self
+            .world
+            .ids_with::<Player>()
+            .into_iter()
+            .next()
+            .expect("expected a player entity");
+        TestEntity::from_world(id, &self.world)
+    }
+
+    pub fn enemy(&self, index: usize) -> TestEntity {
+        let id = self
+            .world
+            .ids_with::<Enemy>()
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| panic!("expected enemy at index {index}"));
+        TestEntity::from_world(id, &self.world)
+    }
+
+    pub fn enemies(&self) -> Vec<TestEntity> {
+        self.world
+            .ids_with::<Enemy>()
+            .into_iter()
+            .map(|id| TestEntity::from_world(id, &self.world))
+            .collect()
+    }
+
+    pub fn player_count(&self) -> usize {
+        self.world.ids_with::<Player>().len()
+    }
+
+    pub fn enemy_count(&self) -> usize {
+        self.world.ids_with::<Enemy>().len()
+    }
+
+    pub fn entity_count(&self) -> usize {
+        self.world.ids().count()
+    }
+
+    pub fn count<T: Component>(&self) -> usize {
+        self.world.ids_with::<T>().len()
+    }
+
+    pub fn has_resource<T: 'static>(&self) -> bool {
+        self.world.get_resource::<T>().is_some()
+    }
+
+    pub fn move_enemy_next_to_player(&mut self, index: usize) {
+        let player_pos = self.player().position();
+        let enemy = self.enemy(index);
+        self.move_entity_to(enemy, player_pos + glam::vec2(10.0, 0.0));
+    }
+
+    pub fn move_entity_to(&mut self, entity: TestEntity, pos: Vec2) {
+        let transform = self
+            .world
+            .get_mut::<Transform>(entity.id())
+            .unwrap_or_else(|| panic!("entity {:?} has no Transform component", entity.id()));
+        transform.pos = pos;
+    }
+
+    pub fn set_entity_health(&mut self, entity: TestEntity, health: i32) {
+        let health_component = self
+            .world
+            .get_mut::<Health>(entity.id())
+            .unwrap_or_else(|| panic!("entity {:?} has no Health component", entity.id()));
+        health_component.current = health.clamp(0, health_component.max);
+    }
+
+    pub fn set_enemy_health(&mut self, index: usize, health: i32) {
+        let enemy = self.enemy(index);
+        self.set_entity_health(enemy, health);
+    }
+
+    pub fn sound_count(&self) -> usize {
+        self.audio_commands.len()
+    }
+
+    pub fn assert_sound_played(&self) {
+        assert!(
+            self.sound_count() > 0,
+            "expected at least one sound command to be played"
+        );
+    }
+
+    pub fn assert_ui_contains(&self, text: &str) {
+        assert!(
+            self.ui_text.iter().any(|line| line.contains(text)),
+            "expected UI text to contain '{text}', got {:?}",
+            self.ui_text
+        );
     }
 
     /// Runs one frame (fixed + update + render-extract + ui) and returns the UI
@@ -165,7 +297,9 @@ impl GameTestHarness {
     /// Resets the simulated world through the same content-runtime path as
     /// [`GameCtx::reset_to_start_map`](crate::GameCtx::reset_to_start_map).
     pub fn reset_to_start_map(&mut self) -> Result<()> {
-        reset_to_start_map_world(&mut self.world)
+        reset_to_start_map_world(&mut self.world)?;
+        self.switch_active_map(self.start_map);
+        Ok(())
     }
 
     /// Queues a despawn command without running a frame.
@@ -173,6 +307,10 @@ impl GameTestHarness {
         self.world
             .resource_or_insert_with(CommandQueue::new)
             .despawn(entity);
+    }
+
+    pub fn queue_despawn_entity(&mut self, entity: TestEntity) {
+        self.queue_despawn(entity.id());
     }
 
     /// Queues a sound command without running a frame.
@@ -204,6 +342,12 @@ impl GameTestHarness {
         &self.audio_commands
     }
 
+    fn action_id(&self, name: &str) -> ActionId {
+        self.input_registry
+            .action_id(name)
+            .unwrap_or_else(|| panic!("unknown action '{name}'"))
+    }
+
     fn process_core_commands(&mut self, audio_commands: &mut AudioCommands) {
         let commands = self
             .world
@@ -219,7 +363,28 @@ impl GameTestHarness {
                     volume: 0.8,
                     looping: false,
                 }),
+                Command::SpawnPrefab {
+                    prefab,
+                    position,
+                    properties,
+                } => {
+                    self.prefabs
+                        .spawn(prefab, &mut self.world, position, &properties)
+                        .expect("test command should spawn prefab");
+                }
+                Command::ChangeMap(map) => self.switch_active_map(map),
+                Command::RestartMap => self.switch_active_map(self.active_map),
+                Command::RestartStartMap => self.switch_active_map(self.start_map),
             }
         }
+    }
+
+    fn switch_active_map(&mut self, map: MapId) {
+        let registered = self
+            .maps
+            .get(map)
+            .unwrap_or_else(|| panic!("test command referenced unknown map {map:?}"));
+        self.active_map = map;
+        self.map = registered.data.clone();
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::backend::{
@@ -45,7 +45,7 @@ impl AssetRegistry {
         if let Some(request) = self.textures.get(&key) {
             if request.path != path {
                 anyhow::bail!(
-                    "texture asset key '{}' already points to '{}', not '{}'",
+                    "Texture asset key '{}' already points to '{}', not '{}'.\n\nUse a different key, or reuse the same path for repeated calls to assets.texture(...).",
                     key,
                     request.path,
                     path
@@ -107,7 +107,7 @@ impl AssetRegistry {
         if let Some(existing) = self.sounds.get(&key) {
             if existing != &request {
                 anyhow::bail!(
-                    "sound asset key '{}' already points to {:?}, not {:?}",
+                    "Sound asset key '{}' already points to {:?}, not {:?}.\n\nUse a different key, or reuse the same sound source for repeated calls to assets.sound(...).",
                     key,
                     existing,
                     request
@@ -153,7 +153,7 @@ impl AssetRegistry {
         if let Some(request) = self.fonts.get(&key) {
             if request.path != path {
                 anyhow::bail!(
-                    "font asset key '{}' already points to '{}', not '{}'",
+                    "Font asset key '{}' already points to '{}', not '{}'.\n\nUse a different key, or reuse the same path for repeated calls to assets.font(...).",
                     key,
                     request.path,
                     path
@@ -220,6 +220,24 @@ impl AssetRegistry {
         loads.sort_by_key(|(handle, _)| handle.0);
         loads
     }
+
+    pub fn sound_loads(&self) -> Vec<(SoundHandle, SoundLoadRequest)> {
+        let mut loads = BTreeMap::new();
+        for request in self.sounds.values() {
+            let identity = match request {
+                SoundLoadRequest::Generated { name } => format!("gen:{name}"),
+                SoundLoadRequest::File { path } => format!("file:{path}"),
+            };
+            let handle = *self
+                .sound_identity_handles
+                .get(&identity)
+                .expect("sound request and identity maps must stay in sync");
+            loads
+                .entry(handle.0)
+                .or_insert_with(|| (handle, request.clone()));
+        }
+        loads.into_values().collect()
+    }
 }
 
 pub struct AssetValidator<'a> {
@@ -261,13 +279,24 @@ impl<'a> AssetValidator<'a> {
 fn validate_file(root: &Path, key: &str, path: &str, kind: &str) -> anyhow::Result<()> {
     let path = root.join(path);
     if !path.is_file() {
+        let display_kind = title_case_ascii(kind);
         anyhow::bail!(
-            "{kind} asset '{}' path '{}' does not exist",
+            "{} asset '{}' path '{}' does not exist.\n\nCheck the path relative to the assets directory, or register a different file with assets.{}(...).",
+            display_kind,
             key,
-            path.display()
+            path.display(),
+            kind
         );
     }
     Ok(())
+}
+
+fn title_case_ascii(value: &str) -> String {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    first.to_ascii_uppercase().to_string() + chars.as_str()
 }
 
 #[cfg(test)]

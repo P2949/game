@@ -14,6 +14,7 @@ game-platform-sdl = { version = "0.1.0", path = "../../crates/game-platform-sdl"
 game-runtime = { version = "0.1.0", path = "../../crates/game-runtime" }
 arena-content = { version = "0.1.0", path = "../../crates/arena-content" }
 testbed-content = { version = "0.1.0", path = "../../crates/testbed-content" }
+simple-content = { version = "0.1.0", path = "../../crates/simple-content" }
 
 [features]
 ci-build-sdl3 = [

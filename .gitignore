@@ -6,6 +6,9 @@
 /.vscode
 *.swp
 *.swo
+/.cursor
+/.codex
+/.agents
 
 # OS noise
 .DS_Store

@@ -90,6 +90,13 @@ impl MapRegistry {
         self.maps.get(id.0 as usize)
     }
 
+    pub fn id(&self, name: &str) -> Option<MapId> {
+        self.maps
+            .iter()
+            .position(|map| map.name == name)
+            .map(|index| MapId(index as u32))
+    }
+
     pub fn len(&self) -> usize {
         self.maps.len()
     }
@@ -249,15 +256,33 @@ impl<'a> PrefabValidator<'a> {
             )?;
             for requirement in requirements {
                 if !world.has_component_type(entity, requirement.component_type) {
+                    let component = short_type_name(requirement.component_name);
                     anyhow::bail!(
-                        "prefab '{}' did not insert required component {}",
+                        "Prefab '{}' is missing {}.\n\nThis usually means the prefab did not add one of the components required for this kind of object.\n\nIf using the beginner API, this is probably a bug in game-kit.\nIf using the advanced tuple API, include the missing component inside the prefab spawn bundle, for example:\n\n    {}",
                         prefab_name,
-                        requirement.component_name
+                        component,
+                        example_component_insert(component)
                     );
                 }
             }
         }
         Ok(())
+    }
+}
+
+fn short_type_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
+fn example_component_insert(component: &str) -> &'static str {
+    match component {
+        "Transform" => "Transform::at(at)",
+        "Velocity" => "Velocity::default()",
+        "Sprite" => "Sprite::new(assets.player, vec2s(20.0))",
+        "Collider" => "Collider::box_of(vec2s(20.0))",
+        "Health" => "Health::new(100)",
+        "Faction" => "Faction::player()",
+        _ => "<the missing component>",
     }
 }
 
@@ -400,6 +425,7 @@ mod tests {
         let mut registry = MapRegistry::new();
         let map = crate::tilemap::TileMap::try_from_rows(&["."], 16.0).unwrap();
         registry.register("arena", map.clone(), theme());
+        assert_eq!(registry.id("arena"), Some(super::MapId(0)));
 
         let err = registry.try_register("arena", map, theme()).unwrap_err();
 
@@ -443,9 +469,9 @@ mod tests {
             .require_component::<i32>("bare");
 
         let err = validator.validate().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("did not insert required component")
-        );
+        let message = err.to_string();
+        assert!(message.contains("Prefab 'bare' is missing i32."));
+        assert!(message.contains("advanced tuple API"));
+        assert!(message.contains("<the missing component>"));
     }
 }

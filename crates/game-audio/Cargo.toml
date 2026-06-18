@@ -11,6 +11,7 @@ anyhow.workspace = true
 crossbeam-queue.workspace = true
 log.workspace = true
 sdl3.workspace = true
+game-core = { version = "0.1.0", path = "../game-core" }
 
 [features]
 ci-build-sdl3 = ["sdl3/build-from-source"]

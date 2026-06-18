@@ -1,6 +1,5 @@
 use game_kit::prelude::*;
 
-use crate::actor::{MoveSpeed, PlayerController};
 use crate::assets::TestbedAssets;
 use crate::combat;
 use crate::input::TestbedActions;
@@ -62,11 +61,11 @@ pub fn state_input_system(game: &mut GameCtx<'_, '_>, actions: TestbedActions) {
 }
 
 pub fn player_control_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
-    game.drive_input::<PlayerController, MoveSpeed>();
+    game.drive_input::<PlayerMovement, Speed>();
 }
 
 pub fn chase_player_system(game: &mut GameCtx<'_, '_>, dt: f32) {
-    game.chase_first::<PlayerController>(dt);
+    game.chase_first::<Player>(dt);
 }
 
 pub fn patrol_enemy_system(game: &mut GameCtx<'_, '_>, dt: f32) {
@@ -94,7 +93,7 @@ pub fn death_state_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
 
 pub fn camera_follow_player_system(game: &mut GameCtx<'_, '_>, actions: TestbedActions, dt: f32) {
     game.zoom_camera_from_actions(actions.zoom_in, actions.zoom_out, dt);
-    game.camera_follow_first::<PlayerController>();
+    game.camera_follow_first::<Player>();
 }
 
 pub fn testbed_ui_system(game: &mut GameCtx<'_, '_>, _dt: f32) {

@@ -6,8 +6,20 @@
 
 use anyhow::Result;
 use game_core::input::{
-    ActionBindingBuilder, ActionId, Axis2dBindingBuilder, Axis2dId, InputRegistry, Key,
+    ActionBindingBuilder, ActionId, Axis2dBindingBuilder, Axis2dId, InputRegistry, Key, MouseButton,
 };
+
+#[derive(Clone, Copy, Debug)]
+pub struct TopDownControls {
+    pub movement: Axis2dId,
+    pub attack: ActionId,
+    pub pause: ActionId,
+    pub reset: ActionId,
+    pub debug_die: ActionId,
+    pub debug_overlay: ActionId,
+    pub zoom_in: ActionId,
+    pub zoom_out: ActionId,
+}
 
 /// Declares the logical controls a game uses.
 pub struct InputAuthor<'a> {
@@ -34,6 +46,19 @@ impl<'a> InputAuthor<'a> {
             builder: self.registry.try_axis2d(name)?,
         })
     }
+
+    pub fn top_down_controls(&mut self) -> Result<TopDownControls> {
+        Ok(TopDownControls {
+            movement: self.axis2d("move")?.wasd().arrows(),
+            attack: self.action("attack")?.space_or_enter(),
+            pause: self.action("pause")?.escape_or_p(),
+            reset: self.action("reset")?.key(Key::R),
+            debug_die: self.action("debug_die")?.key(Key::K),
+            debug_overlay: self.action("debug_overlay")?.key(Key::F1),
+            zoom_in: self.action("zoom_in")?.key(Key::Plus),
+            zoom_out: self.action("zoom_out")?.key(Key::Minus),
+        })
+    }
 }
 
 /// Binds keys to one logical action.
@@ -54,6 +79,42 @@ impl ActionAuthor<'_> {
             builder = builder.bind(key);
         }
         builder.id()
+    }
+
+    pub fn space(self) -> ActionId {
+        self.key(Key::Space)
+    }
+
+    pub fn enter(self) -> ActionId {
+        self.key(Key::Enter)
+    }
+
+    pub fn escape(self) -> ActionId {
+        self.key(Key::Escape)
+    }
+
+    pub fn space_or_enter(self) -> ActionId {
+        self.keys([Key::Space, Key::Enter])
+    }
+
+    pub fn escape_or_p(self) -> ActionId {
+        self.keys([Key::Escape, Key::P])
+    }
+
+    pub fn mouse(self, button: MouseButton) -> ActionId {
+        self.builder.bind_mouse(button).id()
+    }
+
+    pub fn mouse_left(self) -> ActionId {
+        self.mouse(MouseButton::Left)
+    }
+
+    pub fn mouse_right(self) -> ActionId {
+        self.mouse(MouseButton::Right)
+    }
+
+    pub fn mouse_middle(self) -> ActionId {
+        self.mouse(MouseButton::Middle)
     }
 }
 
@@ -94,5 +155,50 @@ impl<'a> Axis2dAuthor<'a> {
             .negative_y(up)
             .positive_y(down)
             .id()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use game_core::input::{InputRegistry, Key, MouseButton};
+
+    use super::InputAuthor;
+
+    #[test]
+    fn action_aliases_bind_expected_inputs() {
+        let mut registry = InputRegistry::new();
+        let mut input = InputAuthor::new(&mut registry);
+
+        let attack = input.action("attack").unwrap().space_or_enter();
+        let pause = input.action("pause").unwrap().escape_or_p();
+        let shoot = input.action("shoot").unwrap().mouse_left();
+
+        assert_eq!(
+            registry.action_binding(attack).unwrap().keys,
+            [Key::Space, Key::Enter]
+        );
+        assert_eq!(
+            registry.action_binding(pause).unwrap().keys,
+            [Key::Escape, Key::P]
+        );
+        assert_eq!(
+            registry.action_binding(shoot).unwrap().mouse_buttons,
+            [MouseButton::Left]
+        );
+    }
+
+    #[test]
+    fn top_down_controls_register_standard_names() {
+        let mut registry = InputRegistry::new();
+        let mut input = InputAuthor::new(&mut registry);
+
+        let controls = input.top_down_controls().unwrap();
+
+        assert_eq!(registry.action_id("attack"), Some(controls.attack));
+        assert_eq!(registry.axis2d_id("move"), Some(controls.movement));
+        assert_eq!(
+            registry.action_binding(controls.pause).unwrap().keys,
+            [Key::Escape, Key::P]
+        );
     }
 }

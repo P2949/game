@@ -1,12 +1,14 @@
-use game_kit::prelude::*;
+//! Built-in beginner game state.
+
+use crate::helpers::SimulationState;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GameState {
+pub struct SimpleGameState {
     pub paused: bool,
     pub player_dead: bool,
 }
 
-impl SimulationState for GameState {
+impl SimulationState for SimpleGameState {
     fn paused(&self) -> bool {
         self.paused
     }

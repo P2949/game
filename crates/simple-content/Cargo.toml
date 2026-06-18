@@ -1,0 +1,14 @@
+[package]
+name = "simple-content"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Beginner pressure-test demo content. It depends on the game-kit authoring
+# facade only; later roadmap phases should make this crate progressively smaller.
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+game-kit = { version = "0.1.0", path = "../game-kit" }

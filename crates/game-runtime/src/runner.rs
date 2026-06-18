@@ -7,7 +7,7 @@ use game_core::app::{Ctx, RenderFrame, StartCtx, extract_entity_sprites, extract
 use game_core::assets::AssetValidator;
 use game_core::audio::{Audio, AudioCommands};
 use game_core::backend::AudioCommand;
-use game_core::builder::{GameBuilder, RuntimeContent};
+use game_core::builder::{GameBuilder, MapId, MapRegistry, PrefabRegistry, RuntimeContent};
 use game_core::camera::Camera2D;
 use game_core::commands::{Command, CommandQueue};
 use game_core::gfx::Gfx;
@@ -103,21 +103,16 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
         mut schedule,
     } = builder.into_parts()?;
 
-    let map = maps
-        .get(start_map)
-        .ok_or_else(|| anyhow::anyhow!("start map {:?} is not registered", start_map))?
-        .data
-        .clone();
-    // Runtime map switching is not wired yet: the loop owns this fixed MapData
-    // and its derived nav/render state for the duration of the run.
-    let _runtime_maps = maps;
-    let _runtime_prefabs = prefabs;
+    let mut active_map = ActiveMap::load(&maps, start_map)?;
 
     let smoke_frames = parse_smoke_frames()?;
 
+    let audio_asset_root = asset_root().context("failed to resolve asset root for audio")?;
+    let sound_loads = assets.sound_loads();
+
     let mut platform = Platform::new(&config.title, config.width, config.height)?;
     let mut renderer = VulkanContext::new(&platform.window, assets.texture_loads())?;
-    let audio = match AudioSystem::new(&platform.sdl) {
+    let audio = match AudioSystem::new(&platform.sdl, &audio_asset_root, sound_loads) {
         Ok(audio) => Some(audio),
         Err(err) => {
             log::warn!("audio disabled: {err}");
@@ -195,8 +190,8 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
             {
                 let mut ctx = Ctx {
                     world: &mut world,
-                    map: &map.tilemap,
-                    nav: &map.nav,
+                    map: &active_map.data.tilemap,
+                    nav: &active_map.data.nav,
                     input: &input,
                     camera: &mut camera,
                     gfx: Gfx::new(&mut frame),
@@ -204,7 +199,14 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
                 };
                 schedule.run_fixed(&mut ctx, dt);
             }
-            process_core_commands(&mut world, &mut audio_commands);
+            process_core_commands(
+                &mut world,
+                &prefabs,
+                &maps,
+                start_map,
+                &mut active_map,
+                &mut audio_commands,
+            );
 
             steps += 1;
         }
@@ -216,8 +218,8 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
         {
             let mut ctx = Ctx {
                 world: &mut world,
-                map: &map.tilemap,
-                nav: &map.nav,
+                map: &active_map.data.tilemap,
+                nav: &active_map.data.nav,
                 input: &frame_input,
                 camera: &mut camera,
                 gfx: Gfx::new(&mut frame),
@@ -227,7 +229,14 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
             schedule.run_render_extract(&mut ctx, frame_dt);
             schedule.run_ui(&mut ctx, frame_dt);
         }
-        process_core_commands(&mut world, &mut audio_commands);
+        process_core_commands(
+            &mut world,
+            &prefabs,
+            &maps,
+            start_map,
+            &mut active_map,
+            &mut audio_commands,
+        );
 
         if timestep.step_ready() {
             let now = Instant::now();
@@ -243,7 +252,7 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
         }
 
         frame.camera = camera;
-        extract_tilemap_sprites(&map, &mut frame);
+        extract_tilemap_sprites(&active_map.data, &mut frame);
         extract_entity_sprites(&world, &mut frame);
         if let Some(audio) = &audio {
             for command in audio_commands.drain() {
@@ -265,7 +274,36 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
     Ok(())
 }
 
-fn process_core_commands(world: &mut World, audio_commands: &mut AudioCommands) {
+struct ActiveMap {
+    id: MapId,
+    data: game_core::app::MapData,
+}
+
+impl ActiveMap {
+    fn load(maps: &MapRegistry, id: MapId) -> Result<Self> {
+        let map = maps
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("map {:?} is not registered", id))?;
+        Ok(Self {
+            id,
+            data: map.data.clone(),
+        })
+    }
+
+    fn switch_to(&mut self, maps: &MapRegistry, id: MapId) -> Result<()> {
+        *self = Self::load(maps, id)?;
+        Ok(())
+    }
+}
+
+fn process_core_commands(
+    world: &mut World,
+    prefabs: &PrefabRegistry,
+    maps: &MapRegistry,
+    start_map: MapId,
+    active_map: &mut ActiveMap,
+    audio_commands: &mut AudioCommands,
+) {
     let commands = world
         .get_resource_mut::<CommandQueue>()
         .map(|queue| queue.drain().collect::<Vec<_>>())
@@ -279,13 +317,42 @@ fn process_core_commands(world: &mut World, audio_commands: &mut AudioCommands) 
                 volume: 0.8,
                 looping: false,
             }),
+            Command::SpawnPrefab {
+                prefab,
+                position,
+                properties,
+            } => {
+                if let Err(err) = prefabs.spawn(prefab, world, position, &properties) {
+                    log::error!("failed to spawn prefab command {:?}: {err:?}", prefab);
+                }
+            }
+            Command::ChangeMap(map) => {
+                if let Err(err) = active_map.switch_to(maps, map) {
+                    log::error!("failed to change active map to {:?}: {err:?}", map);
+                }
+            }
+            Command::RestartMap => {
+                let map = active_map.id;
+                if let Err(err) = active_map.switch_to(maps, map) {
+                    log::error!("failed to restart active map {:?}: {err:?}", map);
+                }
+            }
+            Command::RestartStartMap => {
+                if let Err(err) = active_map.switch_to(maps, start_map) {
+                    log::error!("failed to restart start map {:?}: {err:?}", start_map);
+                }
+            }
         }
     }
 }
 
 fn submit_audio_command(audio: &AudioSystem, command: AudioCommand) {
     match command {
-        AudioCommand::Play { .. } => audio.play_blip(),
+        AudioCommand::Play {
+            sound,
+            volume,
+            looping,
+        } => audio.play(sound, volume, looping),
     }
 }
 

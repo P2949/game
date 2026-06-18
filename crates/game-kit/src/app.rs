@@ -12,9 +12,14 @@ use std::rc::Rc;
 use anyhow::{Context, Result, anyhow};
 use game_core::builder::{GameBuilder, PrefabValidator};
 use game_core::commands::CommandQueue;
+use game_core::input::ActionId;
 use game_map::GameMap;
 
 use crate::assets::AssetAuthor;
+use crate::beginner::debug::{DebugOverlay, draw_debug_overlay};
+use crate::beginner::defaults::TopDownGameAuthor;
+use crate::beginner::prefabs::{EnemyPrefabAuthor, PlayerPrefabAuthor};
+use crate::beginner::scene::{SceneRegistry, SceneState};
 use crate::context::{GameCtx, StartupGameCtx};
 use crate::helpers::SimulationState;
 use crate::input::InputAuthor;
@@ -44,6 +49,9 @@ pub struct GameApp<'app> {
     content: Rc<RefCell<Option<ContentRuntime>>>,
     pending_maps: Vec<PendingMap>,
     prefab_requirements: Vec<PrefabRequirement>,
+    scenes: Vec<String>,
+    start_scene: Option<String>,
+    debug_overlay: Option<DebugOverlay>,
 }
 
 impl<'app> GameApp<'app> {
@@ -67,6 +75,9 @@ impl<'app> GameApp<'app> {
             content,
             pending_maps: Vec::new(),
             prefab_requirements: Vec::new(),
+            scenes: Vec::new(),
+            start_scene: None,
+            debug_overlay: None,
         }
     }
 
@@ -98,6 +109,21 @@ impl<'app> GameApp<'app> {
         build(&mut author)
     }
 
+    /// Begins a beginner-friendly player prefab.
+    pub fn player_prefab(&mut self, name: impl Into<String>) -> PlayerPrefabAuthor<'_, 'app> {
+        PlayerPrefabAuthor::new(self, name.into())
+    }
+
+    /// Begins a beginner-friendly enemy prefab.
+    pub fn enemy_prefab(&mut self, name: impl Into<String>) -> EnemyPrefabAuthor<'_, 'app> {
+        EnemyPrefabAuthor::new(self, name.into())
+    }
+
+    /// Begins configuring a beginner top-down game preset.
+    pub fn use_top_down_game(&mut self) -> TopDownGameAuthor<'_, 'app> {
+        TopDownGameAuthor::new(self)
+    }
+
     /// Begins declaring an in-code map.
     pub fn map(&mut self, name: impl Into<String>) -> MapAuthor<'_, 'app> {
         MapAuthor::in_code(self, name.into())
@@ -106,6 +132,40 @@ impl<'app> GameApp<'app> {
     /// Begins declaring a map from an external RON document.
     pub fn map_from_ron(&mut self, ron: impl Into<String>) -> MapAuthor<'_, 'app> {
         MapAuthor::from_ron(self, ron.into())
+    }
+
+    /// Declares a named beginner scene.
+    pub fn scene(&mut self, name: impl Into<String>) -> &mut Self {
+        let name = name.into();
+        if !self.scenes.iter().any(|scene| scene == &name) {
+            self.scenes.push(name);
+        }
+        self
+    }
+
+    /// Declares a named beginner scene and makes it the initial scene.
+    pub fn start_scene(&mut self, name: impl Into<String>) -> &mut Self {
+        let name = name.into();
+        self.scene(name.clone());
+        self.start_scene = Some(name);
+        self
+    }
+
+    pub fn enable_debug_overlay(&mut self) -> &mut Self {
+        self.debug_overlay
+            .get_or_insert_with(DebugOverlay::enabled)
+            .enabled = true;
+        self
+    }
+
+    pub fn debug(&mut self) -> DebugOverlayAuthor<'_, 'app> {
+        self.enable_debug_overlay();
+        DebugOverlayAuthor { app: self }
+    }
+
+    pub(crate) fn configure_debug_overlay(&mut self, f: impl FnOnce(&mut DebugOverlay)) {
+        let overlay = self.debug_overlay.get_or_insert_with(DebugOverlay::enabled);
+        f(overlay);
     }
 
     pub(crate) fn push_pending_map(&mut self, pending: PendingMap) {
@@ -120,12 +180,22 @@ impl<'app> GameApp<'app> {
         });
     }
 
+    /// Beginner alias for [`Self::startup`].
+    pub fn on_start(&mut self, system: impl StartupSystem) {
+        self.startup(system);
+    }
+
     /// Registers a fixed-timestep system.
     pub fn fixed(&mut self, mut system: impl GameSystem) {
         self.builder.schedule_mut().add_fixed(move |ctx, dt| {
             let mut game = GameCtx::new(ctx);
             system.run(&mut game, dt);
         });
+    }
+
+    /// Beginner alias for [`Self::fixed`].
+    pub fn every_tick(&mut self, system: impl GameSystem) {
+        self.fixed(system);
     }
 
     /// Registers a fixed-timestep system that runs only while resource `S` is
@@ -141,12 +211,25 @@ impl<'app> GameApp<'app> {
         });
     }
 
+    /// Beginner alias for [`Self::fixed_active`].
+    pub fn every_active_tick<S>(&mut self, system: impl GameSystem)
+    where
+        S: SimulationState + 'static,
+    {
+        self.fixed_active::<S>(system);
+    }
+
     /// Registers a per-frame update system.
     pub fn update(&mut self, mut system: impl GameSystem) {
         self.builder.schedule_mut().add_update(move |ctx, dt| {
             let mut game = GameCtx::new(ctx);
             system.run(&mut game, dt);
         });
+    }
+
+    /// Beginner alias for [`Self::update`].
+    pub fn every_frame(&mut self, system: impl GameSystem) {
+        self.update(system);
     }
 
     /// Registers an update system that runs only while resource `S` is present
@@ -160,6 +243,14 @@ impl<'app> GameApp<'app> {
                 system.run(game, dt);
             }
         });
+    }
+
+    /// Beginner alias for [`Self::update_active`].
+    pub fn every_active_frame<S>(&mut self, system: impl GameSystem)
+    where
+        S: SimulationState + 'static,
+    {
+        self.update_active::<S>(system);
     }
 
     /// Registers a per-frame render-extraction system. (The runtime extracts
@@ -181,6 +272,24 @@ impl<'app> GameApp<'app> {
         });
     }
 
+    /// Beginner alias for [`Self::ui`].
+    pub fn draw_ui(&mut self, system: impl GameSystem) {
+        self.ui(system);
+    }
+
+    /// Runs `f` on fixed ticks where `action` was pressed.
+    pub fn on_action(
+        &mut self,
+        action: ActionId,
+        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+    ) {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            if game.pressed(action) {
+                f(game);
+            }
+        });
+    }
+
     /// Declares that every fixed system self-guards against the paused/dead state,
     /// satisfying the schedule validator.
     pub fn fixed_systems_are_pause_guarded(&mut self) {
@@ -193,6 +302,7 @@ impl<'app> GameApp<'app> {
     /// `build`, so failures surface before any backend is created.
     pub(crate) fn finish(mut self) -> Result<()> {
         let mut maps: HashMap<String, GameMap> = HashMap::new();
+        let mut map_ids: HashMap<String, game_core::builder::MapId> = HashMap::new();
         let mut start_map_name: Option<String> = None;
 
         for pending in std::mem::take(&mut self.pending_maps) {
@@ -205,7 +315,7 @@ impl<'app> GameApp<'app> {
             if start {
                 if let Some(previous) = &start_map_name {
                     anyhow::bail!(
-                        "multiple start maps declared: '{}' and '{}'; runtime map switching is not implemented",
+                        "Multiple start maps declared: '{}' and '{}'.\n\nMark exactly one map with .start(). Other maps should end with .finish().",
                         previous,
                         game_map.name
                     );
@@ -214,6 +324,7 @@ impl<'app> GameApp<'app> {
                 self.builder.set_start_map(map_id);
                 start_map_name = Some(game_map.name.clone());
             }
+            map_ids.insert(game_map.name.clone(), map_id);
             maps.insert(game_map.name.clone(), game_map);
         }
 
@@ -225,11 +336,69 @@ impl<'app> GameApp<'app> {
             validator.validate().context("prefab validation failed")?;
         }
 
-        let start_map = start_map_name
-            .ok_or_else(|| anyhow!("no start map declared; call .start() on one map"))?;
+        let start_map = start_map_name.ok_or_else(|| {
+            anyhow!(
+                "No start map declared.\n\nAdd .start() to exactly one map:\n    game.map(\"level_1\")\n        .tiles([\"...\"])\n        .simple_theme(assets.floor, assets.wall)\n        .start();"
+            )
+        })?;
         let prefabs = self.builder.prefabs_shared();
-        *self.content.borrow_mut() = Some(ContentRuntime::new(prefabs, maps, start_map));
+        *self.content.borrow_mut() = Some(ContentRuntime::new(prefabs, maps, map_ids, start_map));
+
+        if !self.scenes.is_empty() {
+            let registry = SceneRegistry::new(self.scenes.clone());
+            let start_scene = self
+                .start_scene
+                .clone()
+                .unwrap_or_else(|| self.scenes[0].clone());
+            self.builder.schedule_mut().add_startup(move |ctx| {
+                ctx.world.insert_resource(registry.clone());
+                ctx.world
+                    .insert_resource(SceneState::new(start_scene.clone()));
+                Ok(())
+            });
+        }
+
+        if let Some(overlay) = self.debug_overlay {
+            self.builder.schedule_mut().add_startup(move |ctx| {
+                ctx.world.insert_resource(overlay);
+                Ok(())
+            });
+            self.builder.schedule_mut().add_ui(move |ctx, dt| {
+                let mut game = GameCtx::new(ctx);
+                draw_debug_overlay(&mut game, dt);
+            });
+        }
         Ok(())
+    }
+}
+
+pub struct DebugOverlayAuthor<'a, 'app> {
+    app: &'a mut GameApp<'app>,
+}
+
+impl DebugOverlayAuthor<'_, '_> {
+    pub fn show_colliders(self) -> Self {
+        self.app
+            .configure_debug_overlay(|overlay| overlay.show_colliders = true);
+        self
+    }
+
+    pub fn show_nav(self) -> Self {
+        self.app
+            .configure_debug_overlay(|overlay| overlay.show_nav = true);
+        self
+    }
+
+    pub fn show_names(self) -> Self {
+        self.app
+            .configure_debug_overlay(|overlay| overlay.show_names = true);
+        self
+    }
+
+    pub fn show_fps(self) -> Self {
+        self.app
+            .configure_debug_overlay(|overlay| overlay.show_fps = true);
+        self
     }
 }
 
@@ -250,6 +419,24 @@ impl<P: GamePlugin> game_core::plugin::GamePlugin for Plugin<P> {
 /// `pub fn plugin()` returns `game_kit::plugin(MyPlugin)`.
 pub fn plugin<P: GamePlugin>(plugin: P) -> Plugin<P> {
     Plugin(plugin)
+}
+
+pub struct FnGamePlugin<F>(F);
+
+impl<F> GamePlugin for FnGamePlugin<F>
+where
+    F: for<'app> Fn(&mut GameApp<'app>) -> Result<()>,
+{
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        (self.0)(game)
+    }
+}
+
+pub fn plugin_fn<F>(build: F) -> Plugin<FnGamePlugin<F>>
+where
+    F: for<'app> Fn(&mut GameApp<'app>) -> Result<()>,
+{
+    plugin(FnGamePlugin(build))
 }
 
 #[cfg(test)]
@@ -304,7 +491,7 @@ mod tests {
             })
             .unwrap_err();
 
-        assert!(err.to_string().contains("duplicate input action"));
+        assert!(err.to_string().contains("Duplicate input action"));
     }
 
     #[test]
@@ -320,7 +507,7 @@ mod tests {
             })
             .unwrap_err();
 
-        assert!(err.to_string().contains("texture asset key"));
+        assert!(err.to_string().contains("Texture asset key"));
     }
 
     #[test]
@@ -345,16 +532,42 @@ mod tests {
     }
 
     #[test]
+    fn map_without_theme_points_to_simple_theme() {
+        let mut builder = GameBuilder::new();
+        let mut game = GameApp::new(&mut builder);
+
+        game.map("demo").tiles(["."]).start();
+
+        let err = game.finish().unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("Map 'demo' has no tile theme."));
+        assert!(message.contains(".simple_theme(assets.floor, assets.wall)"));
+    }
+
+    #[test]
+    fn simple_theme_satisfies_map_theme_requirement() {
+        let mut builder = GameBuilder::new();
+        let mut game = GameApp::new(&mut builder);
+
+        game.map("demo")
+            .tiles(["."])
+            .simple_theme(TextureHandle(1), TextureHandle(2))
+            .start();
+
+        game.finish().unwrap();
+    }
+
+    #[test]
     fn no_start_map_returns_error() {
         let mut builder = GameBuilder::new();
         let game = GameApp::new(&mut builder);
 
         let err = game.finish().unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("no start map declared; call .start() on one map")
-        );
+        let message = err.to_string();
+        assert!(message.contains("No start map declared."));
+        assert!(message.contains(".simple_theme(assets.floor, assets.wall)"));
     }
 
     #[test]
@@ -367,9 +580,8 @@ mod tests {
 
         let err = game.finish().unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("multiple start maps declared: 'first' and 'second'")
-        );
+        let message = err.to_string();
+        assert!(message.contains("Multiple start maps declared: 'first' and 'second'"));
+        assert!(message.contains("Other maps should end with .finish()"));
     }
 }

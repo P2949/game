@@ -13,11 +13,12 @@ plugin to run:
   `game-platform-sdl`, `game-audio`
 - gameplay building blocks: `game-map`, `game-ai`, `game-combat`, `game-physics`
 - content authoring facade: `game-kit`
-- content plugins (demos): `arena-content` (default) and `testbed-content`
+- content plugins (demos): `arena-content` (default), `testbed-content`, and
+  `simple-content`
 
 The binary picks a demo from the `GAME_DEMO` environment variable (`arena` by
-default, or `testbed`); the runtime, renderer, audio, and platform crates are
-identical for both.
+default, plus `simple` or `testbed`); the runtime, renderer, audio, and platform
+crates are identical for all demos.
 
 ## Project status
 
@@ -100,6 +101,16 @@ physics, and combat systems. See
 [`docs/content-authoring.md`](docs/content-authoring.md) for the author-facing
 guide.
 
+## Authoring levels
+
+- Beginner API: player, enemy, map, action, scene, sound, animation, and
+  top-down helper APIs. Planned and tracked in
+  [`docs/beginner-authoring-roadmap.md`](docs/beginner-authoring-roadmap.md).
+- Advanced content API: the current `game-kit` ECS facade for custom prefabs,
+  systems, queries, and tests. Implemented.
+- Engine/runtime API: internal engine, runtime, renderer, platform, and audio
+  crates. Not for content.
+
 ## Requirements
 
 - A recent stable Rust toolchain (the crate uses the 2024 edition)
@@ -114,6 +125,7 @@ guide.
 ```bash
 cargo run -p game                                   # debug build (validation layers enabled)
 GAME_ASSET_DIR=assets cargo run -p game --release   # optimized build (LTO, single codegen unit)
+GAME_DEMO=simple cargo run -p game                  # run the tiny beginner-pressure-test demo
 GAME_DEMO=testbed cargo run -p game                 # run the second (testbed) demo
 ```
 
@@ -146,7 +158,7 @@ Release packages should not rely on the source-tree fallback.
 
 | Variable | Effect |
 | -------- | ------ |
-| `GAME_DEMO` | Selects the content plugin: `arena` (default) or `testbed`. |
+| `GAME_DEMO` | Selects the content plugin: `arena` (default), `simple`, or `testbed`. |
 | `GAME_SMOKE_FRAMES` | If set to `N`, initializes normally, renders exactly `N` frames, then exits. `0` exits after initialization before rendering. Invalid values fail early. |
 | `GAME_ASSET_DIR` | Overrides runtime asset root discovery. |
 | `GAME_PRESENT_MODE` | `fifo` (default), `mailbox`, or `immediate`; unavailable opt-in modes fall back to FIFO. |

@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_queue::ArrayQueue;
+use game_core::backend::{SoundHandle, SoundLoadRequest};
 use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback};
 
 const AUDIO_SCRATCH_SAMPLES: usize = 4096;
@@ -268,6 +272,7 @@ impl Default for Mixer {
 pub struct AudioSystem {
     commands: Arc<ArrayQueue<AudioCommand>>,
     blip_sound: SoundId,
+    sound_ids: HashMap<SoundHandle, SoundId>,
     // Shared with the audio callback, which only increments it. The main thread
     // reads it via `poll_dropped_frames` so we never log from the callback.
     put_failures: Arc<AtomicU64>,
@@ -282,7 +287,11 @@ pub struct AudioSystem {
 }
 
 impl AudioSystem {
-    pub fn new(sdl: &sdl3::Sdl) -> anyhow::Result<Self> {
+    pub fn new(
+        sdl: &sdl3::Sdl,
+        asset_root: &Path,
+        sound_loads: Vec<(SoundHandle, SoundLoadRequest)>,
+    ) -> anyhow::Result<Self> {
         let sample_rate = 48_000;
         let channels = 2;
         let spec = AudioSpec {
@@ -301,6 +310,19 @@ impl AudioSystem {
             sample_rate as u32,
             channels as u16,
         )?)?;
+
+        let mut sound_ids = HashMap::new();
+        for (handle, request) in sound_loads {
+            let sound_id = match request {
+                SoundLoadRequest::Generated { .. } => blip_sound,
+                SoundLoadRequest::File { path } => {
+                    let sound = load_wav_sound(&asset_root.join(&path))?;
+                    mixer.add_sound(sound)?
+                }
+            };
+            sound_ids.insert(handle, sound_id);
+        }
+
         // Music loops, so it must be a seamless (non-decaying, whole-cycle) tone;
         // a looped one-shot would click at the seam every second.
         let music_sound = mixer.add_sound(loop_sine_sound(
@@ -334,6 +356,7 @@ impl AudioSystem {
         Ok(Self {
             commands,
             blip_sound,
+            sound_ids,
             put_failures,
             reported_failures: AtomicU64::new(0),
             command_push_failures: AtomicU64::new(0),
@@ -344,10 +367,22 @@ impl AudioSystem {
     }
 
     pub fn play_blip(&self) {
+        self.enqueue_play(self.blip_sound, 0.8, false);
+    }
+
+    pub fn play(&self, sound: SoundHandle, volume: f32, looping: bool) {
+        let Some(sound_id) = self.sound_ids.get(&sound).copied() else {
+            log::warn!("ignoring play request for unknown sound handle {:?}", sound);
+            return;
+        };
+        self.enqueue_play(sound_id, volume, looping);
+    }
+
+    fn enqueue_play(&self, sound_id: SoundId, volume: f32, looping: bool) {
         let command = AudioCommand::Play {
-            sound_id: self.blip_sound,
-            volume: 0.8,
-            looping: false,
+            sound_id,
+            volume,
+            looping,
         };
 
         if self.commands.push(command).is_err() {
@@ -594,6 +629,94 @@ fn loop_sine_sound(
     Ok(Sound::new(samples, channels, sample_rate))
 }
 
+fn load_wav_sound(path: &Path) -> anyhow::Result<Sound> {
+    let bytes = fs::read(path)
+        .map_err(anyhow::Error::from)
+        .map_err(|err| anyhow::anyhow!("failed to read WAV '{}': {err}", path.display()))?;
+    decode_wav_sound(&bytes)
+        .map_err(|err| anyhow::anyhow!("invalid WAV '{}': {err}", path.display()))
+}
+
+fn decode_wav_sound(bytes: &[u8]) -> anyhow::Result<Sound> {
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        anyhow::bail!("expected RIFF/WAVE header");
+    }
+
+    let mut fmt: Option<WavFormat> = None;
+    let mut data: Option<&[u8]> = None;
+    let mut offset = 12usize;
+    while offset + 8 <= bytes.len() {
+        let id = &bytes[offset..offset + 4];
+        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        offset += 8;
+        if offset + size > bytes.len() {
+            anyhow::bail!("chunk {:?} extends past end of file", id);
+        }
+        let chunk = &bytes[offset..offset + size];
+        match id {
+            b"fmt " => fmt = Some(parse_wav_format(chunk)?),
+            b"data" => data = Some(chunk),
+            _ => {}
+        }
+        offset += size + (size % 2);
+    }
+
+    let fmt = fmt.ok_or_else(|| anyhow::anyhow!("missing fmt chunk"))?;
+    let data = data.ok_or_else(|| anyhow::anyhow!("missing data chunk"))?;
+    if fmt.channels == 0 {
+        anyhow::bail!("channel count must be nonzero");
+    }
+    if fmt.sample_rate == 0 {
+        anyhow::bail!("sample rate must be nonzero");
+    }
+    if fmt.block_align == 0 || data.len() % fmt.block_align as usize != 0 {
+        anyhow::bail!(
+            "data chunk is not aligned to {} byte frames",
+            fmt.block_align
+        );
+    }
+
+    let samples = match (fmt.audio_format, fmt.bits_per_sample) {
+        (1, 16) => data
+            .chunks_exact(2)
+            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0)
+            .collect(),
+        (3, 32) => data
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect(),
+        (format, bits) => {
+            anyhow::bail!(
+                "unsupported WAV format {format} with {bits} bits per sample; supported: PCM16 and float32"
+            );
+        }
+    };
+
+    Ok(Sound::new(samples, fmt.channels, fmt.sample_rate))
+}
+
+#[derive(Clone, Copy)]
+struct WavFormat {
+    audio_format: u16,
+    channels: u16,
+    sample_rate: u32,
+    block_align: u16,
+    bits_per_sample: u16,
+}
+
+fn parse_wav_format(chunk: &[u8]) -> anyhow::Result<WavFormat> {
+    if chunk.len() < 16 {
+        anyhow::bail!("fmt chunk must be at least 16 bytes");
+    }
+    Ok(WavFormat {
+        audio_format: u16::from_le_bytes([chunk[0], chunk[1]]),
+        channels: u16::from_le_bytes([chunk[2], chunk[3]]),
+        sample_rate: u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+        block_align: u16::from_le_bytes([chunk[12], chunk[13]]),
+        bits_per_sample: u16::from_le_bytes([chunk[14], chunk[15]]),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -603,7 +726,7 @@ mod tests {
 
     use super::{
         AudioCommand, Mixer, MixerCallback, PlayResult, Sound, crossed_power_of_two,
-        sanitize_volume,
+        decode_wav_sound, sanitize_volume,
     };
 
     #[test]
@@ -748,6 +871,42 @@ mod tests {
         let mixer = Mixer::new();
 
         assert!(mixer.voices.capacity() >= super::MAX_VOICES);
+    }
+
+    #[test]
+    fn decode_wav_sound_accepts_pcm16() {
+        let wav = test_wav_pcm16(&[0, i16::MAX, i16::MIN, 0]);
+        let sound = decode_wav_sound(&wav).unwrap();
+
+        assert_eq!(sound.channels, 2);
+        assert_eq!(sound.sample_rate, 48_000);
+        assert_eq!(sound.samples.len(), 4);
+        assert_eq!(sound.samples[0], 0.0);
+        assert!(sound.samples[1] > 0.99);
+        assert_eq!(sound.samples[2], -1.0);
+    }
+
+    fn test_wav_pcm16(samples: &[i16]) -> Vec<u8> {
+        let data_len = samples.len() * 2;
+        let riff_len = 4 + (8 + 16) + (8 + data_len);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(riff_len as u32).to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&48_000u32.to_le_bytes());
+        bytes.extend_from_slice(&(48_000u32 * 2 * 2).to_le_bytes());
+        bytes.extend_from_slice(&(2u16 * 2).to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&(data_len as u32).to_le_bytes());
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        bytes
     }
 
     #[test]

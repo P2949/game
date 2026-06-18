@@ -4,7 +4,7 @@ use sdl3::keyboard::Keycode;
 use sdl3::video::Window;
 use std::time::Instant;
 
-use crate::input::key_from_sdl;
+use crate::input::{key_from_sdl, mouse_button_from_sdl};
 use crate::resize::ResizePolicy;
 use game_core::input::InputState;
 
@@ -76,8 +76,10 @@ impl Platform {
 
     pub fn pump_events(&mut self) {
         self.input.begin_frame();
+        self.set_input_viewport_size();
 
-        for event in self.event_pump.poll_iter() {
+        let events = self.event_pump.poll_iter().collect::<Vec<_>>();
+        for event in events {
             match event {
                 Event::Quit { .. } => self.should_quit = true,
                 Event::KeyDown {
@@ -102,6 +104,25 @@ impl Platform {
                         self.input.set_key(key, false);
                     }
                 }
+                Event::MouseMotion { x, y, .. } => {
+                    self.set_mouse_position_from_window_coords(x, y);
+                }
+                Event::MouseButtonDown {
+                    mouse_btn, x, y, ..
+                } => {
+                    self.set_mouse_position_from_window_coords(x, y);
+                    if let Some(button) = mouse_button_from_sdl(mouse_btn) {
+                        self.input.set_mouse_button(button, true);
+                    }
+                }
+                Event::MouseButtonUp {
+                    mouse_btn, x, y, ..
+                } => {
+                    self.set_mouse_position_from_window_coords(x, y);
+                    if let Some(button) = mouse_button_from_sdl(mouse_btn) {
+                        self.input.set_mouse_button(button, false);
+                    }
+                }
                 Event::Window { win_event, .. } => match win_event {
                     WindowEvent::CloseRequested => self.should_quit = true,
                     // Losing keyboard focus means we will miss the key-up events
@@ -121,6 +142,7 @@ impl Platform {
         }
 
         self.track_drawable_size_change();
+        self.set_input_viewport_size();
     }
 
     pub fn take_stable_resize_request(&mut self) -> bool {
@@ -152,5 +174,28 @@ impl Platform {
 
     pub fn drawable_size(&self) -> (u32, u32) {
         self.window.size_in_pixels()
+    }
+
+    fn set_input_viewport_size(&mut self) {
+        let (width, height) = self.window.size_in_pixels();
+        self.input
+            .set_viewport_size(glam::vec2(width as f32, height as f32));
+    }
+
+    fn set_mouse_position_from_window_coords(&mut self, x: f32, y: f32) {
+        let (window_width, window_height) = self.window.size();
+        let (drawable_width, drawable_height) = self.window.size_in_pixels();
+        let scale_x = if window_width > 0 {
+            drawable_width as f32 / window_width as f32
+        } else {
+            1.0
+        };
+        let scale_y = if window_height > 0 {
+            drawable_height as f32 / window_height as f32
+        } else {
+            1.0
+        };
+        self.input
+            .set_mouse_position(glam::vec2(x * scale_x, y * scale_y));
     }
 }

@@ -73,8 +73,8 @@ pub fn extract_tilemap_sprites(map: &MapData, out: &mut RenderFrame) {
                 layer: sprite.layer,
                 position: Vec2::new(col as f32 * tile_size, row as f32 * tile_size),
                 size,
-                uv_min: Vec2::ZERO,
-                uv_max: Vec2::ONE,
+                uv_min: sprite.uv_min,
+                uv_max: sprite.uv_max,
                 color: sprite.color,
             });
         }
@@ -88,8 +88,8 @@ pub fn extract_entity_sprites(world: &World, out: &mut RenderFrame) {
             layer: sprite.layer,
             position: transform.pos - sprite.size * 0.5,
             size: sprite.size,
-            uv_min: Vec2::ZERO,
-            uv_max: Vec2::ONE,
+            uv_min: sprite.uv_min,
+            uv_max: sprite.uv_max,
             color: sprite.color,
         });
     }

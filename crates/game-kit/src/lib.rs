@@ -61,8 +61,10 @@
 //!
 //! See `docs/content-authoring.md` for the author-facing guide.
 
+pub mod advanced;
 pub mod app;
 pub mod assets;
+pub mod beginner;
 pub mod bundle;
 pub mod context;
 mod harness;
@@ -72,14 +74,24 @@ pub mod map;
 pub mod prefab;
 pub mod system;
 
-pub use app::{GameApp, GamePlugin, Plugin, plugin};
+pub use app::{DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, Plugin, plugin, plugin_fn};
 pub use assets::AssetAuthor;
+pub use beginner::actors::{
+    Door, Enemy, Name, Npc, Pickup, Player, PlayerMovement, Projectile, Solid, Speed,
+};
+pub use beginner::animation::{Animation, AnimationClip, AnimationSet, PlayerActor, SpriteSheet};
+pub use beginner::combat::MeleeCombatConfig;
+pub use beginner::debug::DebugOverlay;
+pub use beginner::defaults::TopDownGameAuthor;
+pub use beginner::prefabs::{EnemyPrefabAuthor, PlayerPrefabAuthor};
+pub use beginner::scene::{SceneRegistry, SceneState};
+pub use beginner::state::SimpleGameState;
 pub use bundle::{Bundle, vec2s};
 pub use context::{Commands, GameCtx, StartupGameCtx};
 pub use helpers::{
     InputDriven, MovementSpeed, SimulationState, camera_follow_first, stop_all_velocity,
 };
-pub use input::{ActionAuthor, Axis2dAuthor, InputAuthor};
+pub use input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
 pub use map::{MapAuthor, TileTheme};
 pub use prefab::PrefabAuthor;
 pub use system::{GameSystem, StartupSystem};
@@ -95,20 +107,39 @@ pub mod prelude {
     pub use game_combat::{Faction, FactionId, Health, MeleeAttack};
     pub use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
     pub use game_core::camera::Camera2D;
-    pub use game_core::input::{ActionId, Axis2dId, Key};
+    pub use game_core::input::{ActionId, Axis2dId, Key, MouseButton};
     pub use game_core::world::{Component, EntityId, Sprite, Transform, Velocity};
     pub use game_map::{MapCell, cell};
     pub use game_physics::Collider;
 
     // The authoring facade itself.
-    pub use crate::app::{GameApp, GamePlugin, plugin};
+    pub use crate::app::{
+        DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, plugin, plugin_fn,
+    };
     pub use crate::assets::AssetAuthor;
+    pub use crate::beginner::actors::{
+        Door, Enemy, Name, Npc, Pickup, Player, PlayerMovement, Projectile, Solid, Speed,
+    };
+    pub use crate::beginner::animation::{
+        Animation, AnimationClip, AnimationSet, PlayerActor, SpriteSheet,
+    };
+    pub use crate::beginner::combat::MeleeCombatConfig;
+    pub use crate::beginner::context::{Game, Seconds, StartupGame};
+    pub use crate::beginner::debug::DebugOverlay;
+    pub use crate::beginner::defaults::TopDownGameAuthor;
+    pub use crate::beginner::prefabs::{EnemyPrefabAuthor, PlayerPrefabAuthor};
+    pub use crate::beginner::scene::{SceneRegistry, SceneState};
+    pub use crate::beginner::state::SimpleGameState;
     pub use crate::bundle::{Bundle, vec2s};
     pub use crate::context::{Commands, GameCtx, StartupGameCtx};
     pub use crate::helpers::{InputDriven, MovementSpeed, SimulationState};
-    pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor};
+    pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
     pub use crate::map::{MapAuthor, TileTheme};
     pub use crate::prefab::PrefabAuthor;
+}
+
+pub mod advanced_prelude {
+    pub use crate::advanced::prelude::*;
 }
 
 /// Test imports for content tests that need raw ECS/world inspection.
@@ -126,7 +157,7 @@ pub mod testing {
         pub use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
         pub use game_core::builder::PrefabId;
         pub use game_core::camera::Camera2D;
-        pub use game_core::input::{ActionId, Axis2dId, Input, Key};
+        pub use game_core::input::{ActionId, Axis2dId, Input, Key, MouseButton};
         pub use game_core::nav::NavGrid;
         pub use game_core::tilemap::TileMap;
         pub use game_core::world::{
@@ -135,6 +166,7 @@ pub mod testing {
         pub use game_map::{MapCell, cell};
         pub use game_physics::{Collider, movement_system};
 
+        pub use crate::beginner::testing::TestEntity;
         pub use crate::prelude::*;
         pub use crate::testing::GameTestHarness;
     }

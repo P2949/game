@@ -35,6 +35,8 @@ pub struct Sprite {
     pub size: Vec2,
     pub layer: i16,
     pub color: Vec4,
+    pub uv_min: Vec2,
+    pub uv_max: Vec2,
 }
 
 impl Sprite {
@@ -44,6 +46,8 @@ impl Sprite {
             size,
             layer: 0,
             color: Vec4::ONE,
+            uv_min: Vec2::ZERO,
+            uv_max: Vec2::ONE,
         }
     }
 
@@ -54,6 +58,12 @@ impl Sprite {
 
     pub fn tint(mut self, color: Vec4) -> Self {
         self.color = color;
+        self
+    }
+
+    pub fn region(mut self, uv_min: Vec2, uv_max: Vec2) -> Self {
+        self.uv_min = uv_min;
+        self.uv_max = uv_max;
         self
     }
 }

@@ -132,6 +132,81 @@ fn game_test_harness_is_not_root_reexported() {
     );
 }
 
+#[test]
+fn simple_content_uses_only_beginner_surface() {
+    let findings = forbidden_source_uses("simple-content", BEGINNER_CONTENT_FORBIDDEN);
+
+    assert!(
+        findings.is_empty(),
+        "simple-content is the pure beginner example and must not use advanced APIs:\n{}",
+        findings.join("\n")
+    );
+}
+
+#[test]
+fn migrated_content_reports_remaining_advanced_surface() {
+    for crate_name in ["arena-content", "testbed-content"] {
+        let findings = forbidden_source_uses(crate_name, BEGINNER_CONTENT_FORBIDDEN);
+        if !findings.is_empty() {
+            eprintln!(
+                "{crate_name} still uses advanced authoring APIs:\n{}",
+                findings.join("\n")
+            );
+        }
+    }
+}
+
+const BEGINNER_CONTENT_FORBIDDEN: &[&str] = &[
+    "EntityId",
+    "Component",
+    "Transform",
+    "Velocity",
+    "Sprite::new",
+    "Collider::box_of",
+    "Health::new",
+    "MeleeAttack",
+    "Faction",
+    "AiController",
+    "ChaseTarget",
+    "PathFollow",
+    "Patrol",
+    "GameCtx<'_",
+    "StartupGameCtx<'_",
+    "component::<",
+    "component_mut::<",
+    "entities_with::<",
+    "entities_where::<",
+    "for_each",
+    "nearest_by_position",
+    "nearest_living_with",
+    "living_entities_with",
+    "fixed_active::<",
+    "fixed_systems_are_pause_guarded",
+];
+
+fn forbidden_source_uses(crate_name: &str, patterns: &[&str]) -> Vec<String> {
+    let src_dir = workspace_root().join(format!("crates/{crate_name}/src"));
+    if !src_dir.exists() {
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    collect_rust_files(&src_dir, &mut files);
+
+    let mut findings = Vec::new();
+    for path in files {
+        let source = read_code_without_comments(&path);
+        let production = strip_cfg_test_modules(&source);
+        for pattern in patterns {
+            if production.contains(pattern) {
+                let relative = path.strip_prefix(workspace_root()).unwrap_or(&path);
+                findings.push(format!("{} contains {:?}", relative.display(), pattern));
+            }
+        }
+    }
+    findings
+}
+
 /// Reads Rust source with whole-line comments removed, so documentation that
 /// mentions a forbidden crate name does not trip a `contains` import check.
 fn read_code_without_comments(path: &Path) -> String {
@@ -147,7 +222,7 @@ fn read_code_without_comments(path: &Path) -> String {
 fn content_crates_depend_only_on_game_kit_and_common_deps() {
     // Phase 13: content authors use the facade. Direct gameplay-crate dependencies
     // mean the facade has a gap; backend dependencies break the runtime boundary.
-    for crate_name in ["arena-content", "testbed-content"] {
+    for crate_name in ["simple-content", "arena-content", "testbed-content"] {
         let manifest = read_manifest_without_comments(&format!("crates/{crate_name}/Cargo.toml"));
         for forbidden in [
             "game-core",

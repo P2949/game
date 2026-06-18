@@ -11,14 +11,17 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow};
-use game_core::builder::PrefabRegistry;
+use game_core::backend::TextureHandle;
+use game_core::builder::{MapId, PrefabId, PrefabRegistry};
 use game_core::commands::CommandQueue;
+use game_core::world::Sprite;
 use game_core::world::World;
 use game_map::{
-    GameMap, MapBuilder, MapCell, MapValidator, load_game_map_ron, validate_map_prefabs,
+    GameMap, MapBuilder, MapCell, MapValidator, cell, load_game_map_ron, validate_map_prefabs,
 };
 
 use crate::app::GameApp;
+use crate::bundle::vec2s;
 
 /// Tile floor/wall sprites for a map. Re-exported from the engine so content can
 /// build a theme with the prelude's `Sprite` type: `TileTheme { floor, wall }`.
@@ -30,6 +33,7 @@ enum MapSource {
         tile_size: f32,
         rows: Vec<String>,
         objects: Vec<(String, String, MapCell)>,
+        legends: Vec<(char, String)>,
     },
     Ron {
         text: String,
@@ -61,14 +65,21 @@ impl PendingMap {
 
         let theme = self
             .theme
-            .ok_or_else(|| anyhow!("map '{}' has no theme; call .theme(..)", self.name))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "Map '{}' has no tile theme.\n\nAdd:\n    .theme(TileTheme {{\n        floor: Sprite::new(assets.floor, vec2s(32.0)),\n        wall: Sprite::new(assets.wall, vec2s(32.0)),\n    }})\n\nOr use the beginner helper:\n    .simple_theme(assets.floor, assets.wall)",
+                    self.name
+                )
+            })?;
 
         let game_map = match self.source {
             MapSource::InCode {
                 tile_size,
                 rows,
-                objects,
+                mut objects,
+                legends,
             } => {
+                let rows = expand_symbolic_tiles(&self.name, rows, &mut objects, legends)?;
                 let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
                 let mut builder = MapBuilder::new(self.name.clone(), tile_size)
                     .try_tile_layer("collision", &row_refs)
@@ -122,6 +133,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                     tile_size: 32.0,
                     rows: Vec::new(),
                     objects: Vec::new(),
+                    legends: Vec::new(),
                 },
                 required_objects: Vec::new(),
                 theme: None,
@@ -197,9 +209,45 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         self
     }
 
+    /// Spawns a prefab wherever `symbol` appears in the tile rows. Symbols are
+    /// treated as floor for collision. For example, `P` can mark the player start:
+    /// `.tiles(["#P#"]).legend('P', "player")`.
+    pub fn legend(mut self, symbol: char, prefab: impl Into<String>) -> Self {
+        match &mut self.pending.source {
+            MapSource::InCode { legends, .. } => {
+                legends.push((symbol, prefab.into()));
+            }
+            MapSource::Ron { .. } => {
+                self.pending
+                    .misuse_errors
+                    .push("legend() is only valid on in-code maps, not RON maps".to_owned());
+            }
+        }
+        self
+    }
+
     /// Sets the map's floor/wall theme.
     pub fn theme(mut self, theme: TileTheme) -> Self {
         self.pending.theme = Some(theme);
+        self
+    }
+
+    /// Sets a simple floor/wall theme from texture handles, sizing each tile
+    /// sprite to the map's current tile size.
+    pub fn theme_from_textures(self, floor: TextureHandle, wall: TextureHandle) -> Self {
+        self.simple_theme(floor, wall)
+    }
+
+    /// Beginner alias for [`Self::theme_from_textures`].
+    pub fn simple_theme(mut self, floor: TextureHandle, wall: TextureHandle) -> Self {
+        let tile_size = match &self.pending.source {
+            MapSource::InCode { tile_size, .. } => *tile_size,
+            MapSource::Ron { .. } => 32.0,
+        };
+        self.pending.theme = Some(TileTheme {
+            floor: Sprite::new(floor, vec2s(tile_size)),
+            wall: Sprite::new(wall, vec2s(tile_size)),
+        });
         self
     }
 
@@ -215,6 +263,69 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         self.pending.start = true;
         self.app.push_pending_map(self.pending);
     }
+
+    /// Records this map without making it the start map.
+    pub fn finish(self) {
+        self.app.push_pending_map(self.pending);
+    }
+}
+
+fn expand_symbolic_tiles(
+    map_name: &str,
+    rows: Vec<String>,
+    objects: &mut Vec<(String, String, MapCell)>,
+    legends: Vec<(char, String)>,
+) -> Result<Vec<String>> {
+    let mut legend_lookup = HashMap::new();
+    for (symbol, prefab) in legends {
+        if legend_lookup.insert(symbol, prefab).is_some() {
+            anyhow::bail!("map '{map_name}' has duplicate legend for symbol {symbol:?}");
+        }
+    }
+
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut collision_rows = Vec::with_capacity(rows.len());
+    for (row, line) in rows.into_iter().enumerate() {
+        let mut collision_row = String::with_capacity(line.len());
+        for (col, symbol) in line.chars().enumerate() {
+            match symbol {
+                '#' | '.' => collision_row.push(symbol),
+                symbol => {
+                    let prefab = legend_lookup.get(&symbol).ok_or_else(|| {
+                        anyhow!(
+                            "map '{map_name}' uses symbol {symbol:?} at row {row}, col {col}, but no legend was declared.\n\nAdd:\n    .legend({symbol:?}, \"prefab_name\")"
+                        )
+                    })?;
+                    collision_row.push('.');
+                    let count = counts.entry(prefab.clone()).or_default();
+                    *count += 1;
+                    objects.push((
+                        generated_object_id(prefab, *count),
+                        prefab.clone(),
+                        cell(col, row),
+                    ));
+                }
+            }
+        }
+        collision_rows.push(collision_row);
+    }
+
+    Ok(collision_rows)
+}
+
+fn generated_object_id(prefab: &str, count: usize) -> String {
+    let mut base: String = prefab
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect();
+    if base.is_empty() {
+        base = "object".to_owned();
+    }
+    if base == "player" && count == 1 {
+        "player_start".to_owned()
+    } else {
+        format!("{base}_{count:02}")
+    }
 }
 
 /// Runtime content resource (Phase 7): the prefab registry and full maps (with
@@ -224,11 +335,8 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
 pub struct ContentRuntime {
     prefabs: Rc<PrefabRegistry>,
     maps: HashMap<String, GameMap>,
+    map_ids: HashMap<String, MapId>,
     start_map: String,
-    // Runtime map switching is intentionally not exposed yet. `current_map`
-    // exists so reset/start-map behavior has one generic path and future
-    // switching has a place to land, but GameCtx does not expose change_map
-    // until game-runtime can update MapData/nav/render extraction too.
     current_map: String,
 }
 
@@ -236,10 +344,12 @@ impl ContentRuntime {
     pub(crate) fn new(
         prefabs: Rc<PrefabRegistry>,
         maps: HashMap<String, GameMap>,
+        map_ids: HashMap<String, MapId>,
         start_map: String,
     ) -> Self {
         Self {
             prefabs,
+            map_ids,
             current_map: start_map.clone(),
             start_map,
             maps,
@@ -249,6 +359,22 @@ impl ContentRuntime {
     /// The author name of the map currently spawned.
     pub fn current_map_name(&self) -> &str {
         &self.current_map
+    }
+
+    pub fn prefab_id(&self, name: &str) -> Option<PrefabId> {
+        self.prefabs.id(name)
+    }
+
+    pub fn map_id(&self, name: &str) -> Option<MapId> {
+        self.map_ids.get(name).copied()
+    }
+
+    pub fn current_map_id(&self) -> Option<MapId> {
+        self.map_id(&self.current_map)
+    }
+
+    pub fn start_map_id(&self) -> Option<MapId> {
+        self.map_id(&self.start_map)
     }
 
     fn spawn_current(&self, world: &mut World) -> Result<()> {
@@ -269,20 +395,53 @@ pub fn spawn_map_objects(world: &mut World, map: &GameMap, prefabs: &PrefabRegis
     Ok(())
 }
 
-/// Clears the world and (re)spawns the start map's objects. Used by both startup
-/// and reset, so the behavior is generic and identical.
-pub(crate) fn reset_to_start_map_world(world: &mut World) -> Result<()> {
-    let mut content = world
-        .remove_resource::<ContentRuntime>()
-        .ok_or_else(|| anyhow!("content runtime missing; was the game-kit plugin used?"))?;
-    content.current_map = content.start_map.clone();
+fn clear_world_for_map_respawn(world: &mut World) {
     world.clear();
     // `World::clear` preserves resources, so drop any commands queued against the
     // pre-reset world before respawning.
     if let Some(commands) = world.get_resource_mut::<CommandQueue>() {
         commands.clear();
     }
-    let result = content.spawn_current(world);
+}
+
+fn switch_world_to_map(world: &mut World, map_name: String) -> Result<MapId> {
+    let mut content = world
+        .remove_resource::<ContentRuntime>()
+        .ok_or_else(|| anyhow!("content runtime missing; was the game-kit plugin used?"))?;
+    let map_id = content
+        .map_id(&map_name)
+        .ok_or_else(|| anyhow!("unknown map '{map_name}'"))?;
+    content.current_map = map_name;
+    clear_world_for_map_respawn(world);
+    let result = content.spawn_current(world).map(|()| map_id);
     world.insert_resource(content);
     result
+}
+
+pub(crate) fn change_to_map_world(world: &mut World, map_name: &str) -> Result<MapId> {
+    switch_world_to_map(world, map_name.to_owned())
+}
+
+pub(crate) fn restart_current_map_world(world: &mut World) -> Result<MapId> {
+    let map_name = world
+        .get_resource::<ContentRuntime>()
+        .ok_or_else(|| anyhow!("content runtime missing; was the game-kit plugin used?"))?
+        .current_map_name()
+        .to_owned();
+    switch_world_to_map(world, map_name)
+}
+
+pub(crate) fn restart_start_map_world(world: &mut World) -> Result<MapId> {
+    let map_name = world
+        .get_resource::<ContentRuntime>()
+        .ok_or_else(|| anyhow!("content runtime missing; was the game-kit plugin used?"))?
+        .start_map
+        .clone();
+    switch_world_to_map(world, map_name)
+}
+
+/// Clears the world and (re)spawns the start map's objects. Used by both startup
+/// and reset, so the behavior is generic and identical.
+pub(crate) fn reset_to_start_map_world(world: &mut World) -> Result<()> {
+    restart_start_map_world(world).map(|_| ())
 }

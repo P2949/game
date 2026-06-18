@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use glam::Vec2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
 pub enum Key {
     A,
     D,
@@ -20,30 +21,59 @@ pub enum Key {
     Plus,
     Minus,
     Escape,
+    Q,
+    E,
+    Num0,
+    Num1,
+    Num2,
+    Num3,
+    Num4,
+    Num5,
+    Num6,
+    Num7,
+    Num8,
+    Num9,
+    Shift,
+    Ctrl,
+    Tab,
+    Backspace,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
 }
 
-const KEY_COUNT: usize = 16;
+const KEY_COUNT: usize = Key::F12 as usize + 1;
 
 impl Key {
     const fn index(self) -> usize {
-        match self {
-            Key::A => 0,
-            Key::D => 1,
-            Key::W => 2,
-            Key::S => 3,
-            Key::Left => 4,
-            Key::Right => 5,
-            Key::Up => 6,
-            Key::Down => 7,
-            Key::Space => 8,
-            Key::Enter => 9,
-            Key::P => 10,
-            Key::R => 11,
-            Key::K => 12,
-            Key::Plus => 13,
-            Key::Minus => 14,
-            Key::Escape => 15,
-        }
+        self as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    Back,
+    Forward,
+}
+
+const MOUSE_BUTTON_COUNT: usize = MouseButton::Forward as usize + 1;
+
+impl MouseButton {
+    const fn index(self) -> usize {
+        self as usize
     }
 }
 
@@ -51,6 +81,10 @@ impl Key {
 pub struct InputState {
     down: [bool; KEY_COUNT],
     pressed: [bool; KEY_COUNT],
+    mouse_down: [bool; MOUSE_BUTTON_COUNT],
+    mouse_pressed: [bool; MOUSE_BUTTON_COUNT],
+    mouse_position: Vec2,
+    viewport_size: Vec2,
 }
 
 impl Default for InputState {
@@ -58,6 +92,10 @@ impl Default for InputState {
         Self {
             down: [false; KEY_COUNT],
             pressed: [false; KEY_COUNT],
+            mouse_down: [false; MOUSE_BUTTON_COUNT],
+            mouse_pressed: [false; MOUSE_BUTTON_COUNT],
+            mouse_position: Vec2::ZERO,
+            viewport_size: Vec2::ZERO,
         }
     }
 }
@@ -65,6 +103,7 @@ impl Default for InputState {
 impl InputState {
     pub fn begin_frame(&mut self) {
         self.pressed = [false; KEY_COUNT];
+        self.mouse_pressed = [false; MOUSE_BUTTON_COUNT];
     }
 
     pub fn reset(&mut self) {
@@ -86,6 +125,49 @@ impl InputState {
     pub fn pressed(&self, key: Key) -> bool {
         self.pressed[key.index()]
     }
+
+    pub fn set_mouse_button(&mut self, button: MouseButton, down: bool) {
+        let index = button.index();
+        if down && !self.mouse_down[index] {
+            self.mouse_pressed[index] = true;
+        }
+        self.mouse_down[index] = down;
+    }
+
+    pub fn mouse_down(&self, button: MouseButton) -> bool {
+        self.mouse_down[button.index()]
+    }
+
+    pub fn mouse_pressed(&self, button: MouseButton) -> bool {
+        self.mouse_pressed[button.index()]
+    }
+
+    pub fn set_mouse_position(&mut self, position: Vec2) {
+        self.mouse_position = sanitize_finite_vec2(position);
+    }
+
+    pub fn mouse_position(&self) -> Vec2 {
+        self.mouse_position
+    }
+
+    pub fn set_viewport_size(&mut self, size: Vec2) {
+        self.viewport_size = Vec2::new(
+            if size.x.is_finite() && size.x > 0.0 {
+                size.x
+            } else {
+                0.0
+            },
+            if size.y.is_finite() && size.y > 0.0 {
+                size.y
+            } else {
+                0.0
+            },
+        );
+    }
+
+    pub fn viewport_size(&self) -> Vec2 {
+        self.viewport_size
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -98,6 +180,7 @@ pub struct Axis2dId(pub u32);
 pub struct ActionBinding {
     pub name: String,
     pub keys: Vec<Key>,
+    pub mouse_buttons: Vec<MouseButton>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,12 +217,15 @@ impl InputRegistry {
     ) -> anyhow::Result<ActionBindingBuilder<'_>> {
         let name = name.into();
         if self.actions.iter().any(|binding| binding.name == name) {
-            anyhow::bail!("duplicate input action '{name}'");
+            anyhow::bail!(
+                "Duplicate input action '{name}'.\n\nEach action name must be registered once. Reuse the returned ActionId instead of calling input.action(\"{name}\") again, or choose a different name."
+            );
         }
         let id = ActionId(self.actions.len() as u32);
         self.actions.push(ActionBinding {
             name,
             keys: Vec::new(),
+            mouse_buttons: Vec::new(),
         });
         Ok(ActionBindingBuilder { registry: self, id })
     }
@@ -158,7 +244,9 @@ impl InputRegistry {
     ) -> anyhow::Result<Axis2dBindingBuilder<'_>> {
         let name = name.into();
         if self.axes2d.iter().any(|binding| binding.name == name) {
-            anyhow::bail!("duplicate input axis2d '{name}'");
+            anyhow::bail!(
+                "Duplicate input axis2d '{name}'.\n\nEach axis name must be registered once. Reuse the returned Axis2dId instead of calling input.axis2d(\"{name}\") again, or choose a different name."
+            );
         }
         let id = Axis2dId(self.axes2d.len() as u32);
         self.axes2d.push(Axis2dBinding {
@@ -212,6 +300,13 @@ pub struct ActionBindingBuilder<'a> {
 impl ActionBindingBuilder<'_> {
     pub fn bind(self, key: Key) -> Self {
         self.registry.actions[self.id.0 as usize].keys.push(key);
+        self
+    }
+
+    pub fn bind_mouse(self, button: MouseButton) -> Self {
+        self.registry.actions[self.id.0 as usize]
+            .mouse_buttons
+            .push(button);
         self
     }
 
@@ -270,6 +365,8 @@ pub struct Input {
     pressed: HashSet<ActionId>,
     down: HashSet<ActionId>,
     axes2d: HashMap<Axis2dId, Vec2>,
+    mouse_position: Vec2,
+    viewport_size: Vec2,
 }
 
 impl Input {
@@ -291,6 +388,14 @@ impl Input {
         self.axes2d.get(&axis).copied().unwrap_or(Vec2::ZERO)
     }
 
+    pub fn mouse_position(&self) -> Vec2 {
+        self.mouse_position
+    }
+
+    pub fn viewport_size(&self) -> Vec2 {
+        self.viewport_size
+    }
+
     /// Test/builder helper: marks `action` as both pressed and held.
     pub fn with_pressed(mut self, action: ActionId) -> Self {
         self.pressed.insert(action);
@@ -310,6 +415,12 @@ impl Input {
         self
     }
 
+    pub fn with_mouse_position(mut self, position: Vec2, viewport_size: Vec2) -> Self {
+        self.mouse_position = sanitize_finite_vec2(position);
+        self.viewport_size = sanitize_viewport_size(viewport_size);
+        self
+    }
+
     /// Builds the continuous part of the input (held actions and axes) by
     /// evaluating every registered binding against the raw key state. Edge-pressed
     /// actions are added separately via [`Self::set_pressed`] so the runtime can
@@ -317,7 +428,12 @@ impl Input {
     pub fn evaluate_continuous(registry: &InputRegistry, state: &InputState) -> Self {
         let mut down = HashSet::new();
         for (index, binding) in registry.actions().iter().enumerate() {
-            if binding.keys.iter().any(|key| state.down(*key)) {
+            if binding.keys.iter().any(|key| state.down(*key))
+                || binding
+                    .mouse_buttons
+                    .iter()
+                    .any(|button| state.mouse_down(*button))
+            {
                 down.insert(ActionId(index as u32));
             }
         }
@@ -331,6 +447,8 @@ impl Input {
             pressed: HashSet::new(),
             down,
             axes2d,
+            mouse_position: state.mouse_position(),
+            viewport_size: state.viewport_size(),
         }
     }
 
@@ -339,7 +457,12 @@ impl Input {
     pub fn pressed_this_frame(registry: &InputRegistry, state: &InputState) -> HashSet<ActionId> {
         let mut pressed = HashSet::new();
         for (index, binding) in registry.actions().iter().enumerate() {
-            if binding.keys.iter().any(|key| state.pressed(*key)) {
+            if binding.keys.iter().any(|key| state.pressed(*key))
+                || binding
+                    .mouse_buttons
+                    .iter()
+                    .any(|button| state.mouse_pressed(*button))
+            {
                 pressed.insert(ActionId(index as u32));
             }
         }
@@ -382,9 +505,31 @@ fn sanitize_axis2(value: Vec2) -> Vec2 {
     }
 }
 
+fn sanitize_finite_vec2(value: Vec2) -> Vec2 {
+    Vec2::new(
+        if value.x.is_finite() { value.x } else { 0.0 },
+        if value.y.is_finite() { value.y } else { 0.0 },
+    )
+}
+
+fn sanitize_viewport_size(value: Vec2) -> Vec2 {
+    Vec2::new(
+        if value.x.is_finite() && value.x > 0.0 {
+            value.x
+        } else {
+            0.0
+        },
+        if value.y.is_finite() && value.y > 0.0 {
+            value.y
+        } else {
+            0.0
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Input, InputRegistry, InputState, Key};
+    use super::{Input, InputRegistry, InputState, Key, MouseButton};
 
     fn registry() -> (InputRegistry, super::ActionId, super::Axis2dId) {
         let mut registry = InputRegistry::new();
@@ -392,6 +537,7 @@ mod tests {
             .action("attack")
             .bind(Key::Space)
             .bind(Key::Enter)
+            .bind_mouse(MouseButton::Left)
             .id();
         let movement = registry
             .axis2d("move")
@@ -408,6 +554,8 @@ mod tests {
         state.begin_frame();
         state.set_key(Key::Enter, true); // edge press on a bound key
         state.set_key(Key::D, true); // held: positive x
+        state.set_mouse_position(glam::vec2(100.0, 50.0));
+        state.set_viewport_size(glam::vec2(800.0, 600.0));
 
         let mut input = Input::evaluate_continuous(&registry, &state);
         input.set_pressed(Input::pressed_this_frame(&registry, &state));
@@ -415,6 +563,22 @@ mod tests {
         assert!(input.pressed(attack));
         assert!(input.down(attack));
         assert_eq!(input.axis2d(movement), glam::vec2(1.0, 0.0));
+        assert_eq!(input.mouse_position(), glam::vec2(100.0, 50.0));
+        assert_eq!(input.viewport_size(), glam::vec2(800.0, 600.0));
+    }
+
+    #[test]
+    fn mouse_button_bindings_drive_actions() {
+        let (registry, attack, _movement) = registry();
+        let mut state = InputState::default();
+        state.begin_frame();
+        state.set_mouse_button(MouseButton::Left, true);
+
+        let mut input = Input::evaluate_continuous(&registry, &state);
+        input.set_pressed(Input::pressed_this_frame(&registry, &state));
+
+        assert!(input.pressed(attack));
+        assert!(input.down(attack));
     }
 
     #[test]
@@ -446,13 +610,13 @@ mod tests {
             .try_action("attack")
             .err()
             .expect("duplicate action should be rejected");
-        assert!(err.to_string().contains("duplicate input action"));
+        assert!(err.to_string().contains("Duplicate input action"));
 
         registry.axis2d("move");
         let err = registry
             .try_axis2d("move")
             .err()
             .expect("duplicate axis should be rejected");
-        assert!(err.to_string().contains("duplicate input axis2d"));
+        assert!(err.to_string().contains("Duplicate input axis2d"));
     }
 }

@@ -10,7 +10,9 @@ Content crates depend only on `game-kit`; production content imports
 tuple bundles; maps use `MapAuthor`; architecture tests enforce the boundary.
 
 Remaining items are API polish and future feature decisions, not blockers for
-the foundation milestone.
+the foundation milestone. Beginner-first authoring is tracked separately in
+[beginner-authoring-roadmap.md](beginner-authoring-roadmap.md); that roadmap
+builds on this facade instead of replacing it.
 
 ## What not to do next
 
@@ -80,8 +82,10 @@ renderer texture ids, event pumps, or the fixed-timestep loop.
 ## Cross-references
 
 This roadmap is implemented by the `game-kit` facade. See
-[content-authoring.md](content-authoring.md) for the author-facing guide and
-`docs/ARCHITECTURE.md` for the layer diagram. The architecture-boundary tests in
+[content-authoring.md](content-authoring.md) for the current author-facing guide,
+[beginner-authoring-roadmap.md](beginner-authoring-roadmap.md) for the next
+beginner layer, and `docs/ARCHITECTURE.md` for the layer diagram. The
+architecture-boundary tests in
 `crates/game-core/tests/architecture_boundaries.rs` enforce that content crates
 depend only on `game-kit` (plus `anyhow`/`glam`), never reach a backend, and do
 not use raw ECS/world escape hatches in production code.

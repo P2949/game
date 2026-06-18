@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# Default demo content. It depends on the game-kit authoring facade only — never
+# on game-runtime, game-renderer-vulkan, game-audio, game-platform-sdl, or
+# testbed-content.
 [dependencies]
 anyhow.workspace = true
 glam.workspace = true

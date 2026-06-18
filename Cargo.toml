@@ -14,6 +14,9 @@ members = [
     "crates/game-runtime",
     "crates/arena-content",
     "crates/testbed-content",
+    "crates/simple-content",
+    "examples/one-file-demo",
+    "xtask",
     "bin/game",
 ]
 

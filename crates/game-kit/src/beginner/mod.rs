@@ -1,0 +1,18 @@
+//! Beginner-facing authoring surface.
+//!
+//! The modules here are intentionally thin at first. They give beginner APIs a
+//! named home while preserving the existing `game_kit::prelude::*` transition.
+
+pub mod actors;
+pub mod animation;
+pub mod app;
+pub mod combat;
+pub mod context;
+pub mod debug;
+pub mod defaults;
+pub mod events;
+pub mod prefabs;
+pub mod prelude;
+pub mod scene;
+pub mod state;
+pub mod testing;
