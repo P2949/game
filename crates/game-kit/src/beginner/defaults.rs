@@ -2,14 +2,18 @@
 
 use game_core::backend::SoundHandle;
 use game_core::input::{ActionId, Axis2dId};
+use game_core::world::{EntityId, Velocity};
 use glam::{vec2, vec4};
 
 use crate::app::GameApp;
 use crate::beginner::actors::{Player, PlayerMovement, Speed};
+use crate::beginner::animation::{Animation, AnimationSet};
 use crate::beginner::combat::MeleeCombatConfig;
 use crate::beginner::state::SimpleGameState;
 use crate::context::{GameCtx, StartupGameCtx};
 use crate::input::TopDownControls;
+
+const MOVEMENT_ANIMATION_EPSILON_SQUARED: f32 = 0.0001;
 
 pub struct TopDownGameAuthor<'a, 'app> {
     app: &'a mut GameApp<'app>,
@@ -22,11 +26,14 @@ pub struct TopDownGameAuthor<'a, 'app> {
     debug_restart: Option<ActionId>,
     zoom: Option<(ActionId, ActionId)>,
     hit_sound: Option<SoundHandle>,
+    melee_combat: bool,
     enemy_chase: bool,
     enemy_patrol: bool,
     collision: bool,
     camera_follow: bool,
     pause_death_ui: bool,
+    player_animation_by_movement: bool,
+    attack_animation: Option<&'static str>,
 }
 
 impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
@@ -42,11 +49,14 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             debug_restart: None,
             zoom: None,
             hit_sound: None,
+            melee_combat: false,
             enemy_chase: false,
             enemy_patrol: false,
             collision: false,
             camera_follow: false,
             pause_death_ui: false,
+            player_animation_by_movement: false,
+            attack_animation: None,
         }
     }
 
@@ -110,7 +120,8 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
         self.hit_sound(hit_sound)
     }
 
-    pub fn with_melee_combat(self) -> Self {
+    pub fn with_melee_combat(mut self) -> Self {
+        self.melee_combat = true;
         self
     }
 
@@ -136,6 +147,16 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
 
     pub fn with_pause_death_ui(mut self) -> Self {
         self.pause_death_ui = true;
+        self
+    }
+
+    pub fn with_player_animation_by_movement(mut self) -> Self {
+        self.player_animation_by_movement = true;
+        self
+    }
+
+    pub fn with_attack_animation(mut self, name: &'static str) -> Self {
+        self.attack_animation = Some(name);
         self
     }
 
@@ -183,15 +204,24 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             });
         }
 
-        if let Some(attack) = self.attack {
-            let config = MeleeCombatConfig {
-                attack,
-                hit_sound: self.hit_sound,
-                despawn_dead_enemies: true,
-            };
-            app.every_active_tick::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
-                game.run_melee_combat(config, dt);
-            });
+        if self.melee_combat {
+            if let Some(attack) = self.attack {
+                let config = MeleeCombatConfig {
+                    attack,
+                    hit_sound: self.hit_sound,
+                    despawn_dead_enemies: true,
+                    player_attack_animation: self.attack_animation,
+                };
+                app.every_active_tick::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
+                    game.run_melee_combat(config, dt);
+                });
+            } else {
+                log::warn!("with_melee_combat() was enabled but no attack action was configured");
+            }
+        }
+
+        if self.player_animation_by_movement {
+            app.every_active_frame::<SimpleGameState>(player_animation_by_movement_system);
         }
 
         app.every_active_frame::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
@@ -216,6 +246,10 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
         if self.pause_death_ui {
             app.draw_ui(pause_death_ui_system);
         }
+
+        app.every_frame(|game: &mut GameCtx<'_, '_>, dt| {
+            game.update_camera_shake(dt);
+        });
 
         app.fixed_systems_are_pause_guarded();
     }
@@ -288,6 +322,37 @@ fn death_state_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
         .unwrap_or_default();
     state.player_dead = game.player_is_dead();
     game.insert_resource(state);
+}
+
+fn player_animation_by_movement_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    for id in game.entities_with::<Player>() {
+        if one_shot_animation_is_active(game, id) {
+            continue;
+        }
+        let moving = game.component::<Velocity>(id).is_some_and(|velocity| {
+            velocity.0.length_squared() > MOVEMENT_ANIMATION_EPSILON_SQUARED
+        });
+        let animation = if moving { "walk" } else { "idle" };
+        game.play_animation(id, animation);
+    }
+}
+
+fn one_shot_animation_is_active(game: &GameCtx<'_, '_>, id: EntityId) -> bool {
+    let Some(animation) = game.component::<Animation>(id) else {
+        return false;
+    };
+    let Some(set) = game.component::<AnimationSet>(id) else {
+        return false;
+    };
+    let Some(clip) = set.get(&animation.current) else {
+        return false;
+    };
+    if clip.looping || clip.frames.is_empty() {
+        return false;
+    }
+
+    let frame_seconds = 1.0 / clip.fps.max(0.001);
+    animation.frame + 1 < clip.frames.len() || animation.timer < frame_seconds
 }
 
 fn pause_death_ui_system(game: &mut GameCtx<'_, '_>, _dt: f32) {

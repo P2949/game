@@ -75,16 +75,30 @@ pub mod prefab;
 pub mod system;
 
 pub use app::{DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, Plugin, plugin, plugin_fn};
-pub use assets::AssetAuthor;
+pub use assets::{AssetAuthor, AssetBag, AssetBagAuthor};
 pub use beginner::actors::{
-    Door, Enemy, Name, Npc, Pickup, Player, PlayerMovement, Projectile, Solid, Speed,
+    CollectSound, Collectible, DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget, Enemy,
+    ExitDoor, Lifetime, Name, Npc, Pickup, Player, PlayerMovement, Projectile, ProjectileDamage,
+    ScoreValue, Solid, Spawner, Speed,
 };
-pub use beginner::animation::{Animation, AnimationClip, AnimationSet, PlayerActor, SpriteSheet};
+pub use beginner::animation::{
+    Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
+    idle_frames, walk_frames,
+};
+pub use beginner::camera::CameraShake;
+pub use beginner::collections::{
+    CameraOps, EnemyCollection, PickupCollection, PlayerActor, Score, ScoreOps,
+};
 pub use beginner::combat::MeleeCombatConfig;
 pub use beginner::debug::DebugOverlay;
 pub use beginner::defaults::TopDownGameAuthor;
-pub use beginner::prefabs::{EnemyPrefabAuthor, PlayerPrefabAuthor};
-pub use beginner::scene::{SceneRegistry, SceneState};
+pub use beginner::prefabs::{
+    DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
+    ProjectilePrefabAuthor, SpawnerPrefabAuthor,
+};
+pub use beginner::rules::RulesAuthor;
+pub use beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
+pub use beginner::spawn::SpawnAuthor;
 pub use beginner::state::SimpleGameState;
 pub use bundle::{Bundle, vec2s};
 pub use context::{Commands, GameCtx, StartupGameCtx};
@@ -96,7 +110,10 @@ pub use map::{MapAuthor, TileTheme};
 pub use prefab::PrefabAuthor;
 pub use system::{GameSystem, StartupSystem};
 
-/// The single import content crates need: `use game_kit::prelude::*;`.
+/// Compatibility prelude.
+///
+/// New beginner code should prefer `game_kit::beginner::prelude::*`; advanced
+/// code should prefer `game_kit::advanced::prelude::*`.
 pub mod prelude {
     pub use anyhow::{Context, Result};
     pub use glam::{Vec2, Vec4, vec2, vec4};
@@ -116,19 +133,31 @@ pub mod prelude {
     pub use crate::app::{
         DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, plugin, plugin_fn,
     };
-    pub use crate::assets::AssetAuthor;
+    pub use crate::assets::{AssetAuthor, AssetBag, AssetBagAuthor};
     pub use crate::beginner::actors::{
-        Door, Enemy, Name, Npc, Pickup, Player, PlayerMovement, Projectile, Solid, Speed,
+        CollectSound, Collectible, DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget,
+        Enemy, ExitDoor, Lifetime, Name, Npc, Pickup, Player, PlayerMovement, Projectile,
+        ProjectileDamage, ScoreValue, Solid, Spawner, Speed,
     };
     pub use crate::beginner::animation::{
-        Animation, AnimationClip, AnimationSet, PlayerActor, SpriteSheet,
+        Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
+        idle_frames, walk_frames,
+    };
+    pub use crate::beginner::camera::CameraShake;
+    pub use crate::beginner::collections::{
+        CameraOps, EnemyCollection, PickupCollection, PlayerActor, Score, ScoreOps,
     };
     pub use crate::beginner::combat::MeleeCombatConfig;
     pub use crate::beginner::context::{Game, Seconds, StartupGame};
     pub use crate::beginner::debug::DebugOverlay;
     pub use crate::beginner::defaults::TopDownGameAuthor;
-    pub use crate::beginner::prefabs::{EnemyPrefabAuthor, PlayerPrefabAuthor};
-    pub use crate::beginner::scene::{SceneRegistry, SceneState};
+    pub use crate::beginner::prefabs::{
+        DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
+        ProjectilePrefabAuthor, SpawnerPrefabAuthor,
+    };
+    pub use crate::beginner::rules::RulesAuthor;
+    pub use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
+    pub use crate::beginner::spawn::SpawnAuthor;
     pub use crate::beginner::state::SimpleGameState;
     pub use crate::bundle::{Bundle, vec2s};
     pub use crate::context::{Commands, GameCtx, StartupGameCtx};
@@ -147,27 +176,6 @@ pub mod testing {
     pub use crate::harness::GameTestHarness;
 
     pub mod prelude {
-        pub use anyhow::{Context, Result};
-        pub use glam::{Vec2, Vec4, vec2, vec4};
-
-        pub use game_ai::{
-            AiController, ChaseTarget, PathFollow, Patrol, chase_system, patrol_system,
-        };
-        pub use game_combat::{Faction, FactionId, Health, MeleeAttack, apply_damage};
-        pub use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
-        pub use game_core::builder::PrefabId;
-        pub use game_core::camera::Camera2D;
-        pub use game_core::input::{ActionId, Axis2dId, Input, Key, MouseButton};
-        pub use game_core::nav::NavGrid;
-        pub use game_core::tilemap::TileMap;
-        pub use game_core::world::{
-            Component, Entity, EntityId, Sprite, Transform, Velocity, World,
-        };
-        pub use game_map::{MapCell, cell};
-        pub use game_physics::{Collider, movement_system};
-
-        pub use crate::beginner::testing::TestEntity;
-        pub use crate::prelude::*;
-        pub use crate::testing::GameTestHarness;
+        pub use crate::advanced::testing::prelude::*;
     }
 }

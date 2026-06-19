@@ -1,4 +1,4 @@
-use game_kit::prelude::*;
+use game_kit::beginner::prelude::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ArenaAssets {

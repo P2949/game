@@ -1,11 +1,11 @@
-use game_kit::testing::prelude::*;
+use game_kit::beginner::testing::prelude::*;
 use simple_content::SimplePlugin;
 
 #[test]
 fn simple_plugin_builds_and_spawns_start_map() {
     let game = GameTestHarness::from_plugin(SimplePlugin).unwrap();
 
-    assert_eq!(game.current_map_name(), Some("simple".to_owned()));
+    game.assert_map("simple");
 }
 
 #[test]

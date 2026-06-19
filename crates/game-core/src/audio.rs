@@ -32,4 +32,13 @@ impl<'a> Audio<'a> {
             looping: false,
         });
     }
+
+    pub fn play_music(&mut self, sound: SoundHandle, volume: f32) {
+        self.commands
+            .push(AudioCommand::PlayMusic { sound, volume });
+    }
+
+    pub fn stop_music(&mut self) {
+        self.commands.push(AudioCommand::StopMusic);
+    }
 }

@@ -6,7 +6,6 @@ use game_core::backend::TextureHandle;
 use game_core::world::{EntityId, Sprite};
 use glam::Vec2;
 
-use crate::beginner::actors::Player;
 use crate::context::GameCtx;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,6 +89,26 @@ impl AnimationClip {
     }
 }
 
+pub fn frames(frames: impl IntoIterator<Item = usize>) -> AnimationClip {
+    AnimationClip::frames(frames)
+}
+
+pub fn idle_frames(frames: impl IntoIterator<Item = usize>) -> AnimationClip {
+    AnimationClip::frames(frames).fps(6.0).looping()
+}
+
+pub fn walk_frames(frames: impl IntoIterator<Item = usize>) -> AnimationClip {
+    AnimationClip::frames(frames).fps(10.0).looping()
+}
+
+pub fn attack_frames(frames: impl IntoIterator<Item = usize>) -> AnimationClip {
+    AnimationClip::frames(frames).fps(12.0).once()
+}
+
+pub fn die_frames(frames: impl IntoIterator<Item = usize>) -> AnimationClip {
+    AnimationClip::frames(frames).fps(8.0).once()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AnimationSet {
     pub sheet: SpriteSheet,
@@ -135,10 +154,6 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         true
     }
 
-    pub fn player(&mut self) -> PlayerActor<'_, 'a, 'w> {
-        PlayerActor { game: self }
-    }
-
     pub fn update_animations(&mut self, dt: f32) {
         let ids = self.entities_with::<Animation>();
         for id in ids {
@@ -160,11 +175,15 @@ impl<'a, 'w> GameCtx<'a, 'w> {
                 animation.timer += dt;
                 let frame_seconds = 1.0 / clip.fps.max(0.001);
                 while animation.timer >= frame_seconds {
-                    animation.timer -= frame_seconds;
                     if animation.frame + 1 < clip.frames.len() {
+                        animation.timer -= frame_seconds;
                         animation.frame += 1;
                     } else if clip.looping {
+                        animation.timer -= frame_seconds;
                         animation.frame = 0;
+                    } else {
+                        animation.timer = frame_seconds;
+                        break;
                     }
                 }
                 clip.frames[animation.frame.min(clip.frames.len() - 1)]
@@ -180,25 +199,12 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     }
 }
 
-pub struct PlayerActor<'g, 'a, 'w> {
-    game: &'g mut GameCtx<'a, 'w>,
-}
-
-impl<'g, 'a, 'w> PlayerActor<'g, 'a, 'w> {
-    pub fn play_animation(&mut self, name: impl Into<String>) -> bool {
-        let Some(id) = self.game.first_entity_with::<Player>() else {
-            return false;
-        };
-        self.game.play_animation(id, name)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use game_core::backend::TextureHandle;
     use glam::vec2;
 
-    use super::SpriteSheet;
+    use super::{SpriteSheet, attack_frames, die_frames, frames, idle_frames, walk_frames};
 
     #[test]
     fn spritesheet_computes_frame_uvs() {
@@ -206,5 +212,26 @@ mod tests {
 
         assert_eq!(sheet.frame_uv(0), (vec2(0.0, 0.0), vec2(0.25, 0.5)));
         assert_eq!(sheet.frame_uv(5), (vec2(0.25, 0.5), vec2(0.5, 1.0)));
+    }
+
+    #[test]
+    fn clip_helpers_set_beginner_defaults() {
+        assert_eq!(frames(0..2).fps, 8.0);
+
+        let idle = idle_frames(0..2);
+        assert_eq!(idle.fps, 6.0);
+        assert!(idle.looping);
+
+        let walk = walk_frames(2..4);
+        assert_eq!(walk.fps, 10.0);
+        assert!(walk.looping);
+
+        let attack = attack_frames(4..6);
+        assert_eq!(attack.fps, 12.0);
+        assert!(!attack.looping);
+
+        let die = die_frames(6..8);
+        assert_eq!(die.fps, 8.0);
+        assert!(!die.looping);
     }
 }

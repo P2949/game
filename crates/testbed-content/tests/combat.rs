@@ -1,4 +1,4 @@
-use game_kit::testing::prelude::*;
+use game_kit::advanced::testing::prelude::*;
 use testbed_content::TestbedPlugin;
 
 fn move_first_enemy_next_to_player(game: &mut GameTestHarness) {

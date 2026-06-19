@@ -4,15 +4,18 @@
 
 The Content Authoring API 1.0 foundation is implemented.
 
-Content crates depend only on `game-kit`; production content imports
-`game_kit::prelude::*`; raw ECS/world access is restricted to tests via
-`game_kit::testing::prelude::*`; systems use `GameCtx` helpers; prefabs use
-tuple bundles; maps use `MapAuthor`; architecture tests enforce the boundary.
+Content crates depend only on `game-kit`. Beginner production content imports
+`game_kit::beginner::prelude::*`; advanced content imports
+`game_kit::advanced::prelude::*`; beginner tests use
+`game_kit::beginner::testing::prelude::*`; raw ECS/world access is restricted to
+advanced tests via `game_kit::advanced::testing::prelude::*`. Beginner prefabs
+use game-object builders, maps use `MapAuthor`, rules use `game.rules()`, and
+architecture tests enforce the boundary.
 
 Remaining items are API polish and future feature decisions, not blockers for
-the foundation milestone. Beginner-first authoring is tracked separately in
-[beginner-authoring-roadmap.md](beginner-authoring-roadmap.md); that roadmap
-builds on this facade instead of replacing it.
+the foundation milestone. Beginner-first authoring is summarized in
+[beginner-authoring-roadmap.md](beginner-authoring-roadmap.md); that layer builds
+on this facade instead of replacing it.
 
 ## What not to do next
 
@@ -21,46 +24,61 @@ Do not rewrite the renderer/runtime for this milestone.
 Do not add scripting/editor support yet.
 Do not replace the ECS/query model until real content pressure justifies it.
 
-The next work should stabilize the current authoring API and add small examples.
+Future work should preserve the current split: beginner docs first, advanced ECS
+facade available for content that needs it.
 
 ## Target
 
-Content crates (`arena-content`, `testbed-content`) should read like game
-authoring code:
+Beginner content should read like game authoring code:
 
 ```rust
-use game_kit::prelude::*;
+use game_kit::beginner::prelude::*;
 
 impl GamePlugin for ArenaPlugin {
-    fn build(&self, game: &mut GameApp) -> Result<()> {
-        let assets = game.assets(assets::register)?;
-        let controls = game.input(input::register)?;
-        prefabs::register(game, assets, controls)?;
-        game.map("arena").tile_size(32.0).tiles([..]).start();
-        systems::register(game, assets, controls);
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let assets = game
+            .asset_bag()
+            .texture("player", "textures/test.png")?
+            .texture("floor", "textures/test.png")?
+            .texture("wall", "textures/test.png")?
+            .build();
+        let controls = game.input(|input| input.top_down_controls())?;
+
+        game.player_prefab("player")
+            .sprite(assets.texture("player"))
+            .moves_with(controls.movement, 130.0)
+            .build()?;
+
+        game.map("arena")
+            .tiles(["###", "#P#", "###"])
+            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .legend('P', "player")
+            .start();
+
+        game.rules().top_down_controls(controls).build();
         Ok(())
     }
 }
 ```
 
-Content should express **assets, controls, prefabs, maps, and systems**. It must
-not manually operate `GameBuilder`, `Schedule`, `PrefabRegistry`, `MapRegistry`,
-`StartCtx`, raw `Ctx`, validators, or runtime internals.
+Content should express **assets, controls, prefabs, maps, rules, and systems**.
+It must not manually operate `GameBuilder`, `Schedule`, `PrefabRegistry`,
+`MapRegistry`, `StartCtx`, raw `Ctx`, validators, or runtime internals.
 
 ## Stabilization checks
 
-Production content should stay free of raw `World`, `Input`, `NavGrid`, and
-`TileMap` access. Content may use `GameCtx`, authoring builders, and high-level
-`game-kit` helpers only.
+Beginner production content should stay free of raw `World`, `Input`, `NavGrid`,
+and `TileMap` access. Content may use `GameCtx`, authoring builders, and
+high-level `game-kit` helpers only.
 
 Use these measurements while stabilizing the facade:
 
 ```bash
 rg "World|Entity::new|ids_with|get::<|get_mut::<|world_and_|world_mut\(|world\(" \
-  crates/arena-content/src crates/testbed-content/src
+  crates/simple-content/src crates/arena-content/src
 
-rg "game_kit::prelude::(movement_system|chase_system|patrol_system|apply_damage)" \
-  crates/arena-content/src crates/testbed-content/src
+rg "movement_system|chase_system|patrol_system|apply_damage" \
+  crates/simple-content/src crates/arena-content/src
 ```
 
 The first command is complete when it reports no production usage outside

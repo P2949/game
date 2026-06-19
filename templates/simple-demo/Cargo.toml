@@ -4,6 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1"
-game-kit = { path = "{{game_path}}/crates/game-kit" }
-game-runtime = { path = "{{game_path}}/crates/game-runtime" }
+game-starter = { path = "{{game_path}}/crates/game-starter" }

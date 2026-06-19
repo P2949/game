@@ -1,9 +1,9 @@
 # Beginner Authoring Roadmap
 
-This roadmap describes the next authoring milestone for the project: content
+This roadmap records the beginner authoring milestone for the project: content
 that feels like building a small game, not like carefully driving an ECS facade.
-The existing `game-kit` API remains valuable as the advanced content layer; this
-document defines the beginner layer that will grow on top of it.
+The lower-level `game-kit` API remains valuable as the advanced content layer;
+new docs and demos should teach the beginner layer first.
 
 ## Current State
 
@@ -17,33 +17,51 @@ content crates
 ```
 
 Content does not operate SDL, Vulkan, renderer resources, raw schedules, or the
-runtime directly. The remaining friction is that content still authors many
-objects as component tuples and often writes manual ECS traversal for common
-gameplay rules.
+runtime directly. Beginner content can now author assets, controls, prefabs,
+maps, rules, scene flow, sound, animation, and common gameplay events without raw
+tuple bundles or manual ECS traversal. Advanced content can still use those
+lower-level APIs deliberately.
 
 ## Target Beginner API
 
 Beginner content should mostly read in game terms:
 
 ```rust
+use game_kit::beginner::prelude::*;
+
+let assets = game
+    .asset_bag()
+    .texture("player", "textures/test.png")?
+    .texture("slime", "textures/test.png")?
+    .texture("floor", "textures/test.png")?
+    .texture("wall", "textures/test.png")?
+    .sound("hit", "sounds/hit.wav")?
+    .build();
+let controls = game.input(|input| input.top_down_controls())?;
+
 game.player_prefab("player")
-    .sprite(assets.player)
+    .sprite(assets.texture("player"))
     .health(100)
     .moves_with(controls.movement, 130.0)
     .build()?;
 
 game.enemy_prefab("slime")
-    .sprite(assets.slime)
+    .sprite(assets.texture("slime"))
     .chases_player()
     .melee(26.0, 6)
     .build()?;
 
-game.use_top_down_game()
-    .controls(controls)
-    .hit_sound(assets.hit)
-    .with_enemy_chase()
-    .with_collision()
-    .with_camera_follow()
+game.map("level_1")
+    .tiles(["#####", "#P.E#", "#####"])
+    .simple_theme(assets.texture("floor"), assets.texture("wall"))
+    .legend('P', "player")
+    .legend('E', "slime")
+    .start();
+
+game.rules()
+    .top_down_controls(controls)
+    .enemies_damage_player()
+    .camera_follows_player()
     .build();
 ```
 
@@ -122,6 +140,10 @@ inspection is appropriate.
    diagnostics, debug tools, tutorials, and demo generation.
 10. Tighten architecture tests once the beginner APIs are stable.
 
+These phases are implemented for the current Rust authoring path. Future work
+can still refine naming, add richer examples, or grow editor/scripting support
+after real game content asks for it.
+
 ## Definition Of Done
 
 The beginner authoring milestone is complete when:
@@ -136,3 +158,6 @@ The beginner authoring milestone is complete when:
 - File-backed sound, sprite-sheet animation, and input presets exist for normal
   first-game expectations.
 - Tutorial docs teach the beginner path before architecture docs.
+
+The current implementation satisfies this definition for the checked-in
+beginner demos, examples, and tutorial path.

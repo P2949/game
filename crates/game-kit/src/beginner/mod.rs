@@ -6,6 +6,8 @@
 pub mod actors;
 pub mod animation;
 pub mod app;
+pub mod camera;
+pub mod collections;
 pub mod combat;
 pub mod context;
 pub mod debug;
@@ -13,6 +15,9 @@ pub mod defaults;
 pub mod events;
 pub mod prefabs;
 pub mod prelude;
+pub mod rules;
 pub mod scene;
+pub mod spawn;
 pub mod state;
 pub mod testing;
+pub mod time;

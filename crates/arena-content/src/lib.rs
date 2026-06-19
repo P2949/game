@@ -1,7 +1,7 @@
 pub mod assets;
 pub mod level;
 
-use game_kit::prelude::*;
+use game_kit::beginner::prelude::*;
 
 const PLAYER: &str = "arena/player";
 const SLIME: &str = "arena/slime";

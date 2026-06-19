@@ -41,8 +41,8 @@ Debug runs can find the workspace `assets/` directory automatically. Release
 packages should carry `assets/` next to the executable or set `GAME_ASSET_DIR`.
 
 The same binary can run multiple content crates. Use `GAME_DEMO=simple` for the
-beginner demo, `GAME_DEMO=testbed` for testbed content, or omit `GAME_DEMO` for
-the arena demo.
+beginner demo, `GAME_DEMO=testbed` only for the advanced testbed reference, or
+omit `GAME_DEMO` for the arena demo.
 
 ## Common errors
 

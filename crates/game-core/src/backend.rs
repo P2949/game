@@ -22,17 +22,15 @@ pub struct TextureLoadRequest {
     pub path: String,
 }
 
-/// How a logical sound is produced. Audio is generated-only today, so most
-/// content registers [`SoundLoadRequest::Generated`]; [`SoundLoadRequest::File`]
-/// describes file-backed loading that the runtime does not implement yet but the
-/// asset layer already models honestly (file sounds are validated on disk,
-/// generated sounds are not).
+/// How a logical sound is produced.
+///
+/// File-backed WAV sounds are loaded by the current audio runtime. WAV channel
+/// count and sample rate are normalized to the mixer output format at load time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SoundLoadRequest {
     /// A runtime-synthesized sound effect, identified by a content-chosen name.
     Generated { name: String },
-    /// A sound loaded from a file under the asset root. Not yet played from the
-    /// file by the runtime, but validated to exist.
+    /// A sound loaded from a WAV file under the asset root.
     File { path: String },
 }
 
@@ -54,6 +52,11 @@ pub enum AudioCommand {
         volume: f32,
         looping: bool,
     },
+    PlayMusic {
+        sound: SoundHandle,
+        volume: f32,
+    },
+    StopMusic,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

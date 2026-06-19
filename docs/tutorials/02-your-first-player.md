@@ -17,7 +17,7 @@ top-down controls.
 
 ```rust
 game.player_prefab("player")
-    .sprite(assets.player)
+    .sprite(assets.texture("player"))
     .moves_with(controls.movement, 130.0)
     .build()?;
 ```
@@ -25,16 +25,16 @@ game.player_prefab("player")
 ## Explanation
 
 `game.player_prefab("player")` creates a reusable spawn recipe. The sprite comes
-from the asset handles returned by `game.assets(...)`. The movement axis comes
-from `game.input(|input| input.top_down_controls())?`.
+from the asset bag returned by `game.asset_bag()`. The movement axis comes from
+`game.input(|input| input.top_down_controls())?`.
 
 The builder adds the beginner player pieces for you. Keep this first version
 small: one sprite, one movement binding, one speed.
 
 ## Common errors
 
-If the player prefab says it has no sprite, add `.sprite(assets.player)` before
-`.build()?`.
+If the player prefab says it has no sprite, add
+`.sprite(assets.texture("player"))` before `.build()?`.
 
 If the player prefab says it has no movement axis, add
 `.moves_with(controls.movement, 130.0)` before `.build()?`.

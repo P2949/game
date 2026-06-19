@@ -13,8 +13,10 @@ plugin to run:
   `game-platform-sdl`, `game-audio`
 - gameplay building blocks: `game-map`, `game-ai`, `game-combat`, `game-physics`
 - content authoring facade: `game-kit`
-- content plugins (demos): `arena-content` (default), `testbed-content`, and
-  `simple-content`
+- content plugins (demos): `simple-content` (pure beginner example),
+  `arena-content` (beginner-style playable demo), and `testbed-content`
+  (advanced testbed showing manual systems, RON maps, and lower-level
+  `game-kit` APIs)
 
 The binary picks a demo from the `GAME_DEMO` environment variable (`arena` by
 default, plus `simple` or `testbed`); the runtime, renderer, audio, and platform
@@ -28,14 +30,16 @@ This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 - 2D sprite rendering with layered, texture-batched draws
 - fixed-timestep gameplay
 - axis-separated AABB collision with wall sliding
-- simple generated audio through a lock-free mixer
+- file-backed WAV sound effects and looping music handles through `game-kit`
+- generated placeholder sounds through a lock-free mixer
 
 It is **not** yet:
 
 - a full engine
 - a finished game
 - a general asset pipeline
-- a file-backed audio pipeline; sound effects are generated today
+- OGG/MP3 playback or streaming audio; WAV files are loaded into memory and
+  converted to the mixer rate/channels at startup
 
 ## Features
 
@@ -48,30 +52,63 @@ It is **not** yet:
 
 ## Content Authoring Model
 
-Content crates import the facade:
+Beginner content crates import the beginner facade and describe assets, controls,
+prefabs, maps, and rules through `GameApp`:
 
 ```rust
-use game_kit::prelude::*;
-```
+use game_kit::beginner::prelude::*;
 
-This is the intended foundation milestone: content code now talks to
-`game-kit`, not to runtime/backend/registry/schedule internals.
-
-They declare assets, controls, prefabs, maps, and systems through `GameApp`.
-For example:
-
-```rust
 impl GamePlugin for DemoPlugin {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        let assets = game.assets(assets::register)?;
-        let input = game.input(input::register)?;
-        prefabs::register(game, &assets, &input)?;
-        level::register(game, &assets)?;
-        systems::register(game, &assets, &input);
+        let assets = game
+            .asset_bag()
+            .texture("player", "textures/test.png")?
+            .texture("slime", "textures/test.png")?
+            .texture("floor", "textures/test.png")?
+            .texture("wall", "textures/test.png")?
+            .sound("hit", "sounds/hit.wav")?
+            .build();
+
+        let controls = game.input(|input| input.top_down_controls())?;
+
+        game.player_prefab("player")
+            .sprite(assets.texture("player"))
+            .moves_with(controls.movement, 130.0)
+            .build()?;
+
+        game.enemy_prefab("slime")
+            .sprite(assets.texture("slime"))
+            .chases_player()
+            .build()?;
+
+        game.map("level_1")
+            .tiles(["#####", "#P.E#", "#####"])
+            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .legend('P', "player")
+            .legend('E', "slime")
+            .start();
+
+        game.rules()
+            .top_down_controls(controls)
+            .enemies_damage_player()
+            .camera_follows_player()
+            .build();
+
         Ok(())
     }
 }
+```
 
+This is the intended first path: content code talks to `game-kit`, not to
+runtime/backend/registry/schedule internals.
+
+### Advanced API
+
+Advanced custom ECS-style content still exists under
+`game_kit::advanced::prelude::*`. Advanced content can still register raw tuple
+prefabs and custom systems when it intentionally needs lower-level access:
+
+```rust
 game.prefab("demo/player", |prefab| {
     prefab
         .spawn(|at| {
@@ -104,10 +141,11 @@ guide.
 ## Authoring levels
 
 - Beginner API: player, enemy, map, action, scene, sound, animation, and
-  top-down helper APIs. Planned and tracked in
+  top-down helper APIs. Copy `simple-content`, `arena-content`, the tutorials,
+  or `examples/one-file-demo` first. Planned and tracked in
   [`docs/beginner-authoring-roadmap.md`](docs/beginner-authoring-roadmap.md).
 - Advanced content API: the current `game-kit` ECS facade for custom prefabs,
-  systems, queries, and tests. Implemented.
+  systems, queries, and tests. `testbed-content` is the advanced demo-lab.
 - Engine/runtime API: internal engine, runtime, renderer, platform, and audio
   crates. Not for content.
 
@@ -126,7 +164,7 @@ guide.
 cargo run -p game                                   # debug build (validation layers enabled)
 GAME_ASSET_DIR=assets cargo run -p game --release   # optimized build (LTO, single codegen unit)
 GAME_DEMO=simple cargo run -p game                  # run the tiny beginner-pressure-test demo
-GAME_DEMO=testbed cargo run -p game                 # run the second (testbed) demo
+GAME_DEMO=testbed cargo run -p game                 # run the advanced testbed demo
 ```
 
 The workspace sets `bin/game` as its default member, so a plain `cargo run`

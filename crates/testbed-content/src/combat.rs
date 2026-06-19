@@ -1,4 +1,4 @@
-use game_kit::prelude::*;
+use game_kit::advanced::prelude::*;
 
 /// Resolves a melee combat tick into engine commands: queued hit sounds and
 /// despawns of dead enemies.

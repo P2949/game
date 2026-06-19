@@ -1,8 +1,14 @@
 # Tutorials
 
 These tutorials build the beginner path in order. They start from the tiny
-`simple-content` demo and stay on `game_kit::prelude::*` APIs so you can make a
-playable top-down game without reading the engine architecture first.
+`simple-content` demo and stay on `game_kit::beginner::prelude::*` APIs so you
+can make a playable top-down game without reading the engine architecture first.
+Snippet examples assume this import unless the page says it is a standalone
+generated project:
+
+```rust
+use game_kit::beginner::prelude::*;
+```
 
 1. [Run the demo](01-run-the-demo.md)
 2. [Your first player](02-your-first-player.md)
@@ -15,3 +21,5 @@ playable top-down game without reading the engine architecture first.
 
 Keep [common errors](common-errors.md) nearby while editing. The messages are
 written to point back to the builder call that fixes the problem.
+
+For focused "How do I add X?" recipes, use the [cookbook](../cookbook/README.md).

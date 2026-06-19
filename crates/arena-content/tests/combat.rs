@@ -1,5 +1,5 @@
 use arena_content::ArenaPlugin;
-use game_kit::testing::prelude::*;
+use game_kit::beginner::testing::prelude::*;
 
 fn move_enemy_next_to_player(game: &mut GameTestHarness) {
     game.move_enemy_next_to_player(0);
@@ -13,7 +13,7 @@ fn player_attack_damages_and_despawns_dead_enemy() {
 
     game.tap_action("attack");
 
-    assert_eq!(game.enemy_count(), 0);
+    game.assert_enemy_count(0);
     assert_eq!(game.sound_count(), 1);
 }
 
@@ -24,7 +24,7 @@ fn enemy_attack_damages_player() {
 
     game.step();
 
-    assert_eq!(game.player().health(), 94);
+    game.assert_player_health(94);
     assert_eq!(game.sound_count(), 1);
 }
 

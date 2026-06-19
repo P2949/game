@@ -16,7 +16,7 @@ A `slime` enemy that has a sprite, chases the player, and can make melee hits.
 
 ```rust
 game.enemy_prefab("slime")
-    .sprite(assets.slime)
+    .sprite(assets.texture("slime"))
     .chases_player()
     .melee(26.0, 6)
     .build()?;
@@ -41,11 +41,12 @@ map spawns describe where instances start.
 
 If the enemy does not appear, check the map spawn name and position.
 
-If the enemy does not move, make sure the top-down preset later includes
+If the enemy does not move, make sure the rules later include
+`.enemies_damage_player()` or that the top-down preset includes
 `.with_enemy_chase()`.
 
-If the enemy cannot damage the player, make sure combat is enabled in the next
-tutorial.
+If the enemy cannot damage the player, make sure the combat rules are enabled in
+the next tutorial.
 
 ## Next step
 

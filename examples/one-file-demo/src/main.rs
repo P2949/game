@@ -1,38 +1,27 @@
-use game_kit::beginner::prelude::*;
-use game_runtime::RuntimeConfig;
-
-#[derive(Clone, Copy)]
-struct Assets {
-    player: TextureHandle,
-    slime: TextureHandle,
-    floor: TextureHandle,
-    wall: TextureHandle,
-    hit: SoundHandle,
-}
+use game_starter::prelude::*;
 
 fn main() -> Result<()> {
     run_game("My First Game", |game| {
-        let assets = game.assets(|assets| {
-            Ok(Assets {
-                player: assets.texture("player", "textures/test.png")?,
-                slime: assets.texture("slime", "textures/test.png")?,
-                floor: assets.texture("floor", "textures/test.png")?,
-                wall: assets.texture("wall", "textures/test.png")?,
-                hit: assets.sound("hit", "sounds/hit.wav")?,
-            })
-        })?;
+        let assets = game
+            .asset_bag()
+            .texture("player", "textures/test.png")?
+            .texture("slime", "textures/test.png")?
+            .texture("floor", "textures/test.png")?
+            .texture("wall", "textures/test.png")?
+            .sound("hit", "sounds/hit.wav")?
+            .build();
 
         let controls = game.input(|input| input.top_down_controls())?;
 
         game.player_prefab("player")
-            .sprite(assets.player)
+            .sprite(assets.texture("player"))
             .moves_with(controls.movement, 130.0)
             .health(100)
             .melee(30.0, 25)
             .build()?;
 
         game.enemy_prefab("slime")
-            .sprite(assets.slime)
+            .sprite(assets.texture("slime"))
             .chases_player()
             .health(40)
             .melee(26.0, 6)
@@ -40,14 +29,14 @@ fn main() -> Result<()> {
 
         game.map("level_1")
             .tiles(["########", "#......#", "#..P.E.#", "#......#", "########"])
-            .simple_theme(assets.floor, assets.wall)
+            .simple_theme(assets.texture("floor"), assets.texture("wall"))
             .legend('P', "player")
             .legend('E', "slime")
             .start();
 
         game.use_top_down_game()
             .controls(controls)
-            .hit_sound(assets.hit)
+            .hit_sound(assets.sound("hit"))
             .with_melee_combat()
             .with_enemy_chase()
             .with_collision()
@@ -57,16 +46,4 @@ fn main() -> Result<()> {
 
         Ok(())
     })
-}
-
-fn run_game<F>(title: &str, build: F) -> Result<()>
-where
-    F: for<'app> Fn(&mut GameApp<'app>) -> Result<()>,
-{
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .try_init();
-    game_runtime::run(
-        RuntimeConfig::default().title(title),
-        game_kit::plugin_fn(build),
-    )
 }

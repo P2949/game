@@ -84,8 +84,8 @@ impl AssetRegistry {
     }
 
     /// Low-level convenience wrapper around [`Self::try_sound_file`] that panics
-    /// on duplicate/conflicting keys. File-backed sounds are not exposed through
-    /// `game-kit` until runtime playback exists.
+    /// on duplicate/conflicting keys. Content should use
+    /// `game-kit::AssetAuthor`, which returns `Result`.
     pub fn sound_file(&mut self, key: impl Into<String>, path: impl Into<String>) -> SoundHandle {
         self.try_sound_file(key, path)
             .expect("sound asset keys must not be reused with a different source")

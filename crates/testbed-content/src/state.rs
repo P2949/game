@@ -1,4 +1,4 @@
-use game_kit::prelude::*;
+use game_kit::advanced::prelude::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GameState {

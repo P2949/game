@@ -24,8 +24,9 @@ runtime/backend crates
   game-runtime, game-renderer-vulkan, game-platform-sdl, game-audio
 ```
 
-Production content authors use `game_kit::prelude::*`; tests that need raw
-inspection use `game_kit::testing::prelude::*`. Lower-level builder, schedule,
+Production content authors use `game_kit::prelude::*`; beginner tests use
+`game_kit::beginner::testing::prelude::*`; tests that need raw inspection use
+`game_kit::advanced::testing::prelude::*`. Lower-level builder, schedule,
 registry, validator, raw world/query, and raw context APIs are for the runtime,
 facade internals, and tests; the grouped escape hatch for those internals is
 `game_core::internal_prelude`, not a content API. This is the achieved content

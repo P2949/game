@@ -21,7 +21,8 @@ cargo deny check advisories licenses sources bans
 ```
 
 The two `rg` checks should report no production content hits; raw ECS inspection
-is allowed only inside `#[cfg(test)]` modules via `game_kit::testing::prelude`.
+is allowed only inside advanced `#[cfg(test)]` modules via
+`game_kit::advanced::testing::prelude`.
 
 To reproduce CI exactly (SDL3 built from source), use the `game/ci-build-sdl3`
 workspace feature for workspace commands and `ci-build-sdl3` on package-specific

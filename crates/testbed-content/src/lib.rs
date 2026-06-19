@@ -1,6 +1,8 @@
-//! Second demo content plugin. It defines a distinct map, three prefabs (player,
-//! chasing enemy, patrolling enemy), and its own systems while depending on the
-//! author-facing `game-kit` facade rather than runtime/backend crates.
+//! Advanced testbed content plugin.
+//!
+//! This crate intentionally demonstrates the advanced `game-kit` surface:
+//! manual system wiring, RON maps, patrol setup, and custom state. Beginner
+//! examples should copy `simple-content` or `arena-content`, not this crate.
 
 pub mod assets;
 pub mod combat;
@@ -10,7 +12,7 @@ pub mod prefabs;
 pub mod state;
 pub mod systems;
 
-use game_kit::prelude::*;
+use game_kit::advanced::prelude::*;
 
 pub struct TestbedPlugin;
 

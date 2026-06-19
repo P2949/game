@@ -4,6 +4,14 @@ use game_combat::Health;
 use game_core::world::{EntityId, Transform, World};
 use glam::Vec2;
 
+pub mod prelude {
+    pub use anyhow::{Context, Result};
+    pub use glam::{Vec2, vec2};
+
+    pub use crate::beginner::testing::TestEntity;
+    pub use crate::testing::GameTestHarness;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TestEntity {
     id: EntityId,

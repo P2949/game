@@ -53,6 +53,34 @@ impl GamePlugin for MapFlowPlugin {
     }
 }
 
+struct SimpleSceneFlowPlugin;
+
+impl GamePlugin for SimpleSceneFlowPlugin {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let controls = game.input(|input| input.top_down_controls())?;
+
+        game.player_prefab(PLAYER)
+            .sprite(TextureHandle(0))
+            .moves_with(controls.movement, 120.0)
+            .health(1)
+            .build()?;
+
+        register_map(game, "menu", [".."], false, true);
+        register_map(game, "game", ["...", "..."], true, false);
+        register_map(game, "game_over", ["...."], false, false);
+
+        game.use_simple_scene_flow()
+            .menu("menu")
+            .game("game")
+            .game_over("game_over")
+            .start_on(controls.attack)
+            .restart_on(controls.reset)
+            .build();
+
+        Ok(())
+    }
+}
+
 struct SymbolicMapPlugin;
 
 impl GamePlugin for SymbolicMapPlugin {
@@ -124,6 +152,58 @@ fn beginner_map_flow_changes_maps_and_respawns_objects() {
     );
     assert_eq!(game.map().tilemap.width(), 3);
     assert_eq!(game.world().ids_with::<Transform>().len(), 1);
+}
+
+#[test]
+fn simple_scene_flow_drives_menu_level_game_over_restart() {
+    let mut game = GameTestHarness::from_plugin(SimpleSceneFlowPlugin).unwrap();
+
+    assert_eq!(game.current_map_name(), Some("menu".to_owned()));
+    assert_eq!(
+        game.world()
+            .get_resource::<SceneState>()
+            .map(|scene| scene.current().to_owned()),
+        Some("menu".to_owned())
+    );
+    game.frame(0.0);
+    game.assert_ui_contains("Press start");
+
+    game = game.press_action("attack");
+    game.frame(1.0 / 120.0);
+    game.clear_input();
+    assert_eq!(game.current_map_name(), Some("game".to_owned()));
+    assert_eq!(
+        game.world()
+            .get_resource::<SceneState>()
+            .map(|scene| scene.current().to_owned()),
+        Some("game".to_owned())
+    );
+    assert_eq!(game.map().tilemap.width(), 3);
+    assert_eq!(game.player_count(), 1);
+
+    let player = game.player();
+    game.set_entity_health(player, 0);
+    game.frame(1.0 / 120.0);
+    assert_eq!(game.current_map_name(), Some("game_over".to_owned()));
+    assert_eq!(
+        game.world()
+            .get_resource::<SceneState>()
+            .map(|scene| scene.current().to_owned()),
+        Some("game_over".to_owned())
+    );
+    assert_eq!(game.map().tilemap.width(), 4);
+    game.assert_ui_contains("Game Over");
+
+    game = game.press_action("reset");
+    game.frame(1.0 / 120.0);
+    assert_eq!(game.current_map_name(), Some("game".to_owned()));
+    assert_eq!(
+        game.world()
+            .get_resource::<SceneState>()
+            .map(|scene| scene.current().to_owned()),
+        Some("game".to_owned())
+    );
+    assert_eq!(game.player_count(), 1);
 }
 
 #[test]

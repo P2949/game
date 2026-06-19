@@ -2,12 +2,12 @@
 
 ## Goal
 
-Use a sprite sheet and play a looping animation on an actor prefab.
+Use a sprite sheet and play idle/walk animations on an actor prefab.
 
 ## What you will build
 
-A player sprite sheet with an idle or walk clip that the top-down preset advances
-each frame.
+A player sprite sheet with idle and walk clips that the top-down preset advances
+and switches by movement.
 
 ## Files you will edit
 
@@ -18,52 +18,53 @@ each frame.
 Register a sprite sheet:
 
 ```rust
-#[derive(Clone, Copy, Debug)]
-struct SimpleAssets {
-    player: SpriteSheet,
-    slime: TextureHandle,
-    floor: TextureHandle,
-    wall: TextureHandle,
-    hit: SoundHandle,
-}
-
-fn register_assets(assets: &mut AssetAuthor<'_>) -> Result<SimpleAssets> {
-    Ok(SimpleAssets {
-        player: assets.spritesheet("simple/player", "textures/test.png", 4, 1)?,
-        slime: assets.texture("simple/slime", "textures/test.png")?,
-        floor: assets.texture("simple/floor", "textures/test.png")?,
-        wall: assets.texture("simple/wall", "textures/test.png")?,
-        hit: assets.sound("simple/hit", "sounds/hit.wav")?,
-    })
-}
+let assets = game
+    .asset_bag()
+    .spritesheet("player", "textures/test.png", 4, 1)?
+    .texture("slime", "textures/test.png")?
+    .texture("floor", "textures/test.png")?
+    .texture("wall", "textures/test.png")?
+    .sound("hit", "sounds/hit.wav")?
+    .build();
 ```
 
 Use the sheet in the player prefab:
 
 ```rust
 game.player_prefab("player")
-    .spritesheet(assets.player)
-    .animation("walk", AnimationClip::frames(0..4).fps(8.0))
-    .play("walk")
+    .spritesheet(assets.spritesheet("player"))
+    .idle(0..1)
+    .walk(1..4)
     .moves_with(controls.movement, 130.0)
     .build()?;
+```
+
+Enable movement-driven switching in the beginner top-down preset:
+
+```rust
+game.use_top_down_game()
+    .controls(controls)
+    .with_player_animation_by_movement()
+    .build();
 ```
 
 ## Explanation
 
 `spritesheet` registers one texture and describes how many columns and rows of
-frames it contains. `AnimationClip::frames(0..4)` plays frames 0, 1, 2, and 3.
+frames it contains. `.idle(0..1)` plays frame 0 while still, and `.walk(1..4)`
+plays frames 1, 2, and 3 while moving.
 
 The top-down preset already calls the beginner animation updater, so actors with
-`Animation` and `AnimationSet` advance automatically.
+animation clips advance automatically. `.with_player_animation_by_movement()`
+switches the player between `idle` and `walk`.
 
 ## Common errors
 
 If startup says the prefab has animations but uses a static texture, replace
 `.sprite(...)` with `.spritesheet(...)`.
 
-If the animation name is missing, make sure `.play("walk")` matches the name in
-`.animation("walk", ...)`.
+If the player never switches to `walk`, make sure the top-down preset includes
+`.with_player_animation_by_movement()`.
 
 If only one frame appears, check the sprite sheet column and row counts.
 

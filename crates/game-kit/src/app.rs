@@ -13,13 +13,21 @@ use anyhow::{Context, Result, anyhow};
 use game_core::builder::{GameBuilder, PrefabValidator};
 use game_core::commands::CommandQueue;
 use game_core::input::ActionId;
+use game_core::world::EntityId;
 use game_map::GameMap;
 
-use crate::assets::AssetAuthor;
+use crate::assets::{AssetAuthor, AssetBagAuthor};
 use crate::beginner::debug::{DebugOverlay, draw_debug_overlay};
 use crate::beginner::defaults::TopDownGameAuthor;
-use crate::beginner::prefabs::{EnemyPrefabAuthor, PlayerPrefabAuthor};
-use crate::beginner::scene::{SceneRegistry, SceneState};
+use crate::beginner::events::DEFAULT_PICKUP_COLLECT_RANGE;
+use crate::beginner::prefabs::{
+    DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
+    ProjectilePrefabAuthor, SpawnerPrefabAuthor,
+};
+use crate::beginner::rules::RulesAuthor;
+use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
+use crate::beginner::state::SimpleGameState;
+use crate::beginner::time::MIN_TIMER_SECONDS;
 use crate::context::{GameCtx, StartupGameCtx};
 use crate::helpers::SimulationState;
 use crate::input::InputAuthor;
@@ -88,6 +96,11 @@ impl<'app> GameApp<'app> {
         f(&mut author)
     }
 
+    /// Begins a beginner-friendly named asset bag.
+    pub fn asset_bag(&mut self) -> AssetBagAuthor<'_> {
+        AssetBagAuthor::new(AssetAuthor::new(self.builder.assets_mut()))
+    }
+
     /// Declares logical controls, returning whatever the closure builds (typically
     /// the content's controls struct).
     pub fn input<R>(&mut self, f: impl FnOnce(&mut InputAuthor<'_>) -> Result<R>) -> Result<R> {
@@ -119,9 +132,37 @@ impl<'app> GameApp<'app> {
         EnemyPrefabAuthor::new(self, name.into())
     }
 
+    /// Begins a beginner-friendly pickup prefab.
+    pub fn pickup_prefab(&mut self, name: impl Into<String>) -> PickupPrefabAuthor<'_, 'app> {
+        PickupPrefabAuthor::new(self, name.into())
+    }
+
+    /// Begins a beginner-friendly door prefab.
+    pub fn door_prefab(&mut self, name: impl Into<String>) -> DoorPrefabAuthor<'_, 'app> {
+        DoorPrefabAuthor::new(self, name.into())
+    }
+
+    /// Begins a beginner-friendly projectile prefab.
+    pub fn projectile_prefab(
+        &mut self,
+        name: impl Into<String>,
+    ) -> ProjectilePrefabAuthor<'_, 'app> {
+        ProjectilePrefabAuthor::new(self, name.into())
+    }
+
+    /// Begins a beginner-friendly spawner prefab.
+    pub fn spawner_prefab(&mut self, name: impl Into<String>) -> SpawnerPrefabAuthor<'_, 'app> {
+        SpawnerPrefabAuthor::new(self, name.into())
+    }
+
     /// Begins configuring a beginner top-down game preset.
     pub fn use_top_down_game(&mut self) -> TopDownGameAuthor<'_, 'app> {
         TopDownGameAuthor::new(self)
+    }
+
+    /// Begins configuring declarative beginner rules.
+    pub fn rules(&mut self) -> RulesAuthor<'_, 'app> {
+        RulesAuthor::new(self)
     }
 
     /// Begins declaring an in-code map.
@@ -143,12 +184,32 @@ impl<'app> GameApp<'app> {
         self
     }
 
+    /// Declares a named beginner menu scene.
+    pub fn menu_scene(&mut self, name: impl Into<String>) -> &mut Self {
+        self.scene(name)
+    }
+
+    /// Declares a named beginner level scene.
+    pub fn level_scene(&mut self, name: impl Into<String>) -> &mut Self {
+        self.scene(name)
+    }
+
+    /// Declares a named beginner game-over scene.
+    pub fn game_over_scene(&mut self, name: impl Into<String>) -> &mut Self {
+        self.scene(name)
+    }
+
     /// Declares a named beginner scene and makes it the initial scene.
     pub fn start_scene(&mut self, name: impl Into<String>) -> &mut Self {
         let name = name.into();
         self.scene(name.clone());
         self.start_scene = Some(name);
         self
+    }
+
+    /// Begins configuring a simple menu -> level -> game-over scene flow.
+    pub fn use_simple_scene_flow(&mut self) -> SimpleSceneFlowAuthor<'_, 'app> {
+        SimpleSceneFlowAuthor::new(self)
     }
 
     pub fn enable_debug_overlay(&mut self) -> &mut Self {
@@ -286,6 +347,135 @@ impl<'app> GameApp<'app> {
         self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             if game.pressed(action) {
                 f(game);
+            }
+        });
+    }
+
+    /// Runs `f` on fixed ticks where `action` was pressed and the simple
+    /// beginner state is active.
+    pub fn on_action_when_playing(
+        &mut self,
+        action: ActionId,
+        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+    ) {
+        self.every_active_tick::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, _dt| {
+            if game.pressed(action) {
+                f(game);
+            }
+        });
+    }
+
+    pub fn on_action_cooldown(
+        &mut self,
+        action: ActionId,
+        seconds: f32,
+        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+    ) {
+        let seconds = seconds.max(0.0);
+        let mut cooldown: f32 = 0.0;
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, dt: f32| {
+            cooldown = (cooldown - dt).max(0.0);
+            if cooldown == 0.0 && game.pressed(action) {
+                cooldown = seconds;
+                f(game);
+            }
+        });
+    }
+
+    pub fn every_seconds(
+        &mut self,
+        seconds: f32,
+        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+    ) {
+        let seconds = seconds.max(MIN_TIMER_SECONDS);
+        let mut timer = 0.0;
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, dt| {
+            timer += dt;
+            while timer >= seconds {
+                timer -= seconds;
+                f(game);
+            }
+        });
+    }
+
+    pub fn after_seconds(
+        &mut self,
+        seconds: f32,
+        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+    ) {
+        let seconds = seconds.max(0.0);
+        let mut timer = 0.0;
+        let mut done = false;
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, dt| {
+            if done {
+                return;
+            }
+            timer += dt;
+            if timer >= seconds {
+                done = true;
+                f(game);
+            }
+        });
+    }
+
+    pub fn on_enemy_death(&mut self, mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static) {
+        let mut known_dead: Vec<EntityId> = Vec::new();
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let dead = game
+                .enemy_ids()
+                .into_iter()
+                .filter(|id| game.is_dead(*id))
+                .collect::<Vec<_>>();
+            for id in &dead {
+                if !known_dead.contains(id) {
+                    f(game);
+                }
+            }
+            known_dead = dead;
+        });
+    }
+
+    pub fn on_player_collect_pickup(&mut self, f: impl FnMut(&mut GameCtx<'_, '_>) + 'static) {
+        self.on_player_collect_pickup_within(DEFAULT_PICKUP_COLLECT_RANGE, f);
+    }
+
+    pub fn on_player_touching_pickup(&mut self, f: impl FnMut(&mut GameCtx<'_, '_>) + 'static) {
+        self.on_player_collect_pickup(f);
+    }
+
+    pub fn on_player_collect_pickup_within(
+        &mut self,
+        range: f32,
+        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+    ) {
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            if game.collect_pickups_near_player(range) > 0 {
+                f(game);
+            }
+        });
+    }
+
+    pub fn on_scene_enter(
+        &mut self,
+        scene: impl Into<String>,
+        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+    ) {
+        let scene = scene.into();
+        let mut was_in_scene = false;
+        self.every_frame(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let is_in_scene = game.current_scene_name().as_deref() == Some(scene.as_str());
+            if is_in_scene && !was_in_scene {
+                f(game);
+            }
+            was_in_scene = is_in_scene;
+        });
+    }
+
+    pub fn on_scene(&mut self, scene: impl Into<String>, mut system: impl GameSystem) {
+        let scene = scene.into();
+        self.every_frame(move |game: &mut GameCtx<'_, '_>, dt| {
+            if game.current_scene_name().as_deref() == Some(scene.as_str()) {
+                system.run(game, dt);
             }
         });
     }

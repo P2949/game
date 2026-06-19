@@ -14,6 +14,7 @@ use game_core::camera::Camera2D;
 use game_core::commands::CommandQueue;
 use game_core::input::{ActionId, Axis2dId, Input};
 use game_core::world::{Component, EntityId, Transform, Velocity};
+use game_map::MapCell;
 use glam::{Vec2, Vec4};
 
 use crate::helpers::{InputDriven, MovementSpeed};
@@ -87,7 +88,18 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         self.inner.audio.play(sound, volume);
     }
 
-    /// Deferred world commands (despawn, play sound) applied after the step.
+    /// Starts looping music immediately, replacing any currently playing music.
+    pub fn play_music(&mut self, sound: SoundHandle, volume: f32) {
+        self.inner.audio.play_music(sound, volume);
+    }
+
+    /// Stops currently playing music.
+    pub fn stop_music(&mut self) {
+        self.inner.audio.stop_music();
+    }
+
+    /// Deferred runtime commands applied after the current step: despawn, play
+    /// sound, spawn prefab, and map flow commands.
     pub fn commands(&mut self) -> Commands<'_> {
         Commands {
             queue: self.inner.world.resource_or_insert_with(CommandQueue::new),
@@ -152,6 +164,21 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     pub fn position(&self, id: EntityId) -> Option<Vec2> {
         self.component::<Transform>(id)
             .map(|transform| transform.pos)
+    }
+
+    pub fn cell_center(&self, cell: MapCell) -> Vec2 {
+        self.inner.map.cell_center(cell.col(), cell.row())
+    }
+
+    pub fn first_floor_center(&self) -> Option<Vec2> {
+        for row in 0..self.inner.map.height() {
+            for col in 0..self.inner.map.width() {
+                if !self.inner.map.is_wall(col as i32, row as i32) {
+                    return Some(self.inner.map.cell_center(col, row));
+                }
+            }
+        }
+        None
     }
 
     pub fn nearest_by_position<T: Component>(
@@ -445,8 +472,8 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     }
 }
 
-/// Deferred world commands. Only operations the engine actually supports are
-/// exposed (despawn, play sound).
+/// Deferred runtime commands. Only operations the engine actually supports are
+/// exposed.
 pub struct Commands<'a> {
     queue: &'a mut CommandQueue,
 }

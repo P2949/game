@@ -14,6 +14,7 @@ pub struct MeleeCombatConfig {
     pub attack: ActionId,
     pub hit_sound: Option<SoundHandle>,
     pub despawn_dead_enemies: bool,
+    pub player_attack_animation: Option<&'static str>,
 }
 
 impl<'a, 'w> GameCtx<'a, 'w> {
@@ -155,6 +156,11 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub fn run_melee_combat(&mut self, config: MeleeCombatConfig, dt: f32) {
         if self.pressed(config.attack) {
+            if let Some(animation) = config.player_attack_animation {
+                if let Some(player) = self.player_id() {
+                    self.play_animation(player, animation);
+                }
+            }
             self.player_melee_attack_nearest_enemy(config.hit_sound);
         }
         self.enemies_melee_attack_player(dt, config.hit_sound);

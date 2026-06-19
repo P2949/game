@@ -96,6 +96,141 @@ fn game_kit_has_no_backend_dependencies() {
 }
 
 #[test]
+fn game_starter_is_the_only_beginner_crate_that_depends_on_runtime() {
+    let starter_manifest = read_manifest_without_comments("crates/game-starter/Cargo.toml");
+    assert!(
+        starter_manifest.contains("game-runtime"),
+        "game-starter should own the beginner runtime dependency"
+    );
+
+    for relative in [
+        "crates/game-kit/Cargo.toml",
+        "examples/one-file-demo/Cargo.toml",
+        "templates/simple-demo/Cargo.toml",
+    ] {
+        let manifest = read_manifest_without_comments(relative);
+        assert!(
+            !manifest.contains("game-runtime"),
+            "{relative} must not depend directly on game-runtime"
+        );
+    }
+}
+
+#[test]
+fn beginner_demo_and_template_hide_runtime_boot_code() {
+    for relative in [
+        "examples/one-file-demo/src/main.rs",
+        "templates/simple-demo/src/main.rs",
+    ] {
+        let source = read_code_without_comments(&workspace_root().join(relative));
+        assert!(
+            source.contains("use game_starter::prelude::*;"),
+            "{relative} should import game_starter::prelude::*"
+        );
+        for forbidden in [
+            "RuntimeConfig",
+            "game_runtime::run",
+            "game_kit::prelude::*",
+            "game_kit::advanced::prelude::*",
+            "game_kit::plugin_fn",
+            "for<'app>",
+            "struct Assets",
+            "TextureHandle",
+            "SoundHandle",
+            "AssetAuthor",
+            "game.assets(",
+            "EntityId",
+            "Component",
+            "Transform",
+            "Velocity",
+            "Sprite::new",
+            "Collider::box_of",
+            "Health::new",
+            "MeleeAttack",
+            "Faction",
+            "AiController",
+            "ChaseTarget",
+            "PathFollow",
+            "Patrol",
+            "GameCtx",
+            "StartupGameCtx",
+            "PrefabAuthor",
+            "game.prefab(",
+            "fixed_active",
+            "fixed_systems_are_pause_guarded",
+            "component::<",
+            "entities_with::<",
+            "for_each",
+            "nearest_living_with",
+            "spawn_prefab_at",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} must not expose beginner boilerplate {forbidden:?}"
+            );
+        }
+        assert!(
+            source.contains(".asset_bag()"),
+            "{relative} should use the beginner asset bag"
+        );
+    }
+}
+
+#[test]
+fn content_tests_use_layered_testing_preludes() {
+    for crate_name in ["simple-content", "arena-content"] {
+        let tests_dir = workspace_root().join(format!("crates/{crate_name}/tests"));
+        let mut files = Vec::new();
+        collect_rust_files(&tests_dir, &mut files);
+
+        for path in files {
+            let source = read_code_without_comments(&path);
+            assert!(
+                source.contains("game_kit::beginner::testing::prelude"),
+                "{} beginner tests should import game_kit::beginner::testing::prelude::*",
+                path.display()
+            );
+            assert!(
+                !source.contains("game_kit::testing::prelude"),
+                "{} beginner tests should not import the raw compatibility testing prelude",
+                path.display()
+            );
+            for forbidden in [
+                "World",
+                "EntityId",
+                "Component",
+                "Transform",
+                "Health",
+                "Faction",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} beginner tests should avoid raw testing symbol {forbidden}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    let tests_dir = workspace_root().join("crates/testbed-content/tests");
+    let mut files = Vec::new();
+    collect_rust_files(&tests_dir, &mut files);
+    for path in files {
+        let source = read_code_without_comments(&path);
+        assert!(
+            source.contains("game_kit::advanced::testing::prelude"),
+            "{} advanced testbed tests should import game_kit::advanced::testing::prelude::*",
+            path.display()
+        );
+        assert!(
+            !source.contains("game_kit::testing::prelude"),
+            "{} advanced testbed tests should use the explicit advanced testing prelude",
+            path.display()
+        );
+    }
+}
+
+#[test]
 fn game_kit_normal_prelude_has_no_testing_or_raw_exports() {
     let source = fs::read_to_string(workspace_root().join("crates/game-kit/src/lib.rs"))
         .expect("failed to read game-kit lib");
@@ -122,6 +257,86 @@ fn game_kit_normal_prelude_has_no_testing_or_raw_exports() {
 }
 
 #[test]
+fn beginner_prelude_does_not_export_advanced_ecs_surface() {
+    let path = workspace_root().join("crates/game-kit/src/beginner/prelude.rs");
+    let source = read_code_without_comments(&path);
+
+    for forbidden in [
+        "crate::prelude",
+        "EntityId",
+        "Component",
+        "Transform",
+        "Velocity",
+        "Sprite",
+        "Collider",
+        "Health",
+        "MeleeAttack",
+        "Faction",
+        "AiController",
+        "ChaseTarget",
+        "PathFollow",
+        "Patrol",
+        "PrefabAuthor",
+        "GameCtx",
+        "StartupGameCtx",
+        "Commands",
+    ] {
+        let found = if forbidden == "crate::prelude" {
+            source.contains(forbidden)
+        } else {
+            contains_identifier(&source, forbidden)
+        };
+        assert!(!found, "beginner prelude must not export {forbidden}");
+    }
+}
+
+#[test]
+fn readme_first_authoring_example_is_beginner_first() {
+    let readme =
+        fs::read_to_string(workspace_root().join("README.md")).expect("failed to read README.md");
+    let section = readme
+        .split("## Content Authoring Model")
+        .nth(1)
+        .and_then(|rest| rest.split("### Advanced API").next())
+        .expect("failed to find README content-authoring beginner section");
+
+    assert!(
+        section.contains("use game_kit::beginner::prelude::*")
+            || section.contains("use game_starter::prelude::*"),
+        "README first authoring example should import a beginner prelude"
+    );
+    assert!(
+        section.contains(".asset_bag()"),
+        "README first authoring example should use asset_bag"
+    );
+    assert!(
+        section.contains("game.rules()"),
+        "README first authoring example should use game.rules()"
+    );
+    assert!(
+        section.contains("player_prefab"),
+        "README first authoring example should show player_prefab"
+    );
+    assert!(
+        section.contains("enemy_prefab"),
+        "README first authoring example should show enemy_prefab"
+    );
+
+    for forbidden in [
+        "game_kit::advanced::prelude",
+        "game.prefab(",
+        "Transform::",
+        "Velocity::",
+        "Collider::box_of",
+    ] {
+        assert!(
+            !section.contains(forbidden),
+            "README first authoring example should not contain advanced API {forbidden:?}"
+        );
+    }
+}
+
+#[test]
 fn game_test_harness_is_not_root_reexported() {
     let source = fs::read_to_string(workspace_root().join("crates/game-kit/src/lib.rs"))
         .expect("failed to read game-kit lib");
@@ -133,30 +348,23 @@ fn game_test_harness_is_not_root_reexported() {
 }
 
 #[test]
-fn simple_content_uses_only_beginner_surface() {
-    let findings = forbidden_source_uses("simple-content", BEGINNER_CONTENT_FORBIDDEN);
-
-    assert!(
-        findings.is_empty(),
-        "simple-content is the pure beginner example and must not use advanced APIs:\n{}",
-        findings.join("\n")
-    );
-}
-
-#[test]
-fn migrated_content_reports_remaining_advanced_surface() {
-    for crate_name in ["arena-content", "testbed-content"] {
+fn beginner_content_uses_only_beginner_surface() {
+    for crate_name in BEGINNER_CONTENT_CRATES {
         let findings = forbidden_source_uses(crate_name, BEGINNER_CONTENT_FORBIDDEN);
-        if !findings.is_empty() {
-            eprintln!(
-                "{crate_name} still uses advanced authoring APIs:\n{}",
-                findings.join("\n")
-            );
-        }
+        assert!(
+            findings.is_empty(),
+            "{crate_name} must not use advanced APIs:\n{}",
+            findings.join("\n")
+        );
     }
 }
 
+const BEGINNER_CONTENT_CRATES: &[&str] = &["simple-content", "arena-content"];
+const ADVANCED_CONTENT_CRATES: &[&str] = &["testbed-content"];
+
 const BEGINNER_CONTENT_FORBIDDEN: &[&str] = &[
+    "game_kit::prelude::*",
+    "game_kit::advanced::prelude::*",
     "EntityId",
     "Component",
     "Transform",
@@ -172,6 +380,8 @@ const BEGINNER_CONTENT_FORBIDDEN: &[&str] = &[
     "Patrol",
     "GameCtx<'_",
     "StartupGameCtx<'_",
+    "PrefabAuthor",
+    "game.prefab(",
     "component::<",
     "component_mut::<",
     "entities_with::<",
@@ -182,6 +392,11 @@ const BEGINNER_CONTENT_FORBIDDEN: &[&str] = &[
     "living_entities_with",
     "fixed_active::<",
     "fixed_systems_are_pause_guarded",
+    "spawn_prefab_at",
+    "RuntimeConfig",
+    "game_runtime::run",
+    "plugin_fn",
+    "for<'app>",
 ];
 
 fn forbidden_source_uses(crate_name: &str, patterns: &[&str]) -> Vec<String> {
@@ -205,6 +420,40 @@ fn forbidden_source_uses(crate_name: &str, patterns: &[&str]) -> Vec<String> {
         }
     }
     findings
+}
+
+fn contains_identifier(source: &str, name: &str) -> bool {
+    source
+        .split(|ch: char| ch != '_' && !ch.is_ascii_alphanumeric())
+        .any(|token| token == name)
+}
+
+fn assert_content_avoids_engine_internals(path: &Path, production: &str) {
+    for forbidden in [
+        "game_core::",
+        "game_map::",
+        "game_ai::",
+        "game_combat::",
+        "game_physics::",
+        "game_runtime",
+        "game_renderer_vulkan",
+        "game_platform_sdl",
+        "game_audio",
+        "GameBuilder",
+        "Schedule",
+        "PrefabRegistry",
+        "MapRegistry",
+        "PrefabValidator",
+        "MapValidator",
+        "StartCtx",
+        "CommandQueue",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "{} must not reach around game-kit with {forbidden:?}",
+            path.display()
+        );
+    }
 }
 
 /// Reads Rust source with whole-line comments removed, so documentation that
@@ -255,7 +504,7 @@ fn content_crates_depend_only_on_game_kit_and_common_deps() {
 
 #[test]
 fn content_source_uses_authoring_facade_not_engine_internals() {
-    for crate_name in ["arena-content", "testbed-content"] {
+    for crate_name in BEGINNER_CONTENT_CRATES {
         let src_dir = workspace_root().join(format!("crates/{crate_name}/src"));
         let mut files = Vec::new();
         collect_rust_files(&src_dir, &mut files);
@@ -264,36 +513,28 @@ fn content_source_uses_authoring_facade_not_engine_internals() {
             let source = read_code_without_comments(&path);
             let production = strip_cfg_test_modules(&source);
             assert!(
-                production.contains("use game_kit::prelude::*;"),
-                "{} should import the authoring facade prelude",
+                production.contains("use game_kit::beginner::prelude::*;"),
+                "{} should import the beginner authoring prelude",
                 path.display()
             );
+            assert_content_avoids_engine_internals(&path, &production);
+        }
+    }
 
-            for forbidden in [
-                "game_core::",
-                "game_map::",
-                "game_ai::",
-                "game_combat::",
-                "game_physics::",
-                "game_runtime",
-                "game_renderer_vulkan",
-                "game_platform_sdl",
-                "game_audio",
-                "GameBuilder",
-                "Schedule",
-                "PrefabRegistry",
-                "MapRegistry",
-                "PrefabValidator",
-                "MapValidator",
-                "StartCtx",
-                "CommandQueue",
-            ] {
-                assert!(
-                    !production.contains(forbidden),
-                    "{} must not reach around game-kit with {forbidden:?}",
-                    path.display()
-                );
-            }
+    for crate_name in ADVANCED_CONTENT_CRATES {
+        let src_dir = workspace_root().join(format!("crates/{crate_name}/src"));
+        let mut files = Vec::new();
+        collect_rust_files(&src_dir, &mut files);
+
+        for path in files {
+            let source = read_code_without_comments(&path);
+            let production = strip_cfg_test_modules(&source);
+            assert!(
+                production.contains("use game_kit::advanced::prelude::*;"),
+                "{} should import the advanced authoring prelude",
+                path.display()
+            );
+            assert_content_avoids_engine_internals(&path, &production);
         }
     }
 }

@@ -7,6 +7,16 @@ pub struct MapCell {
     row: usize,
 }
 
+impl MapCell {
+    pub fn col(self) -> usize {
+        self.col
+    }
+
+    pub fn row(self) -> usize {
+        self.row
+    }
+}
+
 pub fn cell(col: usize, row: usize) -> MapCell {
     MapCell { col, row }
 }

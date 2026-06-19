@@ -33,7 +33,8 @@ GAME_DEMO=simple cargo run -p game
 The `bin/game` binary selects one content plugin with the `GAME_DEMO`
 environment variable. With no variable, it runs `arena-content`. With
 `GAME_DEMO=simple`, it runs `simple-content`. `GAME_DEMO=testbed` runs the
-testbed content crate.
+advanced testbed content crate; it is a reference lab, not beginner copy
+material.
 
 Assets live under the workspace `assets/` directory. Content registers paths
 relative to that root, such as `textures/test.png` or `sounds/hit.wav`.
@@ -49,7 +50,8 @@ If startup reports a missing asset, check the path passed to
 leading `assets/` directory.
 
 If the wrong demo opens, check the exact `GAME_DEMO` value. The supported values
-are `simple`, `testbed`, and the default arena demo.
+are `simple`, `testbed`, and the default arena demo. Stay on `simple` while
+following this beginner tutorial.
 
 If a release build cannot find assets, run with `GAME_ASSET_DIR=assets` or place
 the `assets/` directory next to the executable.

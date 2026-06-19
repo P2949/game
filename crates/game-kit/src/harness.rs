@@ -23,7 +23,9 @@ use game_core::world::{Component, EntityId, Transform, World};
 use glam::Vec2;
 
 use crate::app::{GamePlugin, plugin};
-use crate::beginner::actors::{Enemy, Player};
+use crate::beginner::actors::{Enemy, Pickup, Player};
+use crate::beginner::collections::Score;
+use crate::beginner::scene::SceneState;
 use crate::beginner::testing::TestEntity;
 use crate::map::{ContentRuntime, reset_to_start_map_world};
 
@@ -182,6 +184,30 @@ impl GameTestHarness {
         self.world.ids_with::<Enemy>().len()
     }
 
+    pub fn assert_player_health(&self, expected: i32) {
+        assert_eq!(self.player().health(), expected);
+    }
+
+    pub fn assert_enemy_dead(&self, index: usize) {
+        assert!(
+            self.enemy(index).is_dead(),
+            "expected enemy {index} to be dead"
+        );
+    }
+
+    pub fn assert_enemy_count(&self, expected: usize) {
+        assert_eq!(self.enemy_count(), expected);
+    }
+
+    pub fn assert_score(&self, expected: i32) {
+        let score = self
+            .world
+            .get_resource::<Score>()
+            .map(|score| score.value)
+            .unwrap_or_default();
+        assert_eq!(score, expected);
+    }
+
     pub fn entity_count(&self) -> usize {
         self.world.ids().count()
     }
@@ -198,6 +224,27 @@ impl GameTestHarness {
         let player_pos = self.player().position();
         let enemy = self.enemy(index);
         self.move_entity_to(enemy, player_pos + glam::vec2(10.0, 0.0));
+    }
+
+    pub fn move_player_to_pickup(&mut self, index: usize) {
+        let pickup = self
+            .world
+            .ids_with::<Pickup>()
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| panic!("expected pickup at index {index}"));
+        let pickup_pos = self
+            .world
+            .get::<Transform>(pickup)
+            .unwrap_or_else(|| panic!("pickup {:?} has no Transform component", pickup))
+            .pos;
+        let player = self.player();
+        self.move_entity_to(player, pickup_pos);
+    }
+
+    pub fn collect_first_pickup(&mut self) {
+        self.move_player_to_pickup(0);
+        self.step();
     }
 
     pub fn move_entity_to(&mut self, entity: TestEntity, pos: Vec2) {
@@ -330,6 +377,20 @@ impl GameTestHarness {
         self.world
             .get_resource::<ContentRuntime>()
             .map(|runtime| runtime.current_map_name().to_owned())
+    }
+
+    pub fn current_scene(&self) -> Option<String> {
+        self.world
+            .get_resource::<SceneState>()
+            .map(|scene| scene.current().to_owned())
+    }
+
+    pub fn assert_scene(&self, expected: &str) {
+        assert_eq!(self.current_scene().as_deref(), Some(expected));
+    }
+
+    pub fn assert_map(&self, expected: &str) {
+        assert_eq!(self.current_map_name().as_deref(), Some(expected));
     }
 
     /// UI text produced by the most recent [`Self::frame`] call.

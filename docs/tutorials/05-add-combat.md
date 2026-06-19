@@ -2,12 +2,12 @@
 
 ## Goal
 
-Enable player attacks, enemy melee, and hit sounds through the top-down preset.
+Enable player attacks and enemy melee through beginner rules.
 
 ## What you will build
 
-A gameplay preset that reads the attack action and runs the beginner melee combat
-system every active tick.
+Rules that read the attack action and run the beginner melee combat system every
+active tick.
 
 ## Files you will edit
 
@@ -16,36 +16,35 @@ system every active tick.
 ## Final code
 
 ```rust
-game.use_top_down_game()
-    .attack(controls.attack)
-    .hit_sound(assets.hit)
-    .with_melee_combat()
+game.rules()
+    .top_down_controls(controls)
+    .enemies_damage_player()
+    .dead_enemies_despawn()
+    .camera_follows_player()
     .build();
 ```
 
 ## Explanation
 
-`top_down_controls()` binds Space and Enter to `controls.attack`. The top-down
-preset uses that action for the player's melee swing. Enemies with `.melee(...)`
-can hit the player while combat is running.
+`top_down_controls()` binds Space and Enter to `controls.attack`. The rules
+builder uses that action for the player's melee swing. Enemies with
+`.melee(...)` can hit the player while combat is running.
 
-`hit_sound` is optional. Combat still works without it, but passing a sound handle
-makes successful hits easier to feel.
+Combat works without a sound handle. The next tutorial swaps to the beginner
+top-down preset when you want optional hit sounds and UI toggles.
 
 Most demos also enable movement, chase, collision, camera follow, pause UI, and
-reset in the same chain.
+reset in one beginner setup chain.
 
 ## Common errors
 
-If pressing Space does nothing, check that the preset includes
-`.attack(controls.attack)`.
+If pressing Space does nothing, check that the rules include
+`.top_down_controls(controls)`.
 
-If no sound plays, check that the sound was registered with
-`assets.sound("simple/hit", "sounds/hit.wav")?` and that the file exists under
-`assets/sounds/`.
+If enemies take damage but never disappear, include `.dead_enemies_despawn()`.
 
-If enemies never reach the player, include `.with_enemy_chase()` and
-`.with_collision()` in the same preset chain.
+If enemies never reach the player, include `.enemies_damage_player()` or switch
+to the top-down preset with `.with_enemy_chase()` and `.with_collision()`.
 
 ## Next step
 

@@ -40,8 +40,14 @@ enum AudioCommand {
         volume: f32,
         looping: bool,
     },
+    PlayMusic {
+        sound_id: SoundId,
+        volume: f32,
+    },
+    StopMusic,
 }
 
+#[derive(Debug)]
 pub struct Sound {
     samples: Vec<f32>,
     channels: u16,
@@ -65,6 +71,7 @@ pub struct Voice {
     cursor: usize,
     volume: f32,
     looping: bool,
+    music: bool,
 }
 
 pub struct Mixer {
@@ -72,9 +79,8 @@ pub struct Mixer {
     voices: Vec<Voice>,
     master_volume: f32,
     // Expected playback-stream output format (0 means "unspecified / don't
-    // check"). The mixer plays sample data verbatim — it does not resample or
-    // remap channels — so a sound that doesn't match would play at the wrong
-    // speed/pitch. `add_sound` rejects mismatches.
+    // check"). File-backed WAVs are normalized to this format before insertion;
+    // `add_sound` still rejects mismatches to catch generated/internal misuse.
     output_channels: u16,
     output_sample_rate: u32,
     // Incremented whenever `play` drops a request because all voices are in use.
@@ -191,7 +197,7 @@ impl Mixer {
         }
         if !self.sound_format_matches(&sound) {
             anyhow::bail!(
-                "sound format {}ch/{}Hz does not match mixer output {}ch/{}Hz; resampling is not implemented",
+                "sound format {}ch/{}Hz does not match mixer output {}ch/{}Hz; normalize it before adding to the mixer",
                 sound.channels,
                 sound.sample_rate,
                 self.output_channels,
@@ -205,6 +211,25 @@ impl Mixer {
     }
 
     pub fn play(&mut self, sound_id: SoundId, volume: f32, looping: bool) -> PlayResult {
+        self.push_voice(sound_id, volume, looping, false)
+    }
+
+    pub fn play_music(&mut self, sound_id: SoundId, volume: f32) -> PlayResult {
+        self.stop_music();
+        self.push_voice(sound_id, volume, true, true)
+    }
+
+    pub fn stop_music(&mut self) {
+        self.voices.retain(|voice| !voice.music);
+    }
+
+    fn push_voice(
+        &mut self,
+        sound_id: SoundId,
+        volume: f32,
+        looping: bool,
+        music: bool,
+    ) -> PlayResult {
         let Some(sound) = self.sounds.get(sound_id) else {
             return PlayResult::InvalidSoundId;
         };
@@ -214,9 +239,6 @@ impl Mixer {
         }
 
         if self.voices.len() >= MAX_VOICES {
-            // Voice cap reached: drop the request and record it for diagnostics.
-            // This is the only drop case that bumps the counter — an invalid sound
-            // id is a programming error, not voice exhaustion.
             self.dropped_voices.fetch_add(1, Ordering::Relaxed);
             return PlayResult::DroppedVoiceLimit;
         }
@@ -226,6 +248,7 @@ impl Mixer {
             cursor: 0,
             volume: sanitize_volume(volume),
             looping,
+            music,
         });
         PlayResult::Started
     }
@@ -316,22 +339,16 @@ impl AudioSystem {
             let sound_id = match request {
                 SoundLoadRequest::Generated { .. } => blip_sound,
                 SoundLoadRequest::File { path } => {
-                    let sound = load_wav_sound(&asset_root.join(&path))?;
+                    let sound = load_wav_sound(
+                        &asset_root.join(&path),
+                        channels as u16,
+                        sample_rate as u32,
+                    )?;
                     mixer.add_sound(sound)?
                 }
             };
             sound_ids.insert(handle, sound_id);
         }
-
-        // Music loops, so it must be a seamless (non-decaying, whole-cycle) tone;
-        // a looped one-shot would click at the seam every second.
-        let music_sound = mixer.add_sound(loop_sine_sound(
-            110.0,
-            1.0,
-            sample_rate as u32,
-            channels as u16,
-        )?)?;
-        mixer.play(music_sound, 0.08, true);
 
         let commands = Arc::new(ArrayQueue::new(AUDIO_COMMAND_QUEUE_CAPACITY));
         let put_failures = Arc::new(AtomicU64::new(0));
@@ -378,18 +395,35 @@ impl AudioSystem {
         self.enqueue_play(sound_id, volume, looping);
     }
 
+    pub fn play_music(&self, sound: SoundHandle, volume: f32) {
+        let Some(sound_id) = self.sound_ids.get(&sound).copied() else {
+            log::warn!(
+                "ignoring play_music request for unknown sound handle {:?}",
+                sound
+            );
+            return;
+        };
+        self.enqueue_audio_command(AudioCommand::PlayMusic { sound_id, volume });
+    }
+
+    pub fn stop_music(&self) {
+        self.enqueue_audio_command(AudioCommand::StopMusic);
+    }
+
     fn enqueue_play(&self, sound_id: SoundId, volume: f32, looping: bool) {
-        let command = AudioCommand::Play {
+        self.enqueue_audio_command(AudioCommand::Play {
             sound_id,
             volume,
             looping,
-        };
+        });
+    }
 
+    fn enqueue_audio_command(&self, command: AudioCommand) {
         if self.commands.push(command).is_err() {
             let total = self.command_push_failures.fetch_add(1, Ordering::Relaxed) + 1;
             if total.is_power_of_two() {
                 log::warn!(
-                    "audio command queue dropped {total} play request(s) since startup because the queue is full"
+                    "audio command queue dropped {total} command(s) since startup because the queue is full"
                 );
             }
         }
@@ -479,6 +513,10 @@ impl MixerCallback {
                 } => {
                     self.mixer.play(sound_id, volume, looping);
                 }
+                AudioCommand::PlayMusic { sound_id, volume } => {
+                    self.mixer.play_music(sound_id, volume);
+                }
+                AudioCommand::StopMusic => self.mixer.stop_music(),
             }
         }
     }
@@ -604,6 +642,7 @@ fn sine_sound(freq: f32, seconds: f32, sample_rate: u32, channels: u16) -> anyho
 /// last one is exactly the first sample again: no value or slope discontinuity at
 /// the loop seam, and no decay envelope. This avoids the periodic click a looped
 /// one-shot ([`sine_sound`]) produces.
+#[allow(dead_code)]
 fn loop_sine_sound(
     freq: f32,
     seconds: f32,
@@ -629,12 +668,135 @@ fn loop_sine_sound(
     Ok(Sound::new(samples, channels, sample_rate))
 }
 
-fn load_wav_sound(path: &Path) -> anyhow::Result<Sound> {
+fn load_wav_sound(
+    path: &Path,
+    target_channels: u16,
+    target_sample_rate: u32,
+) -> anyhow::Result<Sound> {
     let bytes = fs::read(path)
         .map_err(anyhow::Error::from)
         .map_err(|err| anyhow::anyhow!("failed to read WAV '{}': {err}", path.display()))?;
-    decode_wav_sound(&bytes)
-        .map_err(|err| anyhow::anyhow!("invalid WAV '{}': {err}", path.display()))
+    let sound = decode_wav_sound(&bytes)
+        .map_err(|err| unsupported_wav_error(path, target_sample_rate, err))?;
+    normalize_sound(sound, target_channels, target_sample_rate)
+        .map_err(|err| unsupported_wav_error(path, target_sample_rate, err))
+}
+
+fn unsupported_wav_error(
+    path: &Path,
+    target_sample_rate: u32,
+    err: anyhow::Error,
+) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Sound file '{}' uses unsupported format.\n\nSupported today:\n- WAV\n- mono or stereo\n- PCM16 or float32 samples\n- any sample rate will be converted to {target_sample_rate} Hz\n\nTry converting with:\n    ffmpeg -i input.wav -ac 2 -ar {target_sample_rate} {}\n\nDetails: {err}",
+        path.display(),
+        path.display(),
+    )
+}
+
+fn normalize_sound(
+    sound: Sound,
+    target_channels: u16,
+    target_sample_rate: u32,
+) -> anyhow::Result<Sound> {
+    let sound = convert_channels(sound, target_channels)?;
+    resample_linear(sound, target_sample_rate)
+}
+
+fn convert_channels(sound: Sound, target_channels: u16) -> anyhow::Result<Sound> {
+    if target_channels == 0 {
+        anyhow::bail!("target channel count must be nonzero");
+    }
+    if sound.channels == target_channels {
+        return Ok(sound);
+    }
+    if sound.channels == 0 {
+        anyhow::bail!("channel count must be nonzero");
+    }
+    if !Mixer::sound_is_well_formed(&sound) {
+        anyhow::bail!(
+            "sound has {} samples, which is not a whole number of {}-channel frames",
+            sound.samples.len(),
+            sound.channels,
+        );
+    }
+
+    let frames = sound.samples.len() / sound.channels as usize;
+    let mut samples = Vec::with_capacity(frames * target_channels as usize);
+    match (sound.channels, target_channels) {
+        (1, 2) => {
+            for sample in sound.samples {
+                samples.push(sample);
+                samples.push(sample);
+            }
+        }
+        (2, 1) => {
+            for frame in sound.samples.chunks_exact(2) {
+                samples.push((frame[0] + frame[1]) * 0.5);
+            }
+        }
+        (channels, _) if channels > 2 => {
+            anyhow::bail!(
+                "unsupported WAV channel count {channels}; supported today: mono or stereo"
+            );
+        }
+        (_, channels) if channels > 2 => {
+            anyhow::bail!(
+                "unsupported mixer channel count {channels}; supported today: mono or stereo"
+            );
+        }
+        (source, target) => {
+            anyhow::bail!("cannot convert {source}-channel audio to {target} channels");
+        }
+    }
+
+    Ok(Sound::new(samples, target_channels, sound.sample_rate))
+}
+
+fn resample_linear(sound: Sound, target_sample_rate: u32) -> anyhow::Result<Sound> {
+    if target_sample_rate == 0 {
+        anyhow::bail!("target sample rate must be nonzero");
+    }
+    if sound.sample_rate == target_sample_rate {
+        return Ok(sound);
+    }
+    if sound.sample_rate == 0 {
+        anyhow::bail!("sound sample rate must be nonzero");
+    }
+    if !Mixer::sound_is_well_formed(&sound) {
+        anyhow::bail!(
+            "sound has {} samples, which is not a whole number of {}-channel frames",
+            sound.samples.len(),
+            sound.channels,
+        );
+    }
+
+    let channels = sound.channels as usize;
+    let source_frames = sound.samples.len() / channels;
+    if source_frames == 0 {
+        anyhow::bail!("sound must contain at least one frame");
+    }
+    let target_frames = ((source_frames as f64 * target_sample_rate as f64
+        / sound.sample_rate as f64)
+        .round() as usize)
+        .max(1);
+    let mut samples = Vec::with_capacity(target_frames * channels);
+
+    for frame in 0..target_frames {
+        let source_pos = frame as f64 * sound.sample_rate as f64 / target_sample_rate as f64;
+        let base = source_pos.floor() as usize;
+        let next = (base + 1).min(source_frames - 1);
+        let t = (source_pos - base as f64) as f32;
+        let base = base.min(source_frames - 1);
+
+        for channel in 0..channels {
+            let a = sound.samples[base * channels + channel];
+            let b = sound.samples[next * channels + channel];
+            samples.push(a + (b - a) * t);
+        }
+    }
+
+    Ok(Sound::new(samples, sound.channels, target_sample_rate))
 }
 
 fn decode_wav_sound(bytes: &[u8]) -> anyhow::Result<Sound> {
@@ -725,8 +887,8 @@ mod tests {
     use crossbeam_queue::ArrayQueue;
 
     use super::{
-        AudioCommand, Mixer, MixerCallback, PlayResult, Sound, crossed_power_of_two,
-        decode_wav_sound, sanitize_volume,
+        AudioCommand, Mixer, MixerCallback, PlayResult, Sound, convert_channels,
+        crossed_power_of_two, decode_wav_sound, normalize_sound, resample_linear, sanitize_volume,
     };
 
     #[test]
@@ -840,6 +1002,49 @@ mod tests {
     }
 
     #[test]
+    fn convert_channels_duplicates_mono_to_stereo() {
+        let sound = Sound::new(vec![0.25, -0.5], 1, 48_000);
+        let sound = convert_channels(sound, 2).unwrap();
+
+        assert_eq!(sound.channels, 2);
+        assert_eq!(sound.samples, vec![0.25, 0.25, -0.5, -0.5]);
+    }
+
+    #[test]
+    fn convert_channels_rejects_surround_wav() {
+        let sound = Sound::new(vec![0.0; 6], 3, 48_000);
+        let err = convert_channels(sound, 2).unwrap_err();
+
+        assert!(err.to_string().contains("mono or stereo"));
+    }
+
+    #[test]
+    fn resample_linear_changes_sample_rate_and_frame_count() {
+        let sound = Sound::new(vec![0.0, 1.0, 0.0, 1.0], 1, 4);
+        let sound = resample_linear(sound, 8).unwrap();
+
+        assert_eq!(sound.sample_rate, 8);
+        assert_eq!(sound.channels, 1);
+        assert_eq!(sound.samples.len(), 8);
+        assert!(sound.samples.iter().all(|sample| sample.is_finite()));
+    }
+
+    #[test]
+    fn normalize_sound_prepares_mono_44100_for_stereo_48000_mixer() {
+        let wav = test_wav_pcm16_with_format(1, 44_100, &[0, i16::MAX]);
+        let decoded = decode_wav_sound(&wav).unwrap();
+        let normalized = normalize_sound(decoded, 2, 48_000).unwrap();
+
+        assert_eq!(normalized.channels, 2);
+        assert_eq!(normalized.sample_rate, 48_000);
+        assert!(normalized.samples.len().is_multiple_of(2));
+
+        let mut mixer = Mixer::new();
+        mixer.set_output_format(2, 48_000).unwrap();
+        assert!(mixer.add_sound(normalized).is_ok());
+    }
+
+    #[test]
     fn play_sanitizes_voice_volume() {
         let mut mixer = Mixer::new();
         let sound_id = mixer.add_sound(Sound::new(vec![1.0], 1, 48_000)).unwrap();
@@ -887,8 +1092,14 @@ mod tests {
     }
 
     fn test_wav_pcm16(samples: &[i16]) -> Vec<u8> {
+        test_wav_pcm16_with_format(2, 48_000, samples)
+    }
+
+    fn test_wav_pcm16_with_format(channels: u16, sample_rate: u32, samples: &[i16]) -> Vec<u8> {
         let data_len = samples.len() * 2;
         let riff_len = 4 + (8 + 16) + (8 + data_len);
+        let byte_rate = sample_rate * channels as u32 * 2;
+        let block_align = channels * 2;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
         bytes.extend_from_slice(&(riff_len as u32).to_le_bytes());
@@ -896,10 +1107,10 @@ mod tests {
         bytes.extend_from_slice(b"fmt ");
         bytes.extend_from_slice(&16u32.to_le_bytes());
         bytes.extend_from_slice(&1u16.to_le_bytes());
-        bytes.extend_from_slice(&2u16.to_le_bytes());
-        bytes.extend_from_slice(&48_000u32.to_le_bytes());
-        bytes.extend_from_slice(&(48_000u32 * 2 * 2).to_le_bytes());
-        bytes.extend_from_slice(&(2u16 * 2).to_le_bytes());
+        bytes.extend_from_slice(&channels.to_le_bytes());
+        bytes.extend_from_slice(&sample_rate.to_le_bytes());
+        bytes.extend_from_slice(&byte_rate.to_le_bytes());
+        bytes.extend_from_slice(&block_align.to_le_bytes());
         bytes.extend_from_slice(&16u16.to_le_bytes());
         bytes.extend_from_slice(b"data");
         bytes.extend_from_slice(&(data_len as u32).to_le_bytes());
@@ -957,6 +1168,35 @@ mod tests {
             out.iter().any(|sample| sample.abs() > 0.0001),
             "looping music mixed only silence"
         );
+    }
+
+    #[test]
+    fn music_replaces_existing_music_and_can_stop() {
+        let mut mixer = Mixer::new();
+        let first = mixer.add_sound(Sound::new(vec![0.25], 1, 48_000)).unwrap();
+        let second = mixer.add_sound(Sound::new(vec![0.5], 1, 48_000)).unwrap();
+        let sfx = mixer.add_sound(Sound::new(vec![0.75], 1, 48_000)).unwrap();
+
+        mixer.play(sfx, 1.0, true);
+        mixer.play_music(first, 0.5);
+        mixer.play_music(second, 0.5);
+
+        assert_eq!(mixer.voice_count(), 2);
+        assert!(mixer.voices.iter().any(|voice| !voice.music));
+        assert_eq!(
+            mixer
+                .voices
+                .iter()
+                .filter(|voice| voice.music)
+                .map(|voice| voice.sound_id)
+                .collect::<Vec<_>>(),
+            vec![second]
+        );
+
+        mixer.stop_music();
+
+        assert_eq!(mixer.voice_count(), 1);
+        assert!(mixer.voices.iter().all(|voice| !voice.music));
     }
 
     #[test]

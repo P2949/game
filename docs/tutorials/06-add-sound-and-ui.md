@@ -18,37 +18,22 @@ hits, `R` to reset, `P` to pause, and `F1` for debug text.
 Register the sound:
 
 ```rust
-#[derive(Clone, Copy, Debug)]
-struct SimpleAssets {
-    floor: TextureHandle,
-    wall: TextureHandle,
-    player: TextureHandle,
-    slime: TextureHandle,
-    hit: SoundHandle,
-}
-
-fn register_assets(assets: &mut AssetAuthor<'_>) -> Result<SimpleAssets> {
-    Ok(SimpleAssets {
-        floor: assets.texture("simple/floor", "textures/test.png")?,
-        wall: assets.texture("simple/wall", "textures/test.png")?,
-        player: assets.texture("simple/player", "textures/test.png")?,
-        slime: assets.texture("simple/slime", "textures/test.png")?,
-        hit: assets.sound("simple/hit", "sounds/hit.wav")?,
-    })
-}
+let assets = game
+    .asset_bag()
+    .texture("floor", "textures/test.png")?
+    .texture("wall", "textures/test.png")?
+    .texture("player", "textures/test.png")?
+    .texture("slime", "textures/test.png")?
+    .sound("hit", "sounds/hit.wav")?
+    .build();
 ```
 
-Use it in the preset:
+Use it in the beginner top-down preset:
 
 ```rust
 game.use_top_down_game()
-    .movement(controls.movement)
-    .attack(controls.attack)
-    .pause(controls.pause)
-    .reset(controls.reset)
-    .debug_toggle(controls.debug_overlay)
-    .debug_restart(controls.reset)
-    .hit_sound(assets.hit)
+    .controls(controls)
+    .hit_sound(assets.sound("hit"))
     .with_melee_combat()
     .with_enemy_chase()
     .with_collision()
@@ -59,8 +44,8 @@ game.use_top_down_game()
 
 ## Explanation
 
-The asset handle is copied into the preset. The runtime loads the actual sound
-file from `assets/sounds/hit.wav`.
+The asset handle comes from the `asset_bag` and is copied into the preset. The
+runtime loads the actual sound file from `assets/sounds/hit.wav`.
 
 `with_pause_death_ui` draws simple text when the game is paused or the player is
 dead. `debug_toggle` lets the preset toggle `DebugOverlay`; by default the
@@ -69,7 +54,7 @@ top-down controls bind that to `F1`.
 ## Common errors
 
 If `F1` does not show the overlay, check that the preset has
-`.debug_toggle(controls.debug_overlay)`.
+`.controls(controls)` or an explicit `.debug_toggle(controls.debug_overlay)`.
 
 If `R` resets but also restarts the current map, that is expected in this simple
 preset because both reset paths can share the same action while you are learning.

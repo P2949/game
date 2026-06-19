@@ -353,6 +353,8 @@ fn submit_audio_command(audio: &AudioSystem, command: AudioCommand) {
             volume,
             looping,
         } => audio.play(sound, volume, looping),
+        AudioCommand::PlayMusic { sound, volume } => audio.play_music(sound, volume),
+        AudioCommand::StopMusic => audio.stop_music(),
     }
 }
 

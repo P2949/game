@@ -8,6 +8,4 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-env_logger.workspace = true
-game-kit = { version = "0.1.0", path = "../../crates/game-kit" }
-game-runtime = { version = "0.1.0", path = "../../crates/game-runtime" }
+game-starter = { version = "0.1.0", path = "../../crates/game-starter" }

@@ -1,16 +1,17 @@
 use arena_content::ArenaPlugin;
-use game_kit::testing::prelude::*;
+use game_kit::beginner::prelude::SoundHandle;
+use game_kit::beginner::testing::prelude::*;
 
 #[test]
 fn reset_respawns_start_map_objects_and_reinserts_runtime() {
     let mut game = GameTestHarness::from_plugin(ArenaPlugin).unwrap();
     let initial_count = game.entity_count();
-    assert_eq!(game.current_map_name(), Some("arena".to_owned()));
+    game.assert_map("arena");
 
     game.reset_to_start_map().unwrap();
 
     assert_eq!(game.entity_count(), initial_count);
-    assert_eq!(game.current_map_name(), Some("arena".to_owned()));
+    game.assert_map("arena");
 }
 
 #[test]
@@ -23,6 +24,6 @@ fn reset_clears_queued_commands_before_respawned_world_steps() {
     game.reset_to_start_map().unwrap();
     game.step();
 
-    assert_eq!(game.enemy_count(), 1);
+    game.assert_enemy_count(1);
     assert_eq!(game.sound_count(), 0);
 }

@@ -24,7 +24,7 @@ game.map("level_1")
         "#......#",
         "########",
     ])
-    .simple_theme(assets.floor, assets.wall)
+    .simple_theme(assets.texture("floor"), assets.texture("wall"))
     .spawn("player_start", "player", cell(3, 2))
     .start();
 ```
@@ -40,7 +40,8 @@ full `TileTheme`. `.start()` marks this as the map loaded when the demo starts.
 
 ## Common errors
 
-If the map reports no tile theme, add `.simple_theme(assets.floor, assets.wall)`.
+If the map reports no tile theme, add
+`.simple_theme(assets.texture("floor"), assets.texture("wall"))`.
 
 If the map references an unknown prefab, check that `"player"` matches the name
 passed to `game.player_prefab("player")`.
