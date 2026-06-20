@@ -77,12 +77,126 @@ impl MouseButton {
     }
 }
 
+/// Controller buttons using SDL's gamepad-neutral face-button names.
+///
+/// The first connected controller is currently exposed as one shared gamepad.
+/// Per-player controller assignment can build on this without changing content
+/// bindings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum GamepadButton {
+    South,
+    East,
+    West,
+    North,
+    LeftShoulder,
+    RightShoulder,
+    Start,
+    Select,
+    DPadUp,
+    DPadDown,
+    DPadLeft,
+    DPadRight,
+}
+
+const GAMEPAD_BUTTON_COUNT: usize = GamepadButton::DPadRight as usize + 1;
+
+impl GamepadButton {
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Controller stick pairs available to logical 2D-axis bindings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum GamepadAxis {
+    LeftStick,
+    RightStick,
+}
+
+const GAMEPAD_AXIS_COUNT: usize = GamepadAxis::RightStick as usize + 1;
+const GAMEPAD_DEADZONE: f32 = 0.2;
+
+impl GamepadAxis {
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Raw state for the first connected controller.
+#[derive(Debug, Clone, Copy)]
+pub struct GamepadState {
+    down: [bool; GAMEPAD_BUTTON_COUNT],
+    pressed: [bool; GAMEPAD_BUTTON_COUNT],
+    raw_axes: [Vec2; GAMEPAD_AXIS_COUNT],
+    axes: [Vec2; GAMEPAD_AXIS_COUNT],
+}
+
+impl Default for GamepadState {
+    fn default() -> Self {
+        Self {
+            down: [false; GAMEPAD_BUTTON_COUNT],
+            pressed: [false; GAMEPAD_BUTTON_COUNT],
+            raw_axes: [Vec2::ZERO; GAMEPAD_AXIS_COUNT],
+            axes: [Vec2::ZERO; GAMEPAD_AXIS_COUNT],
+        }
+    }
+}
+
+impl GamepadState {
+    fn begin_frame(&mut self) {
+        self.pressed = [false; GAMEPAD_BUTTON_COUNT];
+    }
+
+    fn set_button(&mut self, button: GamepadButton, down: bool) {
+        let index = button.index();
+        if down && !self.down[index] {
+            self.pressed[index] = true;
+        }
+        self.down[index] = down;
+    }
+
+    fn set_axis(&mut self, axis: GamepadAxis, value: Vec2) {
+        let value = sanitize_axis2(value);
+        self.raw_axes[axis.index()] = value;
+        self.axes[axis.index()] = if value.length_squared() < GAMEPAD_DEADZONE.powi(2) {
+            Vec2::ZERO
+        } else {
+            value
+        };
+    }
+
+    fn set_axis_component(&mut self, axis: GamepadAxis, component: usize, value: f32) {
+        let mut axis_value = self.raw_axes[axis.index()];
+        match component {
+            0 => axis_value.x = value,
+            1 => axis_value.y = value,
+            _ => return,
+        }
+        self.set_axis(axis, axis_value);
+    }
+
+    pub fn down(&self, button: GamepadButton) -> bool {
+        self.down[button.index()]
+    }
+
+    pub fn pressed(&self, button: GamepadButton) -> bool {
+        self.pressed[button.index()]
+    }
+
+    pub fn axis(&self, axis: GamepadAxis) -> Vec2 {
+        self.axes[axis.index()]
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct InputState {
     down: [bool; KEY_COUNT],
     pressed: [bool; KEY_COUNT],
     mouse_down: [bool; MOUSE_BUTTON_COUNT],
     mouse_pressed: [bool; MOUSE_BUTTON_COUNT],
+    gamepad: GamepadState,
     mouse_position: Vec2,
     viewport_size: Vec2,
 }
@@ -94,6 +208,7 @@ impl Default for InputState {
             pressed: [false; KEY_COUNT],
             mouse_down: [false; MOUSE_BUTTON_COUNT],
             mouse_pressed: [false; MOUSE_BUTTON_COUNT],
+            gamepad: GamepadState::default(),
             mouse_position: Vec2::ZERO,
             viewport_size: Vec2::ZERO,
         }
@@ -104,6 +219,7 @@ impl InputState {
     pub fn begin_frame(&mut self) {
         self.pressed = [false; KEY_COUNT];
         self.mouse_pressed = [false; MOUSE_BUTTON_COUNT];
+        self.gamepad.begin_frame();
     }
 
     pub fn reset(&mut self) {
@@ -140,6 +256,39 @@ impl InputState {
 
     pub fn mouse_pressed(&self, button: MouseButton) -> bool {
         self.mouse_pressed[button.index()]
+    }
+
+    pub fn set_gamepad_button(&mut self, button: GamepadButton, down: bool) {
+        self.gamepad.set_button(button, down);
+    }
+
+    pub fn gamepad_down(&self, button: GamepadButton) -> bool {
+        self.gamepad.down(button)
+    }
+
+    pub fn gamepad_pressed(&self, button: GamepadButton) -> bool {
+        self.gamepad.pressed(button)
+    }
+
+    /// Sets a controller stick in its conventional -1.0..=1.0 range. Values
+    /// inside the built-in deadzone are reported as zero.
+    pub fn set_gamepad_axis(&mut self, axis: GamepadAxis, value: Vec2) {
+        self.gamepad.set_axis(axis, value);
+    }
+
+    /// Updates one physical stick component while preserving the other one.
+    /// Platform adapters should use this for independent X/Y events.
+    pub fn set_gamepad_axis_component(&mut self, axis: GamepadAxis, component: usize, value: f32) {
+        self.gamepad.set_axis_component(axis, component, value);
+    }
+
+    pub fn gamepad_axis(&self, axis: GamepadAxis) -> Vec2 {
+        self.gamepad.axis(axis)
+    }
+
+    /// Clears only controller state, retaining keyboard and mouse input.
+    pub fn clear_gamepad(&mut self) {
+        self.gamepad = GamepadState::default();
     }
 
     pub fn set_mouse_position(&mut self, position: Vec2) {
@@ -181,6 +330,7 @@ pub struct ActionBinding {
     pub name: String,
     pub keys: Vec<Key>,
     pub mouse_buttons: Vec<MouseButton>,
+    pub gamepad_buttons: Vec<GamepadButton>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,6 +340,7 @@ pub struct Axis2dBinding {
     pub positive_x: Vec<Key>,
     pub negative_y: Vec<Key>,
     pub positive_y: Vec<Key>,
+    pub gamepad_axes: Vec<GamepadAxis>,
 }
 
 #[derive(Default)]
@@ -226,6 +377,7 @@ impl InputRegistry {
             name,
             keys: Vec::new(),
             mouse_buttons: Vec::new(),
+            gamepad_buttons: Vec::new(),
         });
         Ok(ActionBindingBuilder { registry: self, id })
     }
@@ -255,6 +407,7 @@ impl InputRegistry {
             positive_x: Vec::new(),
             negative_y: Vec::new(),
             positive_y: Vec::new(),
+            gamepad_axes: Vec::new(),
         });
         Ok(Axis2dBindingBuilder { registry: self, id })
     }
@@ -310,6 +463,13 @@ impl ActionBindingBuilder<'_> {
         self
     }
 
+    pub fn bind_gamepad(self, button: GamepadButton) -> Self {
+        self.registry.actions[self.id.0 as usize]
+            .gamepad_buttons
+            .push(button);
+        self
+    }
+
     pub fn id(&self) -> ActionId {
         self.id
     }
@@ -346,6 +506,13 @@ impl Axis2dBindingBuilder<'_> {
         self.registry.axes2d[self.id.0 as usize]
             .positive_y
             .push(key);
+        self
+    }
+
+    pub fn bind_gamepad_axis(self, axis: GamepadAxis) -> Self {
+        self.registry.axes2d[self.id.0 as usize]
+            .gamepad_axes
+            .push(axis);
         self
     }
 
@@ -433,6 +600,10 @@ impl Input {
                     .mouse_buttons
                     .iter()
                     .any(|button| state.mouse_down(*button))
+                || binding
+                    .gamepad_buttons
+                    .iter()
+                    .any(|button| state.gamepad_down(*button))
             {
                 down.insert(ActionId(index as u32));
             }
@@ -462,6 +633,10 @@ impl Input {
                     .mouse_buttons
                     .iter()
                     .any(|button| state.mouse_pressed(*button))
+                || binding
+                    .gamepad_buttons
+                    .iter()
+                    .any(|button| state.gamepad_pressed(*button))
             {
                 pressed.insert(ActionId(index as u32));
             }
@@ -482,10 +657,15 @@ fn evaluate_axis2d(binding: &Axis2dBinding, state: &InputState) -> Vec2 {
         let pos = positive.iter().any(|key| state.down(*key));
         f32::from(pos) - f32::from(neg)
     };
-    sanitize_axis2(Vec2::new(
+    let keyboard = Vec2::new(
         axis(&binding.negative_x, &binding.positive_x),
         axis(&binding.negative_y, &binding.positive_y),
-    ))
+    );
+    let gamepad = binding
+        .gamepad_axes
+        .iter()
+        .fold(Vec2::ZERO, |value, axis| value + state.gamepad_axis(*axis));
+    sanitize_axis2(keyboard + gamepad)
 }
 
 pub fn sanitize_axis(value: f32) -> f32 {
@@ -529,7 +709,7 @@ fn sanitize_viewport_size(value: Vec2) -> Vec2 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Input, InputRegistry, InputState, Key, MouseButton};
+    use super::{GamepadAxis, GamepadButton, Input, InputRegistry, InputState, Key, MouseButton};
 
     fn registry() -> (InputRegistry, super::ActionId, super::Axis2dId) {
         let mut registry = InputRegistry::new();
@@ -538,11 +718,13 @@ mod tests {
             .bind(Key::Space)
             .bind(Key::Enter)
             .bind_mouse(MouseButton::Left)
+            .bind_gamepad(GamepadButton::South)
             .id();
         let movement = registry
             .axis2d("move")
             .negative_x(Key::A)
             .positive_x(Key::D)
+            .bind_gamepad_axis(GamepadAxis::LeftStick)
             .id();
         (registry, attack, movement)
     }
@@ -579,6 +761,39 @@ mod tests {
 
         assert!(input.pressed(attack));
         assert!(input.down(attack));
+    }
+
+    #[test]
+    fn gamepad_button_bindings_drive_actions() {
+        let (registry, attack, _movement) = registry();
+        let mut state = InputState::default();
+        state.begin_frame();
+        state.set_gamepad_button(GamepadButton::South, true);
+
+        let mut input = Input::evaluate_continuous(&registry, &state);
+        input.set_pressed(Input::pressed_this_frame(&registry, &state));
+
+        assert!(input.pressed(attack));
+        assert!(input.down(attack));
+    }
+
+    #[test]
+    fn gamepad_stick_combines_with_keyboard_and_clamps_to_unit_disc() {
+        let (registry, _attack, movement) = registry();
+        let mut state = InputState::default();
+        state.set_key(Key::D, true);
+        state.set_gamepad_axis(GamepadAxis::LeftStick, glam::vec2(0.5, -0.5));
+
+        let input = Input::evaluate_continuous(&registry, &state);
+        assert_eq!(input.axis2d(movement), glam::vec2(1.0, -0.5).normalize());
+    }
+
+    #[test]
+    fn gamepad_deadzone_zeros_small_stick_values() {
+        let mut state = InputState::default();
+        state.set_gamepad_axis(GamepadAxis::LeftStick, glam::vec2(0.1, 0.1));
+
+        assert_eq!(state.gamepad_axis(GamepadAxis::LeftStick), glam::Vec2::ZERO);
     }
 
     #[test]

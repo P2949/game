@@ -55,8 +55,24 @@ pub enum AudioCommand {
     PlayMusic {
         sound: SoundHandle,
         volume: f32,
+        fade_in_seconds: Option<f32>,
     },
     StopMusic,
+    PauseMusic,
+    ResumeMusic,
+    SetMasterVolume {
+        volume: f32,
+    },
+    SetSfxVolume {
+        volume: f32,
+    },
+    SetMusicVolume {
+        volume: f32,
+    },
+    FadeMusicTo {
+        volume: f32,
+        duration_seconds: f32,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

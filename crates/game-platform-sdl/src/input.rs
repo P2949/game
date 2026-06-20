@@ -1,4 +1,5 @@
-use game_core::input::{Key, MouseButton};
+use game_core::input::{GamepadAxis, GamepadButton, Key, MouseButton};
+use sdl3::gamepad::{Axis as SdlGamepadAxis, Button as SdlGamepadButton};
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton as SdlMouseButton;
 
@@ -63,10 +64,51 @@ pub fn mouse_button_from_sdl(button: SdlMouseButton) -> Option<MouseButton> {
     }
 }
 
+pub fn gamepad_button_from_sdl(button: SdlGamepadButton) -> Option<GamepadButton> {
+    match button {
+        SdlGamepadButton::South => Some(GamepadButton::South),
+        SdlGamepadButton::East => Some(GamepadButton::East),
+        SdlGamepadButton::West => Some(GamepadButton::West),
+        SdlGamepadButton::North => Some(GamepadButton::North),
+        SdlGamepadButton::LeftShoulder => Some(GamepadButton::LeftShoulder),
+        SdlGamepadButton::RightShoulder => Some(GamepadButton::RightShoulder),
+        SdlGamepadButton::Start => Some(GamepadButton::Start),
+        SdlGamepadButton::Back => Some(GamepadButton::Select),
+        SdlGamepadButton::DPadUp => Some(GamepadButton::DPadUp),
+        SdlGamepadButton::DPadDown => Some(GamepadButton::DPadDown),
+        SdlGamepadButton::DPadLeft => Some(GamepadButton::DPadLeft),
+        SdlGamepadButton::DPadRight => Some(GamepadButton::DPadRight),
+        _ => None,
+    }
+}
+
+/// Returns the logical stick and component (0 = X, 1 = Y) for an SDL axis.
+pub fn gamepad_axis_from_sdl(axis: SdlGamepadAxis) -> Option<(GamepadAxis, usize)> {
+    match axis {
+        SdlGamepadAxis::LeftX => Some((GamepadAxis::LeftStick, 0)),
+        SdlGamepadAxis::LeftY => Some((GamepadAxis::LeftStick, 1)),
+        SdlGamepadAxis::RightX => Some((GamepadAxis::RightStick, 0)),
+        SdlGamepadAxis::RightY => Some((GamepadAxis::RightStick, 1)),
+        _ => None,
+    }
+}
+
+pub fn normalize_gamepad_axis(value: i16) -> f32 {
+    if value >= 0 {
+        value as f32 / i16::MAX as f32
+    } else {
+        value as f32 / -(i16::MIN as f32)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{key_from_sdl, mouse_button_from_sdl};
-    use game_core::input::{Key, MouseButton};
+    use super::{
+        gamepad_axis_from_sdl, gamepad_button_from_sdl, key_from_sdl, mouse_button_from_sdl,
+        normalize_gamepad_axis,
+    };
+    use game_core::input::{GamepadAxis, GamepadButton, Key, MouseButton};
+    use sdl3::gamepad::{Axis as SdlGamepadAxis, Button as SdlGamepadButton};
     use sdl3::keyboard::Keycode;
     use sdl3::mouse::MouseButton as SdlMouseButton;
 
@@ -94,5 +136,27 @@ mod tests {
             mouse_button_from_sdl(SdlMouseButton::X2),
             Some(MouseButton::Forward)
         );
+    }
+
+    #[test]
+    fn maps_sdl_gamepad_controls_to_neutral_controls() {
+        assert_eq!(
+            gamepad_button_from_sdl(SdlGamepadButton::South),
+            Some(GamepadButton::South)
+        );
+        assert_eq!(
+            gamepad_button_from_sdl(SdlGamepadButton::Back),
+            Some(GamepadButton::Select)
+        );
+        assert_eq!(
+            gamepad_axis_from_sdl(SdlGamepadAxis::LeftX),
+            Some((GamepadAxis::LeftStick, 0))
+        );
+        assert_eq!(
+            gamepad_axis_from_sdl(SdlGamepadAxis::RightY),
+            Some((GamepadAxis::RightStick, 1))
+        );
+        assert_eq!(normalize_gamepad_axis(i16::MIN), -1.0);
+        assert_eq!(normalize_gamepad_axis(i16::MAX), 1.0);
     }
 }

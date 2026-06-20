@@ -17,6 +17,8 @@ use game_core::world::{Component, EntityId, Transform, Velocity};
 use game_map::MapCell;
 use glam::{Vec2, Vec4};
 
+use crate::assets::AssetLookup;
+use crate::beginner::audio::AudioOps;
 use crate::helpers::{InputDriven, MovementSpeed};
 use crate::map::{
     ContentRuntime, change_to_map_world, reset_to_start_map_world, restart_current_map_world,
@@ -93,9 +95,87 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         self.inner.audio.play_music(sound, volume);
     }
 
+    /// Starts looping music with a fade from silence, replacing current music.
+    pub fn play_music_fade_in(&mut self, sound: SoundHandle, volume: f32, duration_seconds: f32) {
+        self.inner
+            .audio
+            .play_music_fade_in(sound, volume, duration_seconds);
+    }
+
     /// Stops currently playing music.
     pub fn stop_music(&mut self) {
         self.inner.audio.stop_music();
+    }
+
+    pub fn pause_music(&mut self) {
+        self.inner.audio.pause_music();
+    }
+
+    pub fn resume_music(&mut self) {
+        self.inner.audio.resume_music();
+    }
+
+    pub fn set_master_volume(&mut self, volume: f32) {
+        self.inner.audio.set_master_volume(volume);
+    }
+
+    pub fn set_sfx_volume(&mut self, volume: f32) {
+        self.inner.audio.set_sfx_volume(volume);
+    }
+
+    pub fn set_music_volume(&mut self, volume: f32) {
+        self.inner.audio.set_music_volume(volume);
+    }
+
+    pub fn fade_music_to(&mut self, volume: f32, duration_seconds: f32) {
+        self.inner.audio.fade_music_to(volume, duration_seconds);
+    }
+
+    /// Beginner-friendly named audio operations.
+    pub fn audio(&mut self) -> AudioOps<'_, 'a, 'w> {
+        AudioOps::new(self)
+    }
+
+    /// Plays a registered sound effect by key at the standard beginner volume.
+    ///
+    /// A missing key is reported with the same known-key diagnostic as
+    /// author-time asset lookups; it does not crash a running game.
+    pub fn play_sound_named(&mut self, key: &str) {
+        let sound = self
+            .resource::<AssetLookup>()
+            .and_then(|lookup| lookup.sound(key));
+        match sound {
+            Some(sound) => self.play_sound(sound, 1.0),
+            None => self.report_missing_sound(key),
+        }
+    }
+
+    /// Starts registered music by key at the standard beginner volume.
+    pub fn play_music_named(&mut self, key: &str) {
+        let sound = self
+            .resource::<AssetLookup>()
+            .and_then(|lookup| lookup.sound(key));
+        match sound {
+            Some(sound) => self.play_music(sound, 1.0),
+            None => self.report_missing_sound(key),
+        }
+    }
+
+    fn report_missing_sound(&self, key: &str) {
+        if let Some(lookup) = self.resource::<AssetLookup>() {
+            eprintln!("{}", lookup.sound_error(key));
+        } else {
+            eprintln!("Unknown sound asset '{key}'.\n\nNo asset lookup is installed.");
+        }
+    }
+
+    pub(crate) fn named_sound(&self, key: &str) -> Option<SoundHandle> {
+        self.resource::<AssetLookup>()
+            .and_then(|lookup| lookup.sound(key))
+    }
+
+    pub(crate) fn report_missing_named_sound(&self, key: &str) {
+        self.report_missing_sound(key);
     }
 
     /// Deferred runtime commands applied after the current step: despawn, play
@@ -439,6 +519,15 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     }
 
     pub fn spawn_prefab_at(&mut self, prefab: &str, position: Vec2) -> Result<()> {
+        self.spawn_prefab_with_properties(prefab, position, PropertyBag::default())
+    }
+
+    pub(crate) fn spawn_prefab_with_properties(
+        &mut self,
+        prefab: &str,
+        position: Vec2,
+        properties: PropertyBag,
+    ) -> Result<()> {
         let prefab_id = self
             .inner
             .world
@@ -446,12 +535,23 @@ impl<'a, 'w> GameCtx<'a, 'w> {
             .and_then(|runtime| runtime.prefab_id(prefab))
             .ok_or_else(|| anyhow::anyhow!("unknown prefab '{prefab}'"))?;
         self.commands()
-            .spawn_prefab(prefab_id, position, PropertyBag::default());
+            .spawn_prefab(prefab_id, position, properties);
         Ok(())
     }
 
     pub fn spawn_prefab_or_log(&mut self, prefab: &str, position: Vec2) {
         if let Err(err) = self.spawn_prefab_at(prefab, position) {
+            log::error!("failed to queue spawn for prefab '{prefab}': {err:?}");
+        }
+    }
+
+    pub(crate) fn spawn_prefab_with_properties_or_log(
+        &mut self,
+        prefab: &str,
+        position: Vec2,
+        properties: PropertyBag,
+    ) {
+        if let Err(err) = self.spawn_prefab_with_properties(prefab, position, properties) {
             log::error!("failed to queue spawn for prefab '{prefab}': {err:?}");
         }
     }
@@ -548,7 +648,9 @@ mod tests {
     use std::rc::Rc;
 
     use game_core::app::{Ctx, RenderFrame};
+    use game_core::assets::AssetRegistry;
     use game_core::audio::{Audio, AudioCommands};
+    use game_core::backend::AudioCommand;
     use game_core::builder::{MapId, PrefabRegistry, PropertyBag};
     use game_core::camera::Camera2D;
     use game_core::commands::{Command, CommandQueue};
@@ -561,6 +663,7 @@ mod tests {
     use glam::{Vec2, vec2};
 
     use super::GameCtx;
+    use crate::assets::AssetLookup;
     use crate::map::ContentRuntime;
 
     #[derive(Clone, Copy)]
@@ -587,6 +690,32 @@ mod tests {
         };
         let mut game = GameCtx::new(&mut ctx);
         f(&mut game)
+    }
+
+    fn with_game_ctx_audio<R>(
+        world: &mut World,
+        f: impl FnOnce(&mut GameCtx<'_, '_>) -> R,
+    ) -> (R, Vec<AudioCommand>) {
+        let map = TileMap::from_rows(&["..."], 16.0);
+        let nav = NavGrid::from_tilemap(&map);
+        let input = Input::default();
+        let mut camera = Camera2D::new(Vec2::ZERO, 1.0);
+        let mut frame = RenderFrame::new(camera);
+        let mut audio_commands = AudioCommands::default();
+        let mut ctx = Ctx {
+            world,
+            map: &map,
+            nav: &nav,
+            input: &input,
+            camera: &mut camera,
+            gfx: Gfx::new(&mut frame),
+            audio: Audio::new(&mut audio_commands),
+        };
+        let result = {
+            let mut game = GameCtx::new(&mut ctx);
+            f(&mut game)
+        };
+        (result, audio_commands.drain().collect())
     }
 
     fn empty_game_map(name: &str) -> game_map::GameMap {
@@ -703,5 +832,51 @@ mod tests {
             .drain()
             .collect::<Vec<_>>();
         assert_eq!(commands, vec![Command::ChangeMap(MapId(1))]);
+    }
+
+    #[test]
+    fn named_audio_ops_emit_group_music_and_fade_commands() {
+        let mut registry = AssetRegistry::new();
+        registry.try_sound_file("hit", "sounds/hit.wav").unwrap();
+        registry.try_sound_file("theme", "music/theme.wav").unwrap();
+
+        let mut world = World::new();
+        world.insert_resource(AssetLookup::from_registry(&registry));
+        let (_, commands) = with_game_ctx_audio(&mut world, |game| {
+            game.audio().play_sound("hit");
+            game.audio().play_music("theme").volume(0.4).fade_in(1.5);
+            let mut audio = game.audio();
+            audio.set_master_volume(0.8);
+            audio.set_sfx_volume(0.7);
+            audio.set_music_volume(0.6);
+            audio.fade_music_to(0.0, 1.0);
+            audio.pause_music();
+            audio.resume_music();
+        });
+
+        assert_eq!(
+            commands,
+            vec![
+                AudioCommand::Play {
+                    sound: game_core::backend::SoundHandle(0),
+                    volume: 1.0,
+                    looping: false,
+                },
+                AudioCommand::PlayMusic {
+                    sound: game_core::backend::SoundHandle(1),
+                    volume: 0.4,
+                    fade_in_seconds: Some(1.5),
+                },
+                AudioCommand::SetMasterVolume { volume: 0.8 },
+                AudioCommand::SetSfxVolume { volume: 0.7 },
+                AudioCommand::SetMusicVolume { volume: 0.6 },
+                AudioCommand::FadeMusicTo {
+                    volume: 0.0,
+                    duration_seconds: 1.0,
+                },
+                AudioCommand::PauseMusic,
+                AudioCommand::ResumeMusic,
+            ]
+        );
     }
 }

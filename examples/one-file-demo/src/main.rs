@@ -14,14 +14,14 @@ fn main() -> Result<()> {
         let controls = game.input(|input| input.top_down_controls())?;
 
         game.player_prefab("player")
-            .sprite(assets.texture("player"))
+            .sprite("player")
             .moves_with(controls.movement, 130.0)
             .health(100)
             .melee(30.0, 25)
             .build()?;
 
         game.enemy_prefab("slime")
-            .sprite(assets.texture("slime"))
+            .sprite("slime")
             .chases_player()
             .health(40)
             .melee(26.0, 6)
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
 
         game.map("level_1")
             .tiles(["########", "#......#", "#..P.E.#", "#......#", "########"])
-            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('E', "slime")
             .start();

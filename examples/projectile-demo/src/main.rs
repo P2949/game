@@ -2,29 +2,28 @@ use game_starter::prelude::*;
 
 fn main() -> Result<()> {
     run_game("Projectile Demo", |game| {
-        let assets = game
-            .asset_bag()
+        game.asset_bag()
             .texture("player", "textures/test.png")?
             .texture("slime", "textures/test.png")?
             .texture("bolt", "textures/test.png")?
             .texture("floor", "textures/test.png")?
             .texture("wall", "textures/test.png")?
-            .sound("hit", "sounds/hit.wav")?
+            .sound("shoot", "sounds/hit.wav")?
             .build();
         let controls = game.input(|input| input.top_down_controls())?;
 
         game.player_prefab("player")
-            .sprite(assets.texture("player"))
+            .sprite("player")
             .moves_with(controls.movement, 130.0)
             .build()?;
 
         game.enemy_prefab("slime")
-            .sprite(assets.texture("slime"))
+            .sprite("slime")
             .health(30)
             .build()?;
 
         game.projectile_prefab("bolt")
-            .sprite(assets.texture("bolt"))
+            .sprite("bolt")
             .damage(15)
             .speed(260.0)
             .lifetime(0.8)
@@ -33,22 +32,21 @@ fn main() -> Result<()> {
 
         game.map("projectiles")
             .tiles(["########", "#P..E..#", "#......#", "########"])
-            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('E', "slime")
             .start();
 
         game.rules()
             .top_down_controls(controls)
+            .projectiles()
             .dead_enemies_despawn()
             .camera_follows_player()
             .build();
 
-        game.on_action_cooldown(controls.attack, 0.2, move |game: &mut Game<'_, '_>| {
-            game.spawn("bolt").near_player(28.0);
-            if game.enemies().alive().near_player(96.0).damage(15) > 0 {
-                game.commands().play_sound(assets.sound("hit"));
-            }
+        game.on_action_cooldown(controls.attack, 0.2, move |game| {
+            game.player().shoot("bolt").towards_mouse();
+            game.play_sound_named("shoot");
         });
 
         Ok(())

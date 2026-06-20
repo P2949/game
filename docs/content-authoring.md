@@ -13,6 +13,19 @@ Current examples are split this way:
 
 For focused beginner recipes, see the [cookbook](cookbook/README.md).
 
+Read the project in this order:
+
+1. [Beginner authoring](beginner-authoring.md) and the tutorials for a
+   script-like game.
+2. This document when a project grows into a content crate.
+3. [Advanced content authoring](advanced-content-authoring.md) only when custom
+   low-level behavior is intentional.
+
+`testbed-content` is intentionally advanced: it exercises manual systems, RON
+maps, patrol setup, and lower-level facade APIs. Beginners should copy
+`simple-content`, `arena-content`, `examples/one-file-demo`, or
+`templates/simple-demo` instead.
+
 ## Beginner Path
 
 Beginner content imports the beginner facade:
@@ -85,7 +98,24 @@ Audio assets support file-backed WAV sound effects and WAV music handles through
 converted to the mixer sample rate and channel count; mono and stereo PCM16 or
 float32 WAV files are the intended path. `generated_sound(...)` is still
 available for tests and quick placeholders. OGG/MP3 playback and streaming audio
-are not implemented.
+are not implemented yet.
+
+Play named assets through the beginner audio surface—no handles need to travel
+into gameplay callbacks:
+
+```rust
+game.audio().play_sound("hit");
+game.audio().play_music("theme").volume(0.4).fade_in(0.5);
+game.audio().set_master_volume(0.8);
+game.audio().set_sfx_volume(0.8);
+game.audio().set_music_volume(0.5);
+game.audio().fade_music_to(0.0, 1.0);
+game.audio().pause_music();
+game.audio().resume_music();
+```
+
+Music is intentionally memory-loaded for the small demos today; streaming is a
+future optimization.
 
 Use `game.input(|input| input.top_down_controls())?` for the standard first-game
 bindings: WASD/arrows movement, Space/Enter attack, `R` reset, `P` or Escape

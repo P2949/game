@@ -26,8 +26,8 @@ game.rules()
 
 ## Explanation
 
-`top_down_controls()` binds Space and Enter to `controls.attack`. The rules
-builder uses that action for the player's melee swing. Enemies with
+`top_down_controls()` binds Space, Enter, mouse-left, and the first controller's
+south face button to `controls.attack`. The rules builder uses that action for the player's melee swing. Enemies with
 `.melee(...)` can hit the player while combat is running.
 
 Combat works without a sound handle. The next tutorial swaps to the beginner

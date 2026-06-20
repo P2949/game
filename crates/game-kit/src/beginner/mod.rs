@@ -6,6 +6,7 @@
 pub mod actors;
 pub mod animation;
 pub mod app;
+pub mod audio;
 pub mod camera;
 pub mod collections;
 pub mod combat;
@@ -21,3 +22,4 @@ pub mod spawn;
 pub mod state;
 pub mod testing;
 pub mod time;
+pub mod ui;

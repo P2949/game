@@ -1,38 +1,67 @@
-//! `game-kit` is the friendly content-authoring facade.
+//! `game-kit` is the content-authoring facade.
 //!
-//! Game content (the `arena-content`/`testbed-content` crates) imports
-//! `game_kit::prelude::*` and expresses **assets, controls, prefabs, maps, and
-//! systems** through [`GameApp`] and [`GameCtx`]. It never operates the engine's
-//! `GameBuilder`, `Schedule`, `PrefabRegistry`, `MapRegistry`, validators, raw
-//! `Ctx`, or `CommandQueue` directly, and it never sees the SDL/Vulkan/audio
-//! backends.
-//!
-//! A content crate is usually a small plugin that delegates registration to
-//! assets/input/prefab/map/system modules:
+//! Beginner content should import:
 //!
 //! ```ignore
-//! use game_kit::prelude::*;
-//!
-//! pub struct DemoPlugin;
-//!
-//! impl GamePlugin for DemoPlugin {
-//!     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-//!         let assets = game.assets(assets::register)?;
-//!         let input = game.input(input::register)?;
-//!         prefabs::register(game, &assets, &input)?;
-//!         level::register(game, &assets)?;
-//!         systems::register(game, &assets, &input);
-//!         Ok(())
-//!     }
-//! }
+//! use game_kit::beginner::prelude::*;
 //! ```
 //!
-//! Prefabs spawn tuple bundles and state their validation requirements through
-//! the facade:
+//! Standalone demos should usually import:
 //!
 //! ```ignore
-//! use game_kit::prelude::*;
+//! use game_starter::prelude::*;
+//! ```
 //!
+//! The beginner API provides players, enemies, pickups, doors, projectiles,
+//! maps, assets, controls, scenes, rules, audio, and UI helpers.
+//!
+//! ## First game
+//!
+//! ```ignore
+//! game.asset_bag()
+//!     .texture("player", "textures/player.png")?
+//!     .texture("slime", "textures/slime.png")?
+//!     .texture("floor", "textures/floor.png")?
+//!     .texture("wall", "textures/wall.png")?
+//!     .sound("hit", "sounds/hit.wav")?
+//!     .build();
+//!
+//! let controls = game.input(|input| input.top_down_controls())?;
+//!
+//! game.player_prefab("player")
+//!     .sprite("player")
+//!     .moves_with(controls.movement, 130.0)
+//!     .build()?;
+//!
+//! game.enemy_prefab("slime")
+//!     .sprite("slime")
+//!     .chases_player()
+//!     .build()?;
+//!
+//! game.map("level_1")
+//!     .tiles(["#####", "#P.E#", "#####"])
+//!     .simple_theme("floor", "wall")
+//!     .legend('P', "player")
+//!     .legend('E', "slime")
+//!     .start();
+//!
+//! game.rules()
+//!     .top_down_controls(controls)
+//!     .enemies_damage_player()
+//!     .camera_follows_player()
+//!     .show_player_health()
+//!     .build();
+//! ```
+//!
+//! ## Advanced authoring
+//!
+//! For custom ECS-style systems and tuple prefabs, import:
+//!
+//! ```ignore
+//! use game_kit::advanced::prelude::*;
+//! ```
+//!
+//! ```ignore
 //! game.prefab("demo/player", |prefab| {
 //!     prefab
 //!         .spawn(move |at| {
@@ -47,16 +76,6 @@
 //!         .require::<Sprite>();
 //!     Ok(())
 //! })?;
-//! ```
-//!
-//! Systems receive [`GameCtx`] and use its helpers instead of raw world plumbing:
-//!
-//! ```ignore
-//! use game_kit::prelude::*;
-//!
-//! fn player_control(game: &mut GameCtx<'_, '_>, _dt: f32) {
-//!     game.drive_input::<PlayerController, MovementSpeed>();
-//! }
 //! ```
 //!
 //! See `docs/content-authoring.md` for the author-facing guide.
@@ -75,23 +94,28 @@ pub mod prefab;
 pub mod system;
 
 pub use app::{DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, Plugin, plugin, plugin_fn};
-pub use assets::{AssetAuthor, AssetBag, AssetBagAuthor};
+pub use assets::{AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, SoundRef, TextureRef};
 pub use beginner::actors::{
-    CollectSound, Collectible, DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget, Enemy,
-    ExitDoor, Lifetime, Name, Npc, Pickup, Player, PlayerMovement, Projectile, ProjectileDamage,
-    ScoreValue, Solid, Spawner, Speed,
+    CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect, DespawnOnHit, Door,
+    DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Npc, Pickup, Player, PlayerMovement,
+    Projectile, ProjectileDamage, ScoreValue, Solid, Spawner, Speed,
 };
 pub use beginner::animation::{
     Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
     idle_frames, walk_frames,
 };
+pub use beginner::audio::{AudioOps, MusicPlayback};
 pub use beginner::camera::CameraShake;
 pub use beginner::collections::{
-    CameraOps, EnemyCollection, PickupCollection, PlayerActor, Score, ScoreOps,
+    CameraOps, EnemyCollection, FiredShot, PickupCollection, PlayerActor, Score, ScoreOps,
+    ShootAuthor,
 };
 pub use beginner::combat::MeleeCombatConfig;
 pub use beginner::debug::DebugOverlay;
 pub use beginner::defaults::TopDownGameAuthor;
+pub use beginner::events::{
+    AnimationFinishedEvent, CollectEvent, CollisionEvent, EnemyDeathEvent, EventActor,
+};
 pub use beginner::prefabs::{
     DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
     ProjectilePrefabAuthor, SpawnerPrefabAuthor,
@@ -100,6 +124,7 @@ pub use beginner::rules::RulesAuthor;
 pub use beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
 pub use beginner::spawn::SpawnAuthor;
 pub use beginner::state::SimpleGameState;
+pub use beginner::ui::{UiOps, UiText};
 pub use bundle::{Bundle, vec2s};
 pub use context::{Commands, GameCtx, StartupGameCtx};
 pub use helpers::{
@@ -124,7 +149,7 @@ pub mod prelude {
     pub use game_combat::{Faction, FactionId, Health, MeleeAttack};
     pub use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
     pub use game_core::camera::Camera2D;
-    pub use game_core::input::{ActionId, Axis2dId, Key, MouseButton};
+    pub use game_core::input::{ActionId, Axis2dId, GamepadAxis, GamepadButton, Key, MouseButton};
     pub use game_core::world::{Component, EntityId, Sprite, Transform, Velocity};
     pub use game_map::{MapCell, cell};
     pub use game_physics::Collider;
@@ -133,11 +158,13 @@ pub mod prelude {
     pub use crate::app::{
         DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, plugin, plugin_fn,
     };
-    pub use crate::assets::{AssetAuthor, AssetBag, AssetBagAuthor};
+    pub use crate::assets::{
+        AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, SoundRef, TextureRef,
+    };
     pub use crate::beginner::actors::{
-        CollectSound, Collectible, DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget,
-        Enemy, ExitDoor, Lifetime, Name, Npc, Pickup, Player, PlayerMovement, Projectile,
-        ProjectileDamage, ScoreValue, Solid, Spawner, Speed,
+        CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect, DespawnOnHit, Door,
+        DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Npc, Pickup, Player,
+        PlayerMovement, Projectile, ProjectileDamage, ScoreValue, Solid, Spawner, Speed,
     };
     pub use crate::beginner::animation::{
         Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
@@ -145,12 +172,16 @@ pub mod prelude {
     };
     pub use crate::beginner::camera::CameraShake;
     pub use crate::beginner::collections::{
-        CameraOps, EnemyCollection, PickupCollection, PlayerActor, Score, ScoreOps,
+        CameraOps, EnemyCollection, FiredShot, PickupCollection, PlayerActor, Score, ScoreOps,
+        ShootAuthor,
     };
     pub use crate::beginner::combat::MeleeCombatConfig;
     pub use crate::beginner::context::{Game, Seconds, StartupGame};
     pub use crate::beginner::debug::DebugOverlay;
     pub use crate::beginner::defaults::TopDownGameAuthor;
+    pub use crate::beginner::events::{
+        AnimationFinishedEvent, CollectEvent, CollisionEvent, EnemyDeathEvent, EventActor,
+    };
     pub use crate::beginner::prefabs::{
         DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
         ProjectilePrefabAuthor, SpawnerPrefabAuthor,
@@ -159,6 +190,7 @@ pub mod prelude {
     pub use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
     pub use crate::beginner::spawn::SpawnAuthor;
     pub use crate::beginner::state::SimpleGameState;
+    pub use crate::beginner::ui::{UiOps, UiText};
     pub use crate::bundle::{Bundle, vec2s};
     pub use crate::context::{Commands, GameCtx, StartupGameCtx};
     pub use crate::helpers::{InputDriven, MovementSpeed, SimulationState};

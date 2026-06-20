@@ -744,6 +744,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "script-like-custom-rules"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-starter",
+]
+
+[[package]]
 name = "sdl3"
 version = "0.18.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

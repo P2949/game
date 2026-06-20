@@ -3,17 +3,19 @@
 use anyhow::Result;
 use game_ai::{AiController, ChaseTarget, PathFollow, Patrol};
 use game_combat::{Faction, Health, MeleeAttack};
-use game_core::backend::{SoundHandle, TextureHandle};
+use game_core::backend::TextureHandle;
+use game_core::builder::PropertyBag;
 use game_core::input::Axis2dId;
 use game_core::world::{Sprite, Transform, Velocity};
 use game_physics::Collider;
 use glam::{Vec2, Vec4, vec2};
 
 use crate::app::GameApp;
+use crate::assets::{SoundRef, TextureRef};
 use crate::beginner::actors::{
-    CollectSound, Collectible, DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget, Enemy,
-    ExitDoor, Lifetime, Name, Pickup, Player, PlayerMovement, Projectile, ProjectileDamage,
-    ScoreValue, Spawner, Speed,
+    CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect, DespawnOnHit, Door,
+    DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Pickup, Player, PlayerMovement,
+    PlayerProjectile, Projectile, ProjectileDamage, ScoreValue, SpawnPlacement, Spawner, Speed,
 };
 use crate::beginner::animation::{
     Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, idle_frames,
@@ -35,6 +37,20 @@ const DEFAULT_LAYER: i16 = 10;
 const ENEMY_CHASE_RANGE: f32 = 180.0;
 const ENEMY_REPATH_SECONDS: f32 = 0.25;
 const ENEMY_MELEE_COOLDOWN: f32 = 0.75;
+const PROJECTILE_DIRECTION_X: &str = "beginner/projectile_direction_x";
+const PROJECTILE_DIRECTION_Y: &str = "beginner/projectile_direction_y";
+
+fn projectile_direction(properties: &PropertyBag) -> Vec2 {
+    let x = properties
+        .get(PROJECTILE_DIRECTION_X)
+        .and_then(|value| value.parse::<f32>().ok())
+        .unwrap_or_default();
+    let y = properties
+        .get(PROJECTILE_DIRECTION_Y)
+        .and_then(|value| value.parse::<f32>().ok())
+        .unwrap_or_default();
+    vec2(x, y).normalize_or_zero()
+}
 
 #[derive(Clone, Copy)]
 struct MeleeSpec {
@@ -50,9 +66,15 @@ enum SpriteSource {
 }
 
 #[derive(Clone)]
+enum SpriteSourceRef {
+    Texture(TextureRef),
+    Sheet(SpriteSheet),
+}
+
+#[derive(Clone)]
 struct ActorPrefabSpec {
     display_name: Option<String>,
-    sprite: Option<SpriteSource>,
+    sprite: Option<SpriteSourceRef>,
     size: Vec2,
     tint: Vec4,
     layer: i16,
@@ -97,13 +119,24 @@ impl ActorPrefabSpec {
         }
     }
 
-    fn sprite_source(&self, kind: &str, prefab_name: &str) -> Result<SpriteSource> {
+    fn sprite_source(
+        &self,
+        app: &GameApp<'_>,
+        kind: &str,
+        prefab_name: &str,
+    ) -> Result<SpriteSource> {
         let label = actor_kind_label(kind);
-        self.sprite.ok_or_else(|| {
+        let source = self.sprite.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
-                "{label} prefab '{prefab_name}' has no sprite.\n\nAdd:\n    .sprite(assets.{kind})\n\nor:\n    .spritesheet(assets.{kind}_sheet)\n\nExample:\n    game.{kind}_prefab(\"{prefab_name}\")\n        .sprite(assets.{kind})\n        .build()?;"
+                "{label} prefab '{prefab_name}' has no sprite.\n\nAdd:\n    .sprite(\"{kind}\")\n\nor:\n    .spritesheet(assets.{kind}_sheet)\n\nExample:\n    game.{kind}_prefab(\"{prefab_name}\")\n        .sprite(\"{kind}\")\n        .build()?;"
             )
-        })
+        })?;
+        match source {
+            SpriteSourceRef::Texture(texture) => Ok(SpriteSource::Texture(
+                app.resolve_texture_ref(texture.clone())?,
+            )),
+            SpriteSourceRef::Sheet(sheet) => Ok(SpriteSource::Sheet(*sheet)),
+        }
     }
 
     fn sprite(&self, source: SpriteSource, frame: usize) -> Sprite {
@@ -177,7 +210,7 @@ fn actor_kind_label(kind: &str) -> &'static str {
 #[derive(Clone)]
 struct ObjectPrefabSpec {
     display_name: Option<String>,
-    sprite: Option<SpriteSource>,
+    sprite: Option<SpriteSourceRef>,
     size: Vec2,
     tint: Vec4,
     layer: i16,
@@ -196,13 +229,24 @@ impl ObjectPrefabSpec {
         }
     }
 
-    fn sprite_source(&self, kind: &str, prefab_name: &str) -> Result<SpriteSource> {
+    fn sprite_source(
+        &self,
+        app: &GameApp<'_>,
+        kind: &str,
+        prefab_name: &str,
+    ) -> Result<SpriteSource> {
         let label = actor_kind_label(kind);
-        self.sprite.ok_or_else(|| {
+        let source = self.sprite.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
-                "{label} prefab '{prefab_name}' has no sprite.\n\nAdd:\n    .sprite(assets.texture(\"{kind}\"))"
+                "{label} prefab '{prefab_name}' has no sprite.\n\nAdd:\n    .sprite(\"{kind}\")"
             )
-        })
+        })?;
+        match source {
+            SpriteSourceRef::Texture(texture) => Ok(SpriteSource::Texture(
+                app.resolve_texture_ref(texture.clone())?,
+            )),
+            SpriteSourceRef::Sheet(sheet) => Ok(SpriteSource::Sheet(*sheet)),
+        }
     }
 
     fn sprite(&self, source: SpriteSource) -> Sprite {
@@ -246,13 +290,13 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn sprite(mut self, texture: TextureHandle) -> Self {
-        self.spec.sprite = Some(SpriteSource::Texture(texture));
+    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
         self
     }
 
     pub fn spritesheet(mut self, sheet: SpriteSheet) -> Self {
-        self.spec.sprite = Some(SpriteSource::Sheet(sheet));
+        self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
         self
     }
 
@@ -267,6 +311,22 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
 
     pub fn walk(self, frames: impl IntoIterator<Item = usize>) -> Self {
         self.animation("walk", walk_frames(frames))
+    }
+
+    pub fn walk_up(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("walk_up", walk_frames(frames))
+    }
+
+    pub fn walk_down(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("walk_down", walk_frames(frames))
+    }
+
+    pub fn walk_left(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("walk_left", walk_frames(frames))
+    }
+
+    pub fn walk_right(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("walk_right", walk_frames(frames))
     }
 
     pub fn attack(self, frames: impl IntoIterator<Item = usize>) -> Self {
@@ -333,7 +393,7 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
     }
 
     pub fn build(self) -> Result<()> {
-        let sprite_source = self.spec.sprite_source("player", &self.name)?;
+        let sprite_source = self.spec.sprite_source(self.app, "player", &self.name)?;
         let movement_axis = self.movement_axis.ok_or_else(|| {
             anyhow::anyhow!(
                 "player prefab '{}' has no movement axis.\n\nAdd:\n    .moves_with(controls.movement, 130.0)",
@@ -445,6 +505,7 @@ pub struct EnemyPrefabAuthor<'a, 'app> {
     chase: Option<ChaseSpec>,
     patrol: Option<PatrolSpec>,
     patrol_speed: Option<f32>,
+    despawn_after_death_animation: bool,
 }
 
 impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
@@ -456,6 +517,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
             chase: None,
             patrol: None,
             patrol_speed: None,
+            despawn_after_death_animation: false,
         }
     }
 
@@ -464,13 +526,13 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn sprite(mut self, texture: TextureHandle) -> Self {
-        self.spec.sprite = Some(SpriteSource::Texture(texture));
+    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
         self
     }
 
     pub fn spritesheet(mut self, sheet: SpriteSheet) -> Self {
-        self.spec.sprite = Some(SpriteSource::Sheet(sheet));
+        self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
         self
     }
 
@@ -493,6 +555,14 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
 
     pub fn die(self, frames: impl IntoIterator<Item = usize>) -> Self {
         self.animation("die", die_frames(frames))
+    }
+
+    /// Keeps this enemy alive until its configured `die` animation finishes
+    /// when `dead_enemies_play_death_animation()` and
+    /// `dead_enemies_despawn_after_animation()` are enabled.
+    pub fn despawn_after_death_animation(mut self) -> Self {
+        self.despawn_after_death_animation = true;
+        self
     }
 
     pub fn play(mut self, name: impl Into<String>) -> Self {
@@ -611,7 +681,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
     }
 
     pub fn build(self) -> Result<()> {
-        let sprite_source = self.spec.sprite_source("enemy", &self.name)?;
+        let sprite_source = self.spec.sprite_source(self.app, "enemy", &self.name)?;
         let spec = self.spec;
         let prefab_name = self.name.clone();
         let display_name = spec.display_name(&prefab_name);
@@ -625,6 +695,9 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
             spec.animation_components(sprite_source, "enemy", &prefab_name)?;
         let patrol = self.patrol;
         let patrol_speed = self.patrol_speed.unwrap_or(spec.speed);
+        let death_animation_policy = DeathAnimationPolicy {
+            despawn_after_animation: self.despawn_after_death_animation,
+        };
 
         if let Some(chase) = self.chase {
             if patrol.is_some() {
@@ -648,6 +721,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Transform::at(at),
                                 Velocity::default(),
                                 Enemy,
+                                death_animation_policy,
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -690,6 +764,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Transform::at(at),
                                 Velocity::default(),
                                 Enemy,
+                                death_animation_policy,
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -744,6 +819,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Transform::at(at),
                                 Velocity::default(),
                                 Enemy,
+                                death_animation_policy,
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -788,6 +864,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Transform::at(at),
                                 Velocity::default(),
                                 Enemy,
+                                death_animation_policy,
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -826,6 +903,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Transform::at(at),
                                 Velocity::default(),
                                 Enemy,
+                                death_animation_policy,
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -859,6 +937,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Transform::at(at),
                                 Velocity::default(),
                                 Enemy,
+                                death_animation_policy,
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -889,7 +968,7 @@ pub struct PickupPrefabAuthor<'a, 'app> {
     name: String,
     spec: ObjectPrefabSpec,
     score: i32,
-    sound: Option<SoundHandle>,
+    sound: Option<SoundRef>,
     despawn_on_collect: bool,
 }
 
@@ -910,13 +989,13 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn sprite(mut self, texture: TextureHandle) -> Self {
-        self.spec.sprite = Some(SpriteSource::Texture(texture));
+    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
         self
     }
 
     pub fn spritesheet(mut self, sheet: SpriteSheet) -> Self {
-        self.spec.sprite = Some(SpriteSource::Sheet(sheet));
+        self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
         self
     }
 
@@ -950,8 +1029,8 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn play_sound(mut self, sound: SoundHandle) -> Self {
-        self.sound = Some(sound);
+    pub fn play_sound(mut self, sound: impl Into<SoundRef>) -> Self {
+        self.sound = Some(sound.into());
         self
     }
 
@@ -961,14 +1040,18 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
     }
 
     pub fn build(self) -> Result<()> {
-        let sprite_source = self.spec.sprite_source("pickup", &self.name)?;
+        let sprite_source = self.spec.sprite_source(self.app, "pickup", &self.name)?;
+        let sound = self
+            .sound
+            .map(|sound| self.app.resolve_sound_ref(sound))
+            .transpose()?;
         let spec = self.spec;
         let prefab_name = self.name.clone();
         let display_name = spec.display_name(&prefab_name);
         let collider = spec.collider();
         let score = self.score;
 
-        match (self.sound, self.despawn_on_collect) {
+        match (sound, self.despawn_on_collect) {
             (Some(sound), true) => self.app.prefab(self.name, move |prefab| {
                 prefab
                     .spawn(move |at| {
@@ -1089,13 +1172,13 @@ impl<'a, 'app> DoorPrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn sprite(mut self, texture: TextureHandle) -> Self {
-        self.spec.sprite = Some(SpriteSource::Texture(texture));
+    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
         self
     }
 
     pub fn spritesheet(mut self, sheet: SpriteSheet) -> Self {
-        self.spec.sprite = Some(SpriteSource::Sheet(sheet));
+        self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
         self
     }
 
@@ -1145,7 +1228,7 @@ impl<'a, 'app> DoorPrefabAuthor<'a, 'app> {
     }
 
     pub fn build(self) -> Result<()> {
-        let sprite_source = self.spec.sprite_source("door", &self.name)?;
+        let sprite_source = self.spec.sprite_source(self.app, "door", &self.name)?;
         let action = self.action.ok_or_else(|| {
             anyhow::anyhow!(
                 "door prefab '{}' has no action.\n\nAdd:\n    .change_map(\"level_2\")\n\nor:\n    .restart_level()",
@@ -1213,13 +1296,13 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn sprite(mut self, texture: TextureHandle) -> Self {
-        self.spec.sprite = Some(SpriteSource::Texture(texture));
+    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
         self
     }
 
     pub fn spritesheet(mut self, sheet: SpriteSheet) -> Self {
-        self.spec.sprite = Some(SpriteSource::Sheet(sheet));
+        self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
         self
     }
 
@@ -1269,7 +1352,9 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
     }
 
     pub fn build(self) -> Result<()> {
-        let sprite_source = self.spec.sprite_source("projectile", &self.name)?;
+        let sprite_source = self
+            .spec
+            .sprite_source(self.app, "projectile", &self.name)?;
         let spec = self.spec;
         let prefab_name = self.name.clone();
         let display_name = spec.display_name(&prefab_name);
@@ -1281,12 +1366,14 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
         if self.despawn_on_hit {
             self.app.prefab(self.name, move |prefab| {
                 prefab
-                    .spawn(move |at| {
+                    .spawn_with_properties(move |at, properties| {
+                        let direction = projectile_direction(properties);
                         (
                             Name::new(display_name.clone()),
                             Transform::at(at),
-                            Velocity::default(),
+                            Velocity::new(direction * speed),
                             Projectile,
+                            PlayerProjectile,
                             Speed::new(speed),
                             ProjectileDamage { amount: damage },
                             Lifetime {
@@ -1300,6 +1387,7 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
                     .require::<Transform>()
                     .require::<Velocity>()
                     .require::<Projectile>()
+                    .require::<PlayerProjectile>()
                     .require::<Speed>()
                     .require::<ProjectileDamage>()
                     .require::<Lifetime>()
@@ -1311,12 +1399,14 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
         } else {
             self.app.prefab(self.name, move |prefab| {
                 prefab
-                    .spawn(move |at| {
+                    .spawn_with_properties(move |at, properties| {
+                        let direction = projectile_direction(properties);
                         (
                             Name::new(display_name.clone()),
                             Transform::at(at),
-                            Velocity::default(),
+                            Velocity::new(direction * speed),
                             Projectile,
+                            PlayerProjectile,
                             Speed::new(speed),
                             ProjectileDamage { amount: damage },
                             Lifetime {
@@ -1329,6 +1419,7 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
                     .require::<Transform>()
                     .require::<Velocity>()
                     .require::<Projectile>()
+                    .require::<PlayerProjectile>()
                     .require::<Speed>()
                     .require::<ProjectileDamage>()
                     .require::<Lifetime>()
@@ -1347,6 +1438,7 @@ pub struct SpawnerPrefabAuthor<'a, 'app> {
     prefab: Option<String>,
     every_seconds: f32,
     max_alive: Option<usize>,
+    placement: SpawnPlacement,
 }
 
 impl<'a, 'app> SpawnerPrefabAuthor<'a, 'app> {
@@ -1358,6 +1450,7 @@ impl<'a, 'app> SpawnerPrefabAuthor<'a, 'app> {
             prefab: None,
             every_seconds: 1.0,
             max_alive: None,
+            placement: SpawnPlacement::AtSpawner,
         }
     }
 
@@ -1381,6 +1474,23 @@ impl<'a, 'app> SpawnerPrefabAuthor<'a, 'app> {
         self
     }
 
+    pub fn at_spawner(mut self) -> Self {
+        self.placement = SpawnPlacement::AtSpawner;
+        self
+    }
+
+    pub fn near_player(mut self, radius: f32) -> Self {
+        self.placement = SpawnPlacement::NearPlayer {
+            radius: radius.max(0.0),
+        };
+        self
+    }
+
+    pub fn at_first_floor(mut self) -> Self {
+        self.placement = SpawnPlacement::AtFirstFloor;
+        self
+    }
+
     pub fn build(self) -> Result<()> {
         let spawn_prefab = self.prefab.ok_or_else(|| {
             anyhow::anyhow!(
@@ -1392,6 +1502,7 @@ impl<'a, 'app> SpawnerPrefabAuthor<'a, 'app> {
         let display_name = self.display_name.unwrap_or_else(|| prefab_name.clone());
         let every_seconds = self.every_seconds;
         let max_alive = self.max_alive;
+        let placement = self.placement;
 
         self.app.prefab(self.name, move |prefab| {
             prefab
@@ -1404,6 +1515,7 @@ impl<'a, 'app> SpawnerPrefabAuthor<'a, 'app> {
                             every_seconds,
                             timer: 0.0,
                             max_alive,
+                            placement: placement.clone(),
                         },
                     )
                 })?
@@ -1417,7 +1529,7 @@ impl<'a, 'app> SpawnerPrefabAuthor<'a, 'app> {
 #[cfg(test)]
 mod tests {
     use game_ai::Patrol;
-    use game_core::backend::{SoundHandle, TextureHandle};
+    use game_core::backend::{AudioCommand, SoundHandle, TextureHandle};
 
     use super::*;
     use crate::app::{GameApp, GamePlugin};
@@ -1515,5 +1627,93 @@ mod tests {
 
         assert_eq!(game.count::<Enemy>(), 1);
         assert_eq!(game.count::<Patrol>(), 1);
+    }
+
+    struct NamedAssetPrefabPlugin;
+
+    impl GamePlugin for NamedAssetPrefabPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+            game.asset_bag()
+                .texture("player", "textures/player.png")?
+                .texture("slime", "textures/slime.png")?
+                .texture("coin", "textures/coin.png")?
+                .texture("door", "textures/door.png")?
+                .texture("bolt", "textures/bolt.png")?
+                .texture("floor", "textures/floor.png")?
+                .texture("wall", "textures/wall.png")?
+                .generated_sound("coin")?
+                .build();
+            let controls = game.input(|input| input.top_down_controls())?;
+
+            game.player_prefab("player")
+                .sprite("player")
+                .moves_with(controls.movement, 120.0)
+                .build()?;
+            game.enemy_prefab("slime").sprite("slime").build()?;
+            game.pickup_prefab("coin")
+                .sprite("coin")
+                .play_sound("coin")
+                .build()?;
+            game.door_prefab("door")
+                .sprite("door")
+                .restart_level()
+                .build()?;
+            game.projectile_prefab("bolt").sprite("bolt").build()?;
+
+            game.map("named-assets")
+                .tiles(["#####", "#P..#", "#####"])
+                .simple_theme("floor", "wall")
+                .legend('P', "player")
+                .start();
+            game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
+            game.on_action(controls.attack, |game| game.play_sound_named("coin"));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn beginner_prefab_and_map_builders_resolve_named_assets() {
+        let mut game = GameTestHarness::from_plugin(NamedAssetPrefabPlugin).unwrap();
+
+        assert_eq!(game.count::<Player>(), 1);
+        assert_eq!(game.count::<Sprite>(), 1);
+
+        game = game.press_action("attack");
+        game.fixed_step(1.0 / 120.0);
+        assert_eq!(
+            game.audio_commands(),
+            &[AudioCommand::Play {
+                sound: SoundHandle(0),
+                volume: 1.0,
+                looping: false,
+            }]
+        );
+    }
+
+    struct MissingNamedAssetPlugin;
+
+    impl GamePlugin for MissingNamedAssetPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+            game.asset_bag()
+                .texture("player", "textures/player.png")?
+                .build();
+            let controls = game.input(|input| input.top_down_controls())?;
+            game.player_prefab("player")
+                .sprite("plaeyr")
+                .moves_with(controls.movement, 120.0)
+                .build()
+        }
+    }
+
+    #[test]
+    fn named_prefab_assets_report_friendly_missing_key_diagnostics() {
+        let error = match GameTestHarness::from_plugin(MissingNamedAssetPlugin) {
+            Ok(_) => panic!("missing named asset should reject the prefab"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("Unknown texture asset 'plaeyr'"));
+        assert!(message.contains("- player"));
+        assert!(message.contains("Did you mean 'player'?"));
     }
 }

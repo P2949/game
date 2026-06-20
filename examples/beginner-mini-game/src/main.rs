@@ -27,33 +27,33 @@ fn main() -> Result<()> {
             .build()?;
 
         game.enemy_prefab("slime")
-            .sprite(assets.texture("slime"))
+            .sprite("slime")
             .health(30)
             .chases_player()
             .melee(26.0, 8)
             .build()?;
 
         game.pickup_prefab("coin")
-            .sprite(assets.texture("coin"))
+            .sprite("coin")
             .score(1)
-            .play_sound(assets.sound("coin"))
+            .play_sound("coin")
             .despawn_on_collect()
             .build()?;
 
         game.door_prefab("exit")
-            .sprite(assets.texture("door"))
+            .sprite("door")
             .change_map("level_2")
             .requires_all_enemies_dead()
             .build()?;
 
         game.door_prefab("restart")
-            .sprite(assets.texture("door"))
+            .sprite("door")
             .restart_level()
             .build()?;
 
         game.map("level_1")
             .tiles(["##########", "#P.C..E.D#", "#..C.....#", "##########"])
-            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('C', "coin")
             .legend('E', "slime")
@@ -62,7 +62,7 @@ fn main() -> Result<()> {
 
         game.map("level_2")
             .tiles(["##########", "#P.C.E..R#", "#..C..C..#", "##########"])
-            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('C', "coin")
             .legend('E', "slime")

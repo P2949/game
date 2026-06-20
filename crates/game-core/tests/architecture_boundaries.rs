@@ -177,6 +177,94 @@ fn beginner_demo_and_template_hide_runtime_boot_code() {
 }
 
 #[test]
+fn beginner_facing_sources_hide_context_lifetime_annotations() {
+    let root = workspace_root();
+    let paths = [
+        "examples/one-file-demo",
+        "examples/beginner-mini-game",
+        "examples/coin-collector",
+        "examples/projectile-demo",
+        "examples/script-like-custom-rules",
+        "examples/two-level-demo",
+        "examples/waves-demo",
+        "examples/menu-game-over",
+        "examples/animation-demo",
+        "templates/simple-demo",
+        "crates/simple-content/src",
+        "crates/arena-content/src",
+        "docs/tutorials",
+        "docs/cookbook",
+    ];
+
+    for relative in paths {
+        let mut files = Vec::new();
+        collect_beginner_surface_files(&root.join(relative), &mut files);
+        for path in files {
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+            for forbidden in [
+                "Game<'_",
+                "GameCtx<'_",
+                "StartupGameCtx<'_",
+                ".commands()",
+                "CommandQueue",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must not expose beginner context lifetimes {forbidden:?}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn script_like_custom_rules_demo_stays_ecs_free() {
+    let path = workspace_root().join("examples/script-like-custom-rules/src/main.rs");
+    let source = read_code_without_comments(&path);
+
+    assert!(source.contains("use game_starter::prelude::*;"));
+    for required in [
+        ".asset_bag()",
+        "player_prefab",
+        "enemy_prefab",
+        "projectile_prefab",
+        "spawner_prefab",
+        "game.rules()",
+    ] {
+        assert!(
+            source.contains(required),
+            "script-like demo should demonstrate {required:?}"
+        );
+    }
+    for forbidden in [
+        "Game<'_",
+        "GameCtx",
+        "EntityId",
+        "Component",
+        "Transform",
+        "Velocity",
+        "Sprite",
+        "Collider",
+        "Health",
+        "Faction",
+        "MeleeAttack",
+        "Patrol",
+        ".commands()",
+        "component::<",
+        "entities_with::<",
+        "game.prefab(",
+        "fixed_active",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "script-like demo must not expose {forbidden:?}"
+        );
+    }
+}
+
+#[test]
 fn content_tests_use_layered_testing_preludes() {
     for crate_name in ["simple-content", "arena-content"] {
         let tests_dir = workspace_root().join(format!("crates/{crate_name}/tests"));
@@ -337,6 +425,24 @@ fn readme_first_authoring_example_is_beginner_first() {
 }
 
 #[test]
+fn game_kit_rustdoc_is_beginner_first() {
+    let source = fs::read_to_string(workspace_root().join("crates/game-kit/src/lib.rs"))
+        .expect("failed to read game-kit lib");
+    let beginner_section = source
+        .split("## Advanced authoring")
+        .next()
+        .expect("game-kit rustdoc must have a beginner section");
+
+    assert!(beginner_section.contains("game_kit::beginner::prelude"));
+    for forbidden in ["Transform::", "Velocity::", "Sprite::new", "GameCtx"] {
+        assert!(
+            !beginner_section.contains(forbidden),
+            "game-kit beginner rustdoc must not expose {forbidden:?}"
+        );
+    }
+}
+
+#[test]
 fn game_test_harness_is_not_root_reexported() {
     let source = fs::read_to_string(workspace_root().join("crates/game-kit/src/lib.rs"))
         .expect("failed to read game-kit lib");
@@ -357,6 +463,16 @@ fn beginner_content_uses_only_beginner_surface() {
             findings.join("\n")
         );
     }
+}
+
+#[test]
+fn simple_content_uses_the_asset_bag_beginner_path() {
+    let findings = forbidden_source_uses("simple-content", SIMPLE_CONTENT_FORBIDDEN);
+    assert!(
+        findings.is_empty(),
+        "simple-content must model the asset_bag beginner path:\n{}",
+        findings.join("\n")
+    );
 }
 
 const BEGINNER_CONTENT_CRATES: &[&str] = &["simple-content", "arena-content"];
@@ -397,6 +513,15 @@ const BEGINNER_CONTENT_FORBIDDEN: &[&str] = &[
     "game_runtime::run",
     "plugin_fn",
     "for<'app>",
+];
+
+const SIMPLE_CONTENT_FORBIDDEN: &[&str] = &[
+    "TextureHandle",
+    "SoundHandle",
+    "AssetAuthor",
+    "game.assets(",
+    "struct SimpleAssets",
+    "register_assets(",
 ];
 
 fn forbidden_source_uses(crate_name: &str, patterns: &[&str]) -> Vec<String> {
@@ -659,6 +784,23 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         if path.is_dir() {
             collect_rust_files(&path, out);
         } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
+fn collect_beginner_surface_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap_or_else(|err| {
+        panic!("failed to read directory {}: {err}", dir.display());
+    }) {
+        let entry = entry.expect("failed to read directory entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_beginner_surface_files(&path, out);
+        } else if matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("rs" | "md")
+        ) {
             out.push(path);
         }
     }

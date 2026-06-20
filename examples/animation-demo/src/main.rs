@@ -21,13 +21,13 @@ fn main() -> Result<()> {
             .build()?;
 
         game.enemy_prefab("slime")
-            .sprite(assets.texture("slime"))
+            .sprite("slime")
             .health(30)
             .build()?;
 
         game.map("animation")
             .tiles(["########", "#P..E..#", "#......#", "########"])
-            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('E', "slime")
             .start();

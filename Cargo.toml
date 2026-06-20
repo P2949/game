@@ -22,6 +22,7 @@ members = [
     "examples/menu-game-over",
     "examples/one-file-demo",
     "examples/projectile-demo",
+    "examples/script-like-custom-rules",
     "examples/two-level-demo",
     "examples/waves-demo",
     "xtask",

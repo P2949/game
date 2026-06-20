@@ -71,8 +71,10 @@ impl GamePlugin for SimpleSceneFlowPlugin {
 
         game.use_simple_scene_flow()
             .menu("menu")
+            .menu_text("Start the adventure")
             .game("game")
             .game_over("game_over")
+            .game_over_text("Defeated - press R")
             .start_on(controls.attack)
             .restart_on(controls.reset)
             .build();
@@ -98,6 +100,28 @@ impl GamePlugin for SymbolicMapPlugin {
 
         game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
 
+        Ok(())
+    }
+}
+
+struct TextMapPlugin;
+
+impl GamePlugin for TextMapPlugin {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let controls = game.input(|input| input.top_down_controls())?;
+        game.player_prefab("player")
+            .sprite(TextureHandle(1))
+            .moves_with(controls.movement, 120.0)
+            .build()?;
+        game.enemy_prefab("slime")
+            .sprite(TextureHandle(2))
+            .build()?;
+        game.map_from_text("text_level", "maps/beginner_text_map.txt")
+            .simple_theme(TextureHandle(0), TextureHandle(0))
+            .legend('P', "player")
+            .legend('E', "slime")
+            .start();
+        game.on_start(|game| game.spawn_start_map());
         Ok(())
     }
 }
@@ -166,7 +190,7 @@ fn simple_scene_flow_drives_menu_level_game_over_restart() {
         Some("menu".to_owned())
     );
     game.frame(0.0);
-    game.assert_ui_contains("Press start");
+    game.assert_ui_contains("Start the adventure");
 
     game = game.press_action("attack");
     game.frame(1.0 / 120.0);
@@ -192,7 +216,7 @@ fn simple_scene_flow_drives_menu_level_game_over_restart() {
         Some("game_over".to_owned())
     );
     assert_eq!(game.map().tilemap.width(), 4);
-    game.assert_ui_contains("Game Over");
+    game.assert_ui_contains("Defeated - press R");
 
     game = game.press_action("reset");
     game.frame(1.0 / 120.0);
@@ -213,6 +237,15 @@ fn symbolic_map_legends_spawn_prefabs_from_tile_rows() {
     assert_eq!(game.current_map_name(), Some("legend".to_owned()));
     assert_eq!(game.map().tilemap.width(), 5);
     assert_eq!(game.world().ids_with::<Transform>().len(), 2);
+}
+
+#[test]
+fn beginner_text_map_loads_symbolic_spawns_from_assets_folder() {
+    let game = GameTestHarness::from_plugin(TextMapPlugin).unwrap();
+
+    assert_eq!(game.current_map_name(), Some("text_level".to_owned()));
+    assert_eq!(game.player_count(), 1);
+    assert_eq!(game.enemy_count(), 1);
 }
 
 fn register_marker_prefab(game: &mut GameApp<'_>, name: &str) -> Result<()> {

@@ -1,11 +1,16 @@
 //! Game-shaped actor, collection, camera, and score helpers.
 
 use game_combat::Health;
+use game_core::builder::PropertyBag;
 use game_core::world::{EntityId, Velocity};
 use glam::Vec2;
 
+use crate::assets::SoundRef;
 use crate::beginner::actors::{CollectSound, DespawnOnCollect, Enemy, Pickup, Player, ScoreValue};
 use crate::context::GameCtx;
+
+const PROJECTILE_DIRECTION_X: &str = "beginner/projectile_direction_x";
+const PROJECTILE_DIRECTION_Y: &str = "beginner/projectile_direction_y";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Score {
@@ -87,6 +92,88 @@ impl<'g, 'a, 'w> PlayerActor<'g, 'a, 'w> {
             return false;
         };
         self.game.play_animation(id, name)
+    }
+
+    /// Begins a player-owned projectile shot. Direction helpers fire
+    /// immediately, keeping the usual beginner form compact:
+    /// `game.player().shoot("bolt").towards_mouse();`.
+    pub fn shoot(self, prefab: impl Into<String>) -> ShootAuthor<'g, 'a, 'w> {
+        let origin = self.id().and_then(|id| self.game.position(id));
+        ShootAuthor {
+            game: self.game,
+            prefab: prefab.into(),
+            origin,
+        }
+    }
+}
+
+/// Configures a projectile shot before one of its direction methods fires it.
+pub struct ShootAuthor<'g, 'a, 'w> {
+    game: &'g mut GameCtx<'a, 'w>,
+    prefab: String,
+    origin: Option<Vec2>,
+}
+
+impl<'g, 'a, 'w> ShootAuthor<'g, 'a, 'w> {
+    pub fn towards_mouse(self) -> FiredShot<'g, 'a, 'w> {
+        let direction = self
+            .origin
+            .map(|origin| self.game.mouse_world_position() - origin)
+            .unwrap_or(Vec2::X);
+        self.direction(direction)
+    }
+
+    pub fn right(self) -> FiredShot<'g, 'a, 'w> {
+        self.direction(Vec2::X)
+    }
+
+    pub fn left(self) -> FiredShot<'g, 'a, 'w> {
+        self.direction(-Vec2::X)
+    }
+
+    pub fn up(self) -> FiredShot<'g, 'a, 'w> {
+        self.direction(-Vec2::Y)
+    }
+
+    pub fn down(self) -> FiredShot<'g, 'a, 'w> {
+        self.direction(Vec2::Y)
+    }
+
+    pub fn direction(self, direction: Vec2) -> FiredShot<'g, 'a, 'w> {
+        let direction = direction.normalize_or_zero();
+        if let Some(origin) = self.origin {
+            let mut properties = PropertyBag::default();
+            properties.insert(PROJECTILE_DIRECTION_X, direction.x.to_string());
+            properties.insert(PROJECTILE_DIRECTION_Y, direction.y.to_string());
+            properties.insert("beginner/projectile_owner", "player");
+            self.game
+                .spawn_prefab_with_properties_or_log(&self.prefab, origin, properties);
+        }
+        FiredShot { game: self.game }
+    }
+
+    /// Fires straight right when no directional helper is needed.
+    pub fn fire(self) -> FiredShot<'g, 'a, 'w> {
+        self.right()
+    }
+}
+
+/// A shot already queued by a [`ShootAuthor`] direction helper. Sound helpers
+/// remain chainable without exposing the deferred command queue.
+pub struct FiredShot<'g, 'a, 'w> {
+    game: &'g mut GameCtx<'a, 'w>,
+}
+
+impl<'g, 'a, 'w> FiredShot<'g, 'a, 'w> {
+    pub fn play_sound(self, sound: impl Into<SoundRef>) {
+        match sound.into() {
+            SoundRef::Handle(handle) => self.game.play_sound(handle, 1.0),
+            SoundRef::Key(key) => self.game.play_sound_named(&key),
+        }
+    }
+
+    pub fn play_sound_named(self, key: &str) {
+        self.game.play_sound_named(key);
     }
 }
 
@@ -215,6 +302,10 @@ impl<'g, 'a, 'w> PickupCollection<'g, 'a, 'w> {
 
     pub fn collect(&mut self) -> usize {
         let ids = self.ids();
+        self.collect_ids(ids)
+    }
+
+    pub(crate) fn collect_ids(&mut self, ids: Vec<EntityId>) -> usize {
         let mut score_delta = 0;
         let mut sounds = Vec::new();
         let mut despawn = Vec::new();
@@ -246,7 +337,7 @@ impl<'g, 'a, 'w> PickupCollection<'g, 'a, 'w> {
         ids.len()
     }
 
-    fn ids(&self) -> Vec<EntityId> {
+    pub(crate) fn ids(&self) -> Vec<EntityId> {
         let player_pos = self
             .filter
             .near_player
@@ -330,6 +421,14 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub fn collect_pickups_near_player(&mut self, range: f32) -> usize {
         self.pickups().near_player(range).collect()
+    }
+
+    pub(crate) fn pickup_ids_near_player(&mut self, range: f32) -> Vec<EntityId> {
+        self.pickups().near_player(range).ids()
+    }
+
+    pub(crate) fn collect_pickup(&mut self, id: EntityId) -> bool {
+        self.pickups().collect_ids(vec![id]) > 0
     }
 
     pub fn camera2d(&mut self) -> CameraOps<'_, 'a, 'w> {

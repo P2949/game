@@ -8,6 +8,44 @@ use glam::Vec2;
 
 use crate::context::GameCtx;
 
+/// A completed non-looping animation, retained briefly so callbacks can observe
+/// it without holding raw entity ids.
+#[derive(Clone, Debug)]
+pub(crate) struct AnimationFinishedRecord {
+    pub(crate) sequence: u64,
+    pub(crate) entity: EntityId,
+    pub(crate) name: String,
+}
+
+/// Runtime queue used by [`crate::GameApp::on_animation_finished`].
+#[derive(Default)]
+pub(crate) struct AnimationFinishedEvents {
+    next_sequence: u64,
+    records: Vec<AnimationFinishedRecord>,
+}
+
+impl AnimationFinishedEvents {
+    fn push(&mut self, entity: EntityId, name: String) {
+        self.next_sequence += 1;
+        self.records.push(AnimationFinishedRecord {
+            sequence: self.next_sequence,
+            entity,
+            name,
+        });
+        // Callback systems run once per frame. This cap avoids an unbounded
+        // resource if a game never registers one while preserving recent events.
+        if self.records.len() > 256 {
+            self.records.drain(..self.records.len() - 256);
+        }
+    }
+
+    pub(crate) fn after(&self, sequence: u64) -> impl Iterator<Item = &AnimationFinishedRecord> {
+        self.records
+            .iter()
+            .filter(move |record| record.sequence > sequence)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpriteSheet {
     pub texture: TextureHandle,
@@ -156,6 +194,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub fn update_animations(&mut self, dt: f32) {
         let ids = self.entities_with::<Animation>();
+        let mut finished = Vec::new();
         for id in ids {
             let Some((sheet, clip)) = self.component::<Animation>(id).and_then(|animation| {
                 let set = self.component::<AnimationSet>(id)?;
@@ -172,8 +211,11 @@ impl<'a, 'w> GameCtx<'a, 'w> {
                 let Some(animation) = self.component_mut::<Animation>(id) else {
                     continue;
                 };
-                animation.timer += dt;
                 let frame_seconds = 1.0 / clip.fps.max(0.001);
+                let was_finished = !clip.looping
+                    && animation.frame + 1 >= clip.frames.len()
+                    && animation.timer >= frame_seconds;
+                animation.timer += dt;
                 while animation.timer >= frame_seconds {
                     if animation.frame + 1 < clip.frames.len() {
                         animation.timer -= frame_seconds;
@@ -182,6 +224,9 @@ impl<'a, 'w> GameCtx<'a, 'w> {
                         animation.timer -= frame_seconds;
                         animation.frame = 0;
                     } else {
+                        if !was_finished {
+                            finished.push((id, animation.current.clone()));
+                        }
                         animation.timer = frame_seconds;
                         break;
                     }
@@ -196,6 +241,33 @@ impl<'a, 'w> GameCtx<'a, 'w> {
                 sprite.uv_max = uv_max;
             }
         }
+
+        if !finished.is_empty() {
+            let events = self.resource_or_insert_with(AnimationFinishedEvents::default);
+            for (entity, name) in finished {
+                events.push(entity, name);
+            }
+        }
+    }
+
+    /// True when `name` is a completed one-shot clip on `id`.
+    pub fn animation_finished(&self, id: EntityId, name: &str) -> bool {
+        let Some(animation) = self.component::<Animation>(id) else {
+            return false;
+        };
+        if animation.current != name {
+            return false;
+        }
+        let Some(set) = self.component::<AnimationSet>(id) else {
+            return false;
+        };
+        let Some(clip) = set.get(name) else {
+            return false;
+        };
+        !clip.looping
+            && !clip.frames.is_empty()
+            && animation.frame + 1 >= clip.frames.len()
+            && animation.timer >= 1.0 / clip.fps.max(0.001)
     }
 }
 

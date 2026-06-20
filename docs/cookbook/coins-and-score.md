@@ -14,18 +14,16 @@ game.pickup_prefab("coin")
 
 game.rules()
     .top_down_controls(controls)
+    .show_score()
     .build();
 
-game.on_player_collect_pickup(|game: &mut Game<'_, '_>| {
+game.on_player_collect_pickup(|game| {
     game.camera2d().shake(0.08);
 });
 ```
 
-For score UI, draw text from the score helper:
+For score UI, use the high-level rule:
 
 ```rust
-game.draw_ui(|game: &mut Game<'_, '_>, _dt| {
-    let score = game.score().value();
-    game.text(&format!("Score: {score}"), vec2(24.0, 24.0), vec4(1.0, 0.95, 0.35, 1.0));
-});
+game.rules().show_score().build();
 ```

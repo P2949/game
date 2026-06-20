@@ -8,10 +8,11 @@
 //! map objects without capturing a cloned map or `Rc<PrefabRegistry>`.
 
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow};
-use game_core::backend::TextureHandle;
 use game_core::builder::{MapId, PrefabId, PrefabRegistry};
 use game_core::commands::CommandQueue;
 use game_core::world::Sprite;
@@ -21,6 +22,7 @@ use game_map::{
 };
 
 use crate::app::GameApp;
+use crate::assets::TextureRef;
 use crate::bundle::vec2s;
 
 /// Tile floor/wall sprites for a map. Re-exported from the engine so content can
@@ -32,6 +34,12 @@ enum MapSource {
     InCode {
         tile_size: f32,
         rows: Vec<String>,
+        objects: Vec<(String, String, MapCell)>,
+        legends: Vec<(char, String)>,
+    },
+    Text {
+        path: String,
+        tile_size: f32,
         objects: Vec<(String, String, MapCell)>,
         legends: Vec<(char, String)>,
     },
@@ -97,6 +105,42 @@ impl PendingMap {
                 }
                 builder.finish()
             }
+            MapSource::Text {
+                path,
+                tile_size,
+                mut objects,
+                legends,
+            } => {
+                let full_path = beginner_asset_path(&path);
+                let text = fs::read_to_string(&full_path).with_context(|| {
+                    format!(
+                        "map '{}' could not read text map '{}'. Place it under assets/",
+                        self.name,
+                        full_path.display()
+                    )
+                })?;
+                let rows = text
+                    .lines()
+                    .map(|line| line.trim_end_matches('\r').to_owned())
+                    .collect::<Vec<_>>();
+                let rows = expand_symbolic_tiles(&self.name, rows, &mut objects, legends)?;
+                let row_refs = rows.iter().map(String::as_str).collect::<Vec<_>>();
+                let mut builder = MapBuilder::new(self.name.clone(), tile_size)
+                    .try_tile_layer("collision", &row_refs)
+                    .with_context(|| format!("map '{}' has invalid text-map tiles", self.name))?;
+                for (id, prefab_name, cell) in objects {
+                    let prefab = prefabs.id(&prefab_name).ok_or_else(|| {
+                        anyhow!(
+                            "map '{}' object '{}' references unknown prefab '{}'",
+                            self.name,
+                            id,
+                            prefab_name
+                        )
+                    })?;
+                    builder = builder.object(id, prefab, cell);
+                }
+                builder.finish()
+            }
             MapSource::Ron { text } => load_game_map_ron(&text, |name| prefabs.id(name))
                 .with_context(|| format!("map '{}' failed to load from RON", self.name))?,
         };
@@ -113,6 +157,20 @@ impl PendingMap {
 
         Ok((game_map, theme, self.start))
     }
+}
+
+fn beginner_asset_path(path: &str) -> PathBuf {
+    let relative = Path::new("assets").join(path);
+    let Ok(current_dir) = std::env::current_dir() else {
+        return relative;
+    };
+    for directory in current_dir.ancestors() {
+        let candidate = directory.join(&relative);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    current_dir.join(relative)
 }
 
 /// Builder for one map. Created by [`GameApp::map`] (in-code) or
@@ -157,10 +215,29 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         }
     }
 
+    pub(crate) fn from_text(app: &'a mut GameApp<'app>, name: String, path: String) -> Self {
+        Self {
+            app,
+            pending: PendingMap {
+                name,
+                source: MapSource::Text {
+                    path,
+                    tile_size: 32.0,
+                    objects: Vec::new(),
+                    legends: Vec::new(),
+                },
+                required_objects: Vec::new(),
+                theme: None,
+                start: false,
+                misuse_errors: Vec::new(),
+            },
+        }
+    }
+
     /// Sets the tile size in world units (in-code maps only; RON maps carry it).
     pub fn tile_size(mut self, tile_size: f32) -> Self {
         match &mut self.pending.source {
-            MapSource::InCode { tile_size: t, .. } => {
+            MapSource::InCode { tile_size: t, .. } | MapSource::Text { tile_size: t, .. } => {
                 *t = tile_size;
             }
             MapSource::Ron { .. } => {
@@ -179,10 +256,10 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
             MapSource::InCode { rows: r, .. } => {
                 *r = rows.iter().map(|row| (*row).to_owned()).collect();
             }
-            MapSource::Ron { .. } => {
+            MapSource::Text { .. } | MapSource::Ron { .. } => {
                 self.pending
                     .misuse_errors
-                    .push("tiles() is only valid on in-code maps, not RON maps".to_owned());
+                    .push("tiles() is only valid on in-code maps; text maps read their rows from the file".to_owned());
             }
         }
         self
@@ -197,7 +274,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         cell: MapCell,
     ) -> Self {
         match &mut self.pending.source {
-            MapSource::InCode { objects, .. } => {
+            MapSource::InCode { objects, .. } | MapSource::Text { objects, .. } => {
                 objects.push((id.into(), prefab.into(), cell));
             }
             MapSource::Ron { .. } => {
@@ -214,7 +291,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
     /// `.tiles(["#P#"]).legend('P', "player")`.
     pub fn legend(mut self, symbol: char, prefab: impl Into<String>) -> Self {
         match &mut self.pending.source {
-            MapSource::InCode { legends, .. } => {
+            MapSource::InCode { legends, .. } | MapSource::Text { legends, .. } => {
                 legends.push((symbol, prefab.into()));
             }
             MapSource::Ron { .. } => {
@@ -233,21 +310,46 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
     }
 
     /// Sets a simple floor/wall theme from texture handles, sizing each tile
-    /// sprite to the map's current tile size.
-    pub fn theme_from_textures(self, floor: TextureHandle, wall: TextureHandle) -> Self {
+    /// sprite to the map's current tile size. Each texture can instead be a
+    /// registered asset key such as `"floor"` or `"wall"`.
+    pub fn theme_from_textures(
+        self,
+        floor: impl Into<TextureRef>,
+        wall: impl Into<TextureRef>,
+    ) -> Self {
         self.simple_theme(floor, wall)
     }
 
     /// Beginner alias for [`Self::theme_from_textures`].
-    pub fn simple_theme(mut self, floor: TextureHandle, wall: TextureHandle) -> Self {
+    pub fn simple_theme(
+        mut self,
+        floor: impl Into<TextureRef>,
+        wall: impl Into<TextureRef>,
+    ) -> Self {
+        let floor = self.app.resolve_texture_ref(floor.into());
+        let wall = self.app.resolve_texture_ref(wall.into());
         let tile_size = match &self.pending.source {
-            MapSource::InCode { tile_size, .. } => *tile_size,
+            MapSource::InCode { tile_size, .. } | MapSource::Text { tile_size, .. } => *tile_size,
             MapSource::Ron { .. } => 32.0,
         };
-        self.pending.theme = Some(TileTheme {
-            floor: Sprite::new(floor, vec2s(tile_size)),
-            wall: Sprite::new(wall, vec2s(tile_size)),
-        });
+        match (floor, wall) {
+            (Ok(floor), Ok(wall)) => {
+                self.pending.theme = Some(TileTheme {
+                    floor: Sprite::new(floor, vec2s(tile_size)),
+                    wall: Sprite::new(wall, vec2s(tile_size)),
+                });
+            }
+            (floor, wall) => {
+                self.pending.theme = None;
+                self.pending.misuse_errors.extend(
+                    floor
+                        .err()
+                        .into_iter()
+                        .chain(wall.err())
+                        .map(|error| error.to_string()),
+                );
+            }
+        }
         self
     }
 
@@ -284,6 +386,7 @@ fn expand_symbolic_tiles(
     }
 
     let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut symbol_counts: HashMap<char, usize> = HashMap::new();
     let mut collision_rows = Vec::with_capacity(rows.len());
     for (row, line) in rows.into_iter().enumerate() {
         let mut collision_row = String::with_capacity(line.len());
@@ -297,6 +400,7 @@ fn expand_symbolic_tiles(
                         )
                     })?;
                     collision_row.push('.');
+                    *symbol_counts.entry(symbol).or_default() += 1;
                     let count = counts.entry(prefab.clone()).or_default();
                     *count += 1;
                     objects.push((
@@ -308,6 +412,16 @@ fn expand_symbolic_tiles(
             }
         }
         collision_rows.push(collision_row);
+    }
+
+    if legend_lookup
+        .get(&'P')
+        .is_some_and(|prefab| prefab == "player")
+        && symbol_counts.get(&'P').copied().unwrap_or_default() == 0
+    {
+        anyhow::bail!(
+            "Map '{map_name}' has no player spawn.\n\nAdd 'P' to the tile map and:\n    .legend('P', \"player\")"
+        );
     }
 
     Ok(collision_rows)

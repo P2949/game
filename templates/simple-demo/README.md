@@ -27,3 +27,20 @@ Controls:
 - Attack: Space or Enter
 - Reset: R
 - Debug overlay: F1
+
+# Assets and text maps
+
+Put `player.png`, `slime.png`, `floor.png`, and `wall.png` in
+`assets/textures/`, and put `hit.wav` in `assets/sounds/`. The template uses
+these conventional names through `texture_auto(...)` and `sound_auto(...)`.
+
+When the in-code level is ready to become a file, create
+`assets/maps/level_1.txt` and replace the map builder with:
+
+```rust
+game.map_from_text("level_1", "maps/level_1.txt")
+    .simple_theme("floor", "wall")
+    .legend('P', "player")
+    .legend('E', "slime")
+    .start();
+```

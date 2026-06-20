@@ -353,8 +353,24 @@ fn submit_audio_command(audio: &AudioSystem, command: AudioCommand) {
             volume,
             looping,
         } => audio.play(sound, volume, looping),
-        AudioCommand::PlayMusic { sound, volume } => audio.play_music(sound, volume),
+        AudioCommand::PlayMusic {
+            sound,
+            volume,
+            fade_in_seconds,
+        } => match fade_in_seconds {
+            Some(duration_seconds) => audio.play_music_fade_in(sound, volume, duration_seconds),
+            None => audio.play_music(sound, volume),
+        },
         AudioCommand::StopMusic => audio.stop_music(),
+        AudioCommand::PauseMusic => audio.pause_music(),
+        AudioCommand::ResumeMusic => audio.resume_music(),
+        AudioCommand::SetMasterVolume { volume } => audio.set_master_volume(volume),
+        AudioCommand::SetSfxVolume { volume } => audio.set_sfx_volume(volume),
+        AudioCommand::SetMusicVolume { volume } => audio.set_music_volume(volume),
+        AudioCommand::FadeMusicTo {
+            volume,
+            duration_seconds,
+        } => audio.fade_music_to(volume, duration_seconds),
     }
 }
 

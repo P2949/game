@@ -10,15 +10,14 @@ game.spawner_prefab("spawner")
     .spawn("slime")
     .every_seconds(2.0)
     .max_alive(4)
+    .near_player(96.0)
     .build()?;
 ```
 
-Then it uses a beginner timer to spawn enemies near the player:
+Enable the rule that runs the registered spawners:
 
 ```rust
-game.every_seconds(2.0, |game: &mut Game<'_, '_>| {
-    if game.enemies().alive().count() < 4 {
-        game.spawn("slime").near_player(96.0);
-    }
-});
+game.rules()
+    .spawners_spawn_prefabs()
+    .build();
 ```

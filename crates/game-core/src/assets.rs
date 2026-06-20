@@ -181,12 +181,42 @@ impl AssetRegistry {
         self.textures.get(key)
     }
 
+    /// Resolves a content-facing texture key to its stable runtime handle.
+    pub fn texture_handle(&self, key: &str) -> Option<TextureHandle> {
+        self.texture_handles.get(key).copied()
+    }
+
     pub fn sound_request(&self, key: &str) -> Option<&SoundLoadRequest> {
         self.sounds.get(key)
     }
 
+    /// Resolves a content-facing sound or music key to its stable runtime handle.
+    pub fn sound_handle(&self, key: &str) -> Option<SoundHandle> {
+        self.sound_handles.get(key).copied()
+    }
+
     pub fn font_request(&self, key: &str) -> Option<&FontLoadRequest> {
         self.fonts.get(key)
+    }
+
+    /// Resolves a content-facing font key to its stable runtime handle.
+    pub fn font_handle(&self, key: &str) -> Option<FontHandle> {
+        self.font_handles.get(key).copied()
+    }
+
+    /// Iterates over every registered texture key.
+    pub fn texture_keys(&self) -> impl Iterator<Item = &str> {
+        self.texture_handles.keys().map(String::as_str)
+    }
+
+    /// Iterates over every registered sound or music key.
+    pub fn sound_keys(&self) -> impl Iterator<Item = &str> {
+        self.sound_handles.keys().map(String::as_str)
+    }
+
+    /// Iterates over every registered font key.
+    pub fn font_keys(&self) -> impl Iterator<Item = &str> {
+        self.font_handles.keys().map(String::as_str)
     }
 
     pub fn texture_requests(&self) -> impl Iterator<Item = (&str, &TextureLoadRequest)> {
@@ -346,6 +376,23 @@ mod tests {
         // Same generated identity -> same handle; distinct keys, same file -> same.
         assert_eq!(hit, hit_alias);
         assert_eq!(ui, ui_alias);
+    }
+
+    #[test]
+    fn asset_registry_resolves_handles_and_lists_registered_keys() {
+        let mut registry = AssetRegistry::new();
+        let texture = registry.texture("player", "textures/player.png");
+        let sound = registry.generated_sound("hit");
+        let font = registry.font("body", "fonts/body.ttf");
+
+        assert_eq!(registry.texture_handle("player"), Some(texture));
+        assert_eq!(registry.sound_handle("hit"), Some(sound));
+        assert_eq!(registry.font_handle("body"), Some(font));
+        assert_eq!(registry.texture_handle("missing"), None);
+
+        assert_eq!(registry.texture_keys().collect::<Vec<_>>(), vec!["player"]);
+        assert_eq!(registry.sound_keys().collect::<Vec<_>>(), vec!["hit"]);
+        assert_eq!(registry.font_keys().collect::<Vec<_>>(), vec!["body"]);
     }
 
     #[test]

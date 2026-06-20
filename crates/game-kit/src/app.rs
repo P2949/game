@@ -16,10 +16,18 @@ use game_core::input::ActionId;
 use game_core::world::EntityId;
 use game_map::GameMap;
 
-use crate::assets::{AssetAuthor, AssetBagAuthor};
+use crate::assets::{
+    AssetAuthor, AssetBagAuthor, AssetFolderAuthor, AssetLookup, SoundRef, TextureRef,
+    missing_asset_error,
+};
+use crate::beginner::actors::{Door, PrefabName};
+use crate::beginner::animation::AnimationFinishedEvents;
 use crate::beginner::debug::{DebugOverlay, draw_debug_overlay};
 use crate::beginner::defaults::TopDownGameAuthor;
-use crate::beginner::events::DEFAULT_PICKUP_COLLECT_RANGE;
+use crate::beginner::events::{
+    ActorToken, AnimationFinishedEvent, CollectEvent, CollisionEvent, DEFAULT_PICKUP_COLLECT_RANGE,
+    EnemyDeathEvent,
+};
 use crate::beginner::prefabs::{
     DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
     ProjectilePrefabAuthor, SpawnerPrefabAuthor,
@@ -57,6 +65,7 @@ pub struct GameApp<'app> {
     content: Rc<RefCell<Option<ContentRuntime>>>,
     pending_maps: Vec<PendingMap>,
     prefab_requirements: Vec<PrefabRequirement>,
+    asset_lookup: Rc<RefCell<Option<AssetLookup>>>,
     scenes: Vec<String>,
     start_scene: Option<String>,
     debug_overlay: Option<DebugOverlay>,
@@ -70,9 +79,14 @@ impl<'app> GameApp<'app> {
         // startup system: install the content runtime (maps + prefabs) and the
         // command queue. Content therefore never inserts these itself (Phase 7.4).
         let content_for_startup = Rc::clone(&content);
+        let asset_lookup: Rc<RefCell<Option<AssetLookup>>> = Rc::new(RefCell::new(None));
+        let asset_lookup_for_startup = Rc::clone(&asset_lookup);
         builder.schedule_mut().add_startup(move |ctx| {
             if let Some(runtime) = content_for_startup.borrow_mut().take() {
                 ctx.world.insert_resource(runtime);
+            }
+            if let Some(lookup) = asset_lookup_for_startup.borrow_mut().take() {
+                ctx.world.insert_resource(lookup);
             }
             ctx.world.resource_or_insert_with(CommandQueue::new);
             Ok(())
@@ -83,6 +97,7 @@ impl<'app> GameApp<'app> {
             content,
             pending_maps: Vec::new(),
             prefab_requirements: Vec::new(),
+            asset_lookup,
             scenes: Vec::new(),
             start_scene: None,
             debug_overlay: None,
@@ -99,6 +114,45 @@ impl<'app> GameApp<'app> {
     /// Begins a beginner-friendly named asset bag.
     pub fn asset_bag(&mut self) -> AssetBagAuthor<'_> {
         AssetBagAuthor::new(AssetAuthor::new(self.builder.assets_mut()))
+    }
+
+    /// Begins registering conventional `assets/textures`, `assets/sounds`, and
+    /// `assets/music` filenames with friendly keys.
+    pub fn assets_from_folders(&mut self) -> AssetFolderAuthor<'_> {
+        AssetFolderAuthor::new(self.asset_bag())
+    }
+
+    pub(crate) fn resolve_texture(&self, key: &str) -> Result<game_core::backend::TextureHandle> {
+        self.builder.assets().texture_handle(key).ok_or_else(|| {
+            missing_asset_error("texture", key, self.builder.assets().texture_keys())
+        })
+    }
+
+    pub(crate) fn resolve_sound(&self, key: &str) -> Result<game_core::backend::SoundHandle> {
+        self.builder
+            .assets()
+            .sound_handle(key)
+            .ok_or_else(|| missing_asset_error("sound", key, self.builder.assets().sound_keys()))
+    }
+
+    pub(crate) fn resolve_texture_ref(
+        &self,
+        texture: TextureRef,
+    ) -> Result<game_core::backend::TextureHandle> {
+        match texture {
+            TextureRef::Handle(handle) => Ok(handle),
+            TextureRef::Key(key) => self.resolve_texture(&key),
+        }
+    }
+
+    pub(crate) fn resolve_sound_ref(
+        &self,
+        sound: SoundRef,
+    ) -> Result<game_core::backend::SoundHandle> {
+        match sound {
+            SoundRef::Handle(handle) => Ok(handle),
+            SoundRef::Key(key) => self.resolve_sound(&key),
+        }
     }
 
     /// Declares logical controls, returning whatever the closure builds (typically
@@ -175,6 +229,15 @@ impl<'app> GameApp<'app> {
         MapAuthor::from_ron(self, ron.into())
     }
 
+    /// Begins a beginner-friendly text map loaded from `assets/<path>`.
+    pub fn map_from_text(
+        &mut self,
+        name: impl Into<String>,
+        path: impl Into<String>,
+    ) -> MapAuthor<'_, 'app> {
+        MapAuthor::from_text(self, name.into(), path.into())
+    }
+
     /// Declares a named beginner scene.
     pub fn scene(&mut self, name: impl Into<String>) -> &mut Self {
         let name = name.into();
@@ -241,9 +304,15 @@ impl<'app> GameApp<'app> {
         });
     }
 
-    /// Beginner alias for [`Self::startup`].
-    pub fn on_start(&mut self, system: impl StartupSystem) {
-        self.startup(system);
+    /// Registers a beginner startup callback with inferable arguments.
+    pub fn on_start(
+        &mut self,
+        mut start: impl FnMut(&mut StartupGameCtx<'_, '_>) -> Result<()> + 'static,
+    ) {
+        self.builder.schedule_mut().add_startup(move |ctx| {
+            let mut game = StartupGameCtx::new(ctx);
+            start(&mut game)
+        });
     }
 
     /// Registers a fixed-timestep system.
@@ -333,9 +402,17 @@ impl<'app> GameApp<'app> {
         });
     }
 
-    /// Beginner alias for [`Self::ui`].
-    pub fn draw_ui(&mut self, system: impl GameSystem) {
-        self.ui(system);
+    /// Registers a beginner UI callback.
+    ///
+    /// This intentionally accepts the closure directly instead of going through
+    /// [`GameSystem`]. That keeps the callback arguments inferable, so beginner
+    /// code can write `game.draw_ui(|game, dt| { ... })` without exposing context
+    /// lifetime annotations.
+    pub fn draw_ui(&mut self, mut draw: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static) {
+        self.builder.schedule_mut().add_ui(move |ctx, dt| {
+            let mut game = GameCtx::new(ctx);
+            draw(&mut game, dt);
+        });
     }
 
     /// Runs `f` on fixed ticks where `action` was pressed.
@@ -435,12 +512,86 @@ impl<'app> GameApp<'app> {
         });
     }
 
+    /// Runs once for each enemy that has just died, supplying an object-shaped
+    /// event instead of exposing a world context or entity id.
+    pub fn on_enemy_death_event(
+        &mut self,
+        mut f: impl FnMut(&mut EnemyDeathEvent<'_, '_, '_>) + 'static,
+    ) {
+        let mut known_dead: Vec<EntityId> = Vec::new();
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let dead = game
+                .enemy_ids()
+                .into_iter()
+                .filter(|id| game.is_dead(*id))
+                .collect::<Vec<_>>();
+            for id in &dead {
+                if !known_dead.contains(id) {
+                    let mut event = EnemyDeathEvent::new(game, ActorToken::new(*id));
+                    f(&mut event);
+                }
+            }
+            known_dead = dead;
+        });
+    }
+
+    /// Runs for matching player/pickup collection interactions. Both filters are
+    /// source prefab names registered by the beginner builders.
+    pub fn on_collect(
+        &mut self,
+        collector_prefab: impl Into<String>,
+        pickup_prefab: impl Into<String>,
+        mut f: impl FnMut(&mut CollectEvent<'_, '_, '_>) + 'static,
+    ) {
+        let collector_prefab = collector_prefab.into();
+        let pickup_prefab = pickup_prefab.into();
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let Some(collector) = game.player_id() else {
+                return;
+            };
+            if !prefab_matches(game, collector, &collector_prefab) {
+                return;
+            }
+
+            let pickups = game
+                .pickup_ids_near_player(DEFAULT_PICKUP_COLLECT_RANGE)
+                .into_iter()
+                .filter(|pickup| prefab_matches(game, *pickup, &pickup_prefab))
+                .collect::<Vec<_>>();
+            for pickup in pickups {
+                if game.collect_pickup(pickup) {
+                    let mut event = CollectEvent::new(
+                        game,
+                        ActorToken::new(collector),
+                        ActorToken::new(pickup),
+                    );
+                    f(&mut event);
+                }
+            }
+        });
+    }
+
     pub fn on_player_collect_pickup(&mut self, f: impl FnMut(&mut GameCtx<'_, '_>) + 'static) {
         self.on_player_collect_pickup_within(DEFAULT_PICKUP_COLLECT_RANGE, f);
     }
 
-    pub fn on_player_touching_pickup(&mut self, f: impl FnMut(&mut GameCtx<'_, '_>) + 'static) {
-        self.on_player_collect_pickup(f);
+    /// Runs for player/pickup overlap with an object-shaped collision event.
+    /// Unlike [`Self::on_collect`], this only observes touching; it does not
+    /// apply pickup score, sound, or despawn effects.
+    pub fn on_player_touching_pickup(
+        &mut self,
+        mut f: impl FnMut(&mut CollisionEvent<'_, '_, '_>) + 'static,
+    ) {
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let Some(player) = game.player_id() else {
+                return;
+            };
+            for pickup in game.pickup_ids_near_player(DEFAULT_PICKUP_COLLECT_RANGE) {
+                let mut event =
+                    CollisionEvent::new(game, ActorToken::new(player), ActorToken::new(pickup));
+                f(&mut event);
+            }
+        });
     }
 
     pub fn on_player_collect_pickup_within(
@@ -451,6 +602,67 @@ impl<'app> GameApp<'app> {
         self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
             if game.collect_pickups_near_player(range) > 0 {
                 f(game);
+            }
+        });
+    }
+
+    /// Runs for player/door overlap with an object-shaped collision event. The
+    /// event observes contact only; map-changing behavior remains opt-in through
+    /// `game.rules().doors_change_maps()`.
+    pub fn on_player_touching_door(
+        &mut self,
+        mut f: impl FnMut(&mut CollisionEvent<'_, '_, '_>) + 'static,
+    ) {
+        const DOOR_TOUCH_RANGE: f32 = 28.0;
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let Some(player) = game.player_id() else {
+                return;
+            };
+            let Some(position) = game.position(player) else {
+                return;
+            };
+            let doors = game
+                .entities_with::<Door>()
+                .into_iter()
+                .filter(|door| {
+                    game.position(*door)
+                        .is_some_and(|door_pos| door_pos.distance(position) <= DOOR_TOUCH_RANGE)
+                })
+                .collect::<Vec<_>>();
+            for door in doors {
+                let mut event =
+                    CollisionEvent::new(game, ActorToken::new(player), ActorToken::new(door));
+                f(&mut event);
+            }
+        });
+    }
+
+    /// Runs when a matching non-looping animation reaches its final frame.
+    /// The callback receives a safe actor wrapper rather than an entity id.
+    pub fn on_animation_finished(
+        &mut self,
+        name: impl Into<String>,
+        mut f: impl FnMut(&mut AnimationFinishedEvent<'_, '_, '_>) + 'static,
+    ) {
+        let name = name.into();
+        let mut last_seen = 0u64;
+        self.every_frame(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let records = game
+                .resource::<AnimationFinishedEvents>()
+                .map(|events| {
+                    events
+                        .after(last_seen)
+                        .map(|record| (record.sequence, record.entity, record.name.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            for (sequence, entity, event_name) in records {
+                last_seen = last_seen.max(sequence);
+                if event_name == name {
+                    let mut event =
+                        AnimationFinishedEvent::new(game, ActorToken::new(entity), event_name);
+                    f(&mut event);
+                }
             }
         });
     }
@@ -533,6 +745,7 @@ impl<'app> GameApp<'app> {
         })?;
         let prefabs = self.builder.prefabs_shared();
         *self.content.borrow_mut() = Some(ContentRuntime::new(prefabs, maps, map_ids, start_map));
+        *self.asset_lookup.borrow_mut() = Some(AssetLookup::from_registry(self.builder.assets()));
 
         if !self.scenes.is_empty() {
             let registry = SceneRegistry::new(self.scenes.clone());
@@ -560,6 +773,11 @@ impl<'app> GameApp<'app> {
         }
         Ok(())
     }
+}
+
+fn prefab_matches(game: &GameCtx<'_, '_>, entity: EntityId, expected: &str) -> bool {
+    game.component::<PrefabName>(entity)
+        .is_some_and(|name| name.matches(expected))
 }
 
 pub struct DebugOverlayAuthor<'a, 'app> {

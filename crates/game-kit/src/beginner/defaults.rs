@@ -6,7 +6,7 @@ use game_core::world::{EntityId, Velocity};
 use glam::{vec2, vec4};
 
 use crate::app::GameApp;
-use crate::beginner::actors::{Player, PlayerMovement, Speed};
+use crate::beginner::actors::{Enemy, Player, PlayerMovement, Speed};
 use crate::beginner::animation::{Animation, AnimationSet};
 use crate::beginner::combat::MeleeCombatConfig;
 use crate::beginner::state::SimpleGameState;
@@ -33,6 +33,8 @@ pub struct TopDownGameAuthor<'a, 'app> {
     camera_follow: bool,
     pause_death_ui: bool,
     player_animation_by_movement: bool,
+    enemy_animation_by_movement: bool,
+    player_directional_animation: bool,
     attack_animation: Option<&'static str>,
 }
 
@@ -56,6 +58,8 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             camera_follow: false,
             pause_death_ui: false,
             player_animation_by_movement: false,
+            enemy_animation_by_movement: false,
+            player_directional_animation: false,
             attack_animation: None,
         }
     }
@@ -155,6 +159,16 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
         self
     }
 
+    pub fn with_enemy_animation_by_movement(mut self) -> Self {
+        self.enemy_animation_by_movement = true;
+        self
+    }
+
+    pub fn with_player_directional_animation(mut self) -> Self {
+        self.player_directional_animation = true;
+        self
+    }
+
     pub fn with_attack_animation(mut self, name: &'static str) -> Self {
         self.attack_animation = Some(name);
         self
@@ -222,6 +236,14 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
 
         if self.player_animation_by_movement {
             app.every_active_frame::<SimpleGameState>(player_animation_by_movement_system);
+        }
+
+        if self.enemy_animation_by_movement {
+            app.every_active_frame::<SimpleGameState>(enemy_animation_by_movement_system);
+        }
+
+        if self.player_directional_animation {
+            app.every_active_frame::<SimpleGameState>(player_directional_animation_system);
         }
 
         app.every_active_frame::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
@@ -334,6 +356,50 @@ fn player_animation_by_movement_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
         });
         let animation = if moving { "walk" } else { "idle" };
         game.play_animation(id, animation);
+    }
+}
+
+fn enemy_animation_by_movement_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    for id in game.entities_with::<Enemy>() {
+        if one_shot_animation_is_active(game, id) || game.is_dead(id) {
+            continue;
+        }
+        let moving = game.component::<Velocity>(id).is_some_and(|velocity| {
+            velocity.0.length_squared() > MOVEMENT_ANIMATION_EPSILON_SQUARED
+        });
+        game.play_animation(id, if moving { "walk" } else { "idle" });
+    }
+}
+
+fn player_directional_animation_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    for id in game.entities_with::<Player>() {
+        if one_shot_animation_is_active(game, id) {
+            continue;
+        }
+        let velocity = game
+            .component::<Velocity>(id)
+            .map(|velocity| velocity.0)
+            .unwrap_or_default();
+        if velocity.length_squared() <= MOVEMENT_ANIMATION_EPSILON_SQUARED {
+            game.play_animation(id, "idle");
+            continue;
+        }
+        let name = if velocity.x.abs() >= velocity.y.abs() {
+            if velocity.x >= 0.0 {
+                "walk_right"
+            } else {
+                "walk_left"
+            }
+        } else if velocity.y >= 0.0 {
+            "walk_down"
+        } else {
+            "walk_up"
+        };
+        // A prefab may intentionally omit some directions. In that case, use
+        // its ordinary walk clip rather than freezing on the prior direction.
+        if !game.play_animation(id, name) {
+            game.play_animation(id, "walk");
+        }
     }
 }
 

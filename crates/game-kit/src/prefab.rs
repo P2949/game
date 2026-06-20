@@ -5,11 +5,12 @@
 //! or `PrefabValidator`. Reached through [`GameApp::prefab`].
 
 use anyhow::Result;
-use game_core::builder::PrefabRegistry;
+use game_core::builder::{PrefabRegistry, PropertyBag};
 use game_core::world::Component;
 use glam::Vec2;
 
 use crate::app::PrefabRequirement;
+use crate::beginner::actors::PrefabName;
 use crate::bundle::Bundle;
 
 /// Defines one prefab: a spawn recipe (a bundle built from the map-object
@@ -40,9 +41,23 @@ impl<'a> PrefabAuthor<'a> {
         B: Bundle,
         F: Fn(Vec2) -> B + 'static,
     {
+        self.spawn_with_properties(move |position, _properties| build(position))
+    }
+
+    /// Registers a spawn recipe that can consume deferred authoring properties.
+    /// Beginner helpers use this internally for configured projectile direction
+    /// and ownership while ordinary content can continue using [`Self::spawn`].
+    pub fn spawn_with_properties<B, F>(&mut self, build: F) -> Result<&mut Self>
+    where
+        B: Bundle,
+        F: Fn(Vec2, &PropertyBag) -> B + 'static,
+    {
+        let prefab_name = self.name.clone();
         self.prefabs
-            .try_register(self.name.clone(), move |world, position, _properties| {
-                Ok(world.spawn(build(position).build()))
+            .try_register(self.name.clone(), move |world, position, properties| {
+                let entity = world.spawn(build(position, properties).build());
+                world.insert(entity, PrefabName(prefab_name.clone()));
+                Ok(entity)
             })?;
         Ok(self)
     }

@@ -43,8 +43,26 @@ enum AudioCommand {
     PlayMusic {
         sound_id: SoundId,
         volume: f32,
+        fade_in_seconds: Option<f32>,
     },
     StopMusic,
+    PauseMusic,
+    ResumeMusic,
+    SetMasterVolume(f32),
+    SetSfxVolume(f32),
+    SetMusicVolume(f32),
+    FadeMusicTo {
+        volume: f32,
+        duration_seconds: f32,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MusicFade {
+    from: f32,
+    to: f32,
+    elapsed_seconds: f32,
+    duration_seconds: f32,
 }
 
 #[derive(Debug)]
@@ -78,6 +96,11 @@ pub struct Mixer {
     sounds: Vec<Sound>,
     voices: Vec<Voice>,
     master_volume: f32,
+    sfx_volume: f32,
+    music_volume: f32,
+    music_fade_volume: f32,
+    music_fade: Option<MusicFade>,
+    music_paused: bool,
     // Expected playback-stream output format (0 means "unspecified / don't
     // check"). File-backed WAVs are normalized to this format before insertion;
     // `add_sound` still rejects mismatches to catch generated/internal misuse.
@@ -96,6 +119,11 @@ impl Mixer {
             sounds: Vec::new(),
             voices: Vec::with_capacity(MAX_VOICES),
             master_volume: 1.0,
+            sfx_volume: 1.0,
+            music_volume: 1.0,
+            music_fade_volume: 1.0,
+            music_fade: None,
+            music_paused: false,
             output_channels: 0,
             output_sample_rate: 0,
             dropped_voices: Arc::new(AtomicU64::new(0)),
@@ -145,6 +173,22 @@ impl Mixer {
 
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master_volume = sanitize_volume(volume);
+    }
+
+    pub fn sfx_volume(&self) -> f32 {
+        self.sfx_volume
+    }
+
+    pub fn music_volume(&self) -> f32 {
+        self.music_volume
+    }
+
+    pub fn set_sfx_volume(&mut self, volume: f32) {
+        self.sfx_volume = sanitize_volume(volume);
+    }
+
+    pub fn set_music_volume(&mut self, volume: f32) {
+        self.music_volume = sanitize_volume(volume);
     }
 
     /// Declares the output stream's channel count and sample rate so `add_sound`
@@ -214,13 +258,55 @@ impl Mixer {
         self.push_voice(sound_id, volume, looping, false)
     }
 
-    pub fn play_music(&mut self, sound_id: SoundId, volume: f32) -> PlayResult {
+    pub fn play_music(
+        &mut self,
+        sound_id: SoundId,
+        volume: f32,
+        fade_in_seconds: Option<f32>,
+    ) -> PlayResult {
         self.stop_music();
+        self.music_paused = false;
+        match fade_in_seconds {
+            Some(duration_seconds) => {
+                self.music_fade_volume = 0.0;
+                self.fade_music_to(1.0, duration_seconds);
+            }
+            None => {
+                self.music_fade_volume = 1.0;
+                self.music_fade = None;
+            }
+        }
         self.push_voice(sound_id, volume, true, true)
     }
 
     pub fn stop_music(&mut self) {
         self.voices.retain(|voice| !voice.music);
+        self.music_paused = false;
+        self.music_fade = None;
+        self.music_fade_volume = 1.0;
+    }
+
+    pub fn pause_music(&mut self) {
+        self.music_paused = true;
+    }
+
+    pub fn resume_music(&mut self) {
+        self.music_paused = false;
+    }
+
+    pub fn fade_music_to(&mut self, volume: f32, duration_seconds: f32) {
+        let target = sanitize_volume(volume);
+        if !duration_seconds.is_finite() || duration_seconds <= 0.0 {
+            self.music_fade_volume = target;
+            self.music_fade = None;
+            return;
+        }
+        self.music_fade = Some(MusicFade {
+            from: self.music_fade_volume,
+            to: target,
+            elapsed_seconds: 0.0,
+            duration_seconds,
+        });
     }
 
     fn push_voice(
@@ -256,12 +342,24 @@ impl Mixer {
     pub fn mix_into(&mut self, out: &mut [f32]) {
         out.fill(0.0);
 
+        self.advance_music_fade(out.len());
+
         // Sanitize once per mix as a final defense against internal misuse or
-        // tests that bypass set_master_volume.
+        // tests that bypass set_*_volume.
         let master_volume = sanitize_volume(self.master_volume);
+        let sfx_volume = sanitize_volume(self.sfx_volume);
+        let music_volume = sanitize_volume(self.music_volume) * self.music_fade_volume;
 
         for voice in &mut self.voices {
+            if voice.music && self.music_paused {
+                continue;
+            }
             let sound = &self.sounds[voice.sound_id];
+            let group_volume = if voice.music {
+                music_volume
+            } else {
+                sfx_volume
+            };
             for sample in out.iter_mut() {
                 if voice.cursor >= sound.samples.len() {
                     if voice.looping {
@@ -271,7 +369,8 @@ impl Mixer {
                     }
                 }
 
-                *sample += sound.samples[voice.cursor] * voice.volume * master_volume;
+                *sample +=
+                    sound.samples[voice.cursor] * voice.volume * group_volume * master_volume;
                 voice.cursor += 1;
             }
         }
@@ -283,6 +382,22 @@ impl Mixer {
         self.voices.retain(|voice| {
             voice.looping || voice.cursor < self.sounds[voice.sound_id].samples.len()
         });
+    }
+
+    fn advance_music_fade(&mut self, samples: usize) {
+        let Some(mut fade) = self.music_fade else {
+            return;
+        };
+        let frames = if self.output_channels == 0 {
+            samples as f32
+        } else {
+            samples as f32 / self.output_channels as f32
+        };
+        let sample_rate = self.output_sample_rate.max(1) as f32;
+        fade.elapsed_seconds += frames / sample_rate;
+        let progress = (fade.elapsed_seconds / fade.duration_seconds).clamp(0.0, 1.0);
+        self.music_fade_volume = fade.from + (fade.to - fade.from) * progress;
+        self.music_fade = (progress < 1.0).then_some(fade);
     }
 }
 
@@ -396,6 +511,14 @@ impl AudioSystem {
     }
 
     pub fn play_music(&self, sound: SoundHandle, volume: f32) {
+        self.play_music_with_fade(sound, volume, None);
+    }
+
+    pub fn play_music_fade_in(&self, sound: SoundHandle, volume: f32, duration_seconds: f32) {
+        self.play_music_with_fade(sound, volume, Some(duration_seconds));
+    }
+
+    fn play_music_with_fade(&self, sound: SoundHandle, volume: f32, fade_in_seconds: Option<f32>) {
         let Some(sound_id) = self.sound_ids.get(&sound).copied() else {
             log::warn!(
                 "ignoring play_music request for unknown sound handle {:?}",
@@ -403,11 +526,42 @@ impl AudioSystem {
             );
             return;
         };
-        self.enqueue_audio_command(AudioCommand::PlayMusic { sound_id, volume });
+        self.enqueue_audio_command(AudioCommand::PlayMusic {
+            sound_id,
+            volume,
+            fade_in_seconds,
+        });
     }
 
     pub fn stop_music(&self) {
         self.enqueue_audio_command(AudioCommand::StopMusic);
+    }
+
+    pub fn pause_music(&self) {
+        self.enqueue_audio_command(AudioCommand::PauseMusic);
+    }
+
+    pub fn resume_music(&self) {
+        self.enqueue_audio_command(AudioCommand::ResumeMusic);
+    }
+
+    pub fn set_master_volume(&self, volume: f32) {
+        self.enqueue_audio_command(AudioCommand::SetMasterVolume(volume));
+    }
+
+    pub fn set_sfx_volume(&self, volume: f32) {
+        self.enqueue_audio_command(AudioCommand::SetSfxVolume(volume));
+    }
+
+    pub fn set_music_volume(&self, volume: f32) {
+        self.enqueue_audio_command(AudioCommand::SetMusicVolume(volume));
+    }
+
+    pub fn fade_music_to(&self, volume: f32, duration_seconds: f32) {
+        self.enqueue_audio_command(AudioCommand::FadeMusicTo {
+            volume,
+            duration_seconds,
+        });
     }
 
     fn enqueue_play(&self, sound_id: SoundId, volume: f32, looping: bool) {
@@ -513,10 +667,23 @@ impl MixerCallback {
                 } => {
                     self.mixer.play(sound_id, volume, looping);
                 }
-                AudioCommand::PlayMusic { sound_id, volume } => {
-                    self.mixer.play_music(sound_id, volume);
+                AudioCommand::PlayMusic {
+                    sound_id,
+                    volume,
+                    fade_in_seconds,
+                } => {
+                    self.mixer.play_music(sound_id, volume, fade_in_seconds);
                 }
                 AudioCommand::StopMusic => self.mixer.stop_music(),
+                AudioCommand::PauseMusic => self.mixer.pause_music(),
+                AudioCommand::ResumeMusic => self.mixer.resume_music(),
+                AudioCommand::SetMasterVolume(volume) => self.mixer.set_master_volume(volume),
+                AudioCommand::SetSfxVolume(volume) => self.mixer.set_sfx_volume(volume),
+                AudioCommand::SetMusicVolume(volume) => self.mixer.set_music_volume(volume),
+                AudioCommand::FadeMusicTo {
+                    volume,
+                    duration_seconds,
+                } => self.mixer.fade_music_to(volume, duration_seconds),
             }
         }
     }
@@ -1178,8 +1345,8 @@ mod tests {
         let sfx = mixer.add_sound(Sound::new(vec![0.75], 1, 48_000)).unwrap();
 
         mixer.play(sfx, 1.0, true);
-        mixer.play_music(first, 0.5);
-        mixer.play_music(second, 0.5);
+        mixer.play_music(first, 0.5, None);
+        mixer.play_music(second, 0.5, None);
 
         assert_eq!(mixer.voice_count(), 2);
         assert!(mixer.voices.iter().any(|voice| !voice.music));
@@ -1197,6 +1364,52 @@ mod tests {
 
         assert_eq!(mixer.voice_count(), 1);
         assert!(mixer.voices.iter().all(|voice| !voice.music));
+    }
+
+    #[test]
+    fn volume_groups_scale_sfx_and_music_independently() {
+        let mut mixer = Mixer::new();
+        let sound = mixer.add_sound(Sound::new(vec![1.0], 1, 48_000)).unwrap();
+        mixer.set_master_volume(0.5);
+        mixer.set_sfx_volume(0.4);
+        mixer.play(sound, 1.0, true);
+
+        let mut out = [0.0; 1];
+        mixer.mix_into(&mut out);
+        assert_eq!(out, [0.2]);
+
+        let mut mixer = Mixer::new();
+        let music = mixer.add_sound(Sound::new(vec![1.0], 1, 48_000)).unwrap();
+        mixer.set_master_volume(0.5);
+        mixer.set_music_volume(0.4);
+        mixer.play_music(music, 1.0, None);
+
+        let mut out = [0.0; 1];
+        mixer.mix_into(&mut out);
+        assert_eq!(out, [0.2]);
+    }
+
+    #[test]
+    fn music_can_pause_resume_and_fade() {
+        let mut mixer = Mixer::new();
+        mixer.set_output_format(1, 10).unwrap();
+        let music = mixer.add_sound(Sound::new(vec![0.5], 1, 10)).unwrap();
+        mixer.play_music(music, 1.0, None);
+
+        mixer.pause_music();
+        let mut out = [0.0; 1];
+        mixer.mix_into(&mut out);
+        assert_eq!(out, [0.0]);
+
+        mixer.resume_music();
+        mixer.fade_music_to(0.0, 1.0);
+        let mut out = [0.0; 5];
+        mixer.mix_into(&mut out);
+        assert_eq!(out, [0.25; 5]);
+
+        let mut out = [0.0; 5];
+        mixer.mix_into(&mut out);
+        assert_eq!(out, [0.0; 5]);
     }
 
     #[test]

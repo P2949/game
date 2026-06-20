@@ -18,11 +18,29 @@ impl Name {
     }
 }
 
+/// The source prefab registered for an entity. This stays internal to the
+/// beginner facade so custom rules can match authored prefab names without
+/// exposing entity ids or ECS components.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PrefabName(pub String);
+
+impl PrefabName {
+    pub(crate) fn matches(&self, name: &str) -> bool {
+        self.0 == name
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Player;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Enemy;
+
+/// Enemy prefab policy for playing a configured `die` clip before removal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeathAnimationPolicy {
+    pub despawn_after_animation: bool,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Npc;
@@ -64,6 +82,12 @@ pub struct DoorTarget {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Projectile;
 
+/// Marks a projectile produced through [`crate::beginner::collections::PlayerActor::shoot`].
+/// Rules use it to target enemies without exposing factions or raw ECS queries to
+/// beginner content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlayerProjectile;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProjectileDamage {
     pub amount: i32,
@@ -78,11 +102,19 @@ pub struct Lifetime {
 pub struct DespawnOnHit;
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum SpawnPlacement {
+    AtSpawner,
+    NearPlayer { radius: f32 },
+    AtFirstFloor,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Spawner {
     pub prefab: String,
     pub every_seconds: f32,
     pub timer: f32,
     pub max_alive: Option<usize>,
+    pub placement: SpawnPlacement,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

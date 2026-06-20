@@ -4,7 +4,10 @@ use sdl3::keyboard::Keycode;
 use sdl3::video::Window;
 use std::time::Instant;
 
-use crate::input::{key_from_sdl, mouse_button_from_sdl};
+use crate::input::{
+    gamepad_axis_from_sdl, gamepad_button_from_sdl, key_from_sdl, mouse_button_from_sdl,
+    normalize_gamepad_axis,
+};
 use crate::resize::ResizePolicy;
 use game_core::input::InputState;
 
@@ -19,6 +22,10 @@ pub struct Platform {
     last_drawable_size: (u32, u32),
     pending_drawable_resize: bool,
     resize_policy: ResizePolicy,
+    gamepad_subsystem: sdl3::GamepadSubsystem,
+    primary_gamepad_id: Option<u32>,
+    // SDL only dispatches gamepad state while this handle is kept open.
+    primary_gamepad: Option<sdl3::gamepad::Gamepad>,
 }
 
 impl Platform {
@@ -59,6 +66,11 @@ impl Platform {
             .event_pump()
             .map_err(anyhow::Error::msg)
             .context("failed to create SDL3 event pump")?;
+        let gamepad_subsystem = sdl
+            .gamepad()
+            .map_err(anyhow::Error::msg)
+            .context("failed to initialize SDL3 gamepad subsystem")?;
+        let (primary_gamepad_id, primary_gamepad) = open_first_gamepad(&gamepad_subsystem);
 
         let last_drawable_size = window.size_in_pixels();
 
@@ -71,6 +83,9 @@ impl Platform {
             last_drawable_size,
             pending_drawable_resize: false,
             resize_policy: ResizePolicy::default(),
+            gamepad_subsystem,
+            primary_gamepad_id,
+            primary_gamepad,
         })
     }
 
@@ -121,6 +136,43 @@ impl Platform {
                     self.set_mouse_position_from_window_coords(x, y);
                     if let Some(button) = mouse_button_from_sdl(mouse_btn) {
                         self.input.set_mouse_button(button, false);
+                    }
+                }
+                Event::ControllerDeviceAdded { .. } => self.connect_first_gamepad(),
+                Event::ControllerDeviceRemoved { which, .. } => {
+                    if self.primary_gamepad_id == Some(which) {
+                        log::info!("primary gamepad disconnected");
+                        self.primary_gamepad = None;
+                        self.primary_gamepad_id = None;
+                        self.input.clear_gamepad();
+                        self.connect_first_gamepad();
+                    }
+                }
+                Event::ControllerButtonDown { which, button, .. } => {
+                    if self.is_primary_gamepad(which) {
+                        if let Some(button) = gamepad_button_from_sdl(button) {
+                            self.input.set_gamepad_button(button, true);
+                        }
+                    }
+                }
+                Event::ControllerButtonUp { which, button, .. } => {
+                    if self.is_primary_gamepad(which) {
+                        if let Some(button) = gamepad_button_from_sdl(button) {
+                            self.input.set_gamepad_button(button, false);
+                        }
+                    }
+                }
+                Event::ControllerAxisMotion {
+                    which, axis, value, ..
+                } => {
+                    if self.is_primary_gamepad(which) {
+                        if let Some((axis, component)) = gamepad_axis_from_sdl(axis) {
+                            self.input.set_gamepad_axis_component(
+                                axis,
+                                component,
+                                normalize_gamepad_axis(value),
+                            );
+                        }
                     }
                 }
                 Event::Window { win_event, .. } => match win_event {
@@ -198,4 +250,43 @@ impl Platform {
         self.input
             .set_mouse_position(glam::vec2(x * scale_x, y * scale_y));
     }
+
+    fn is_primary_gamepad(&self, which: u32) -> bool {
+        self.primary_gamepad_id == Some(which)
+    }
+
+    fn connect_first_gamepad(&mut self) {
+        if self.primary_gamepad.is_some() {
+            return;
+        }
+
+        let (id, gamepad) = open_first_gamepad(&self.gamepad_subsystem);
+        if let (Some(id), Some(gamepad)) = (id, gamepad) {
+            log::info!(
+                "connected primary gamepad: {}",
+                gamepad
+                    .name()
+                    .unwrap_or_else(|| "unnamed controller".to_owned())
+            );
+            self.primary_gamepad_id = Some(id);
+            self.primary_gamepad = Some(gamepad);
+        }
+    }
+}
+
+fn open_first_gamepad(
+    gamepad_subsystem: &sdl3::GamepadSubsystem,
+) -> (Option<u32>, Option<sdl3::gamepad::Gamepad>) {
+    let Ok(ids) = gamepad_subsystem.gamepads() else {
+        log::warn!("failed to enumerate SDL gamepads: {}", sdl3::get_error());
+        return (None, None);
+    };
+
+    for id in ids {
+        match gamepad_subsystem.open(id) {
+            Ok(gamepad) => return (Some(id.0), Some(gamepad)),
+            Err(error) => log::warn!("failed to open SDL gamepad: {error}"),
+        }
+    }
+    (None, None)
 }

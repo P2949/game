@@ -1,13 +1,14 @@
 # Projectiles
 
 Copy [examples/projectile-demo/src/main.rs](../../examples/projectile-demo/src/main.rs)
-when you want an attack button to spawn a visible bolt and damage nearby enemies.
+when you want an attack button to fire a bolt that moves, damages enemies, and
+expires automatically.
 
 The recipe uses:
 
 ```rust
 game.projectile_prefab("bolt")
-    .sprite(assets.texture("bolt"))
+    .sprite("bolt")
     .damage(15)
     .speed(260.0)
     .lifetime(0.8)
@@ -15,11 +16,15 @@ game.projectile_prefab("bolt")
     .build()?;
 ```
 
-Then wire the attack action:
+Enable the behavior rules, then wire the attack action:
 
 ```rust
-game.on_action_cooldown(controls.attack, 0.2, move |game: &mut Game<'_, '_>| {
-    game.spawn("bolt").near_player(28.0);
-    game.enemies().alive().near_player(96.0).damage(15);
+game.rules()
+    .projectiles()
+    .build();
+
+game.on_action_cooldown(controls.attack, 0.2, |game| {
+    game.player().shoot("bolt").towards_mouse();
+    game.play_sound_named("shoot");
 });
 ```

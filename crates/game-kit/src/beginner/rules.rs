@@ -1,9 +1,14 @@
 //! Declarative beginner rules builder.
 
-use glam::{vec2, vec4};
+use std::collections::HashMap;
+
+use glam::Vec2;
 
 use crate::app::GameApp;
-use crate::beginner::actors::{Door, DoorAction, DoorTarget};
+use crate::beginner::actors::{
+    DeathAnimationPolicy, DespawnOnHit, Door, DoorAction, DoorTarget, Lifetime, PlayerProjectile,
+    PrefabName, Projectile, ProjectileDamage, SpawnPlacement, Spawner,
+};
 use crate::beginner::events::DEFAULT_PICKUP_COLLECT_RANGE;
 use crate::context::GameCtx;
 use crate::input::TopDownControls;
@@ -19,7 +24,18 @@ pub struct RulesAuthor<'a, 'app> {
     dead_enemies_despawn: bool,
     camera_follows_player: bool,
     pause_and_reset: bool,
-    basic_ui: bool,
+    show_score: bool,
+    show_enemy_count: bool,
+    show_player_health: bool,
+    show_game_over_text: bool,
+    projectiles_move: bool,
+    projectiles_expire: bool,
+    projectiles_damage_enemies: bool,
+    projectiles_despawn_on_hit: bool,
+    spawners_spawn_prefabs: bool,
+    enemies_animate_by_movement: bool,
+    dead_enemies_play_death_animation: bool,
+    dead_enemies_despawn_after_animation: bool,
 }
 
 impl<'a, 'app> RulesAuthor<'a, 'app> {
@@ -33,7 +49,18 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             dead_enemies_despawn: false,
             camera_follows_player: false,
             pause_and_reset: false,
-            basic_ui: false,
+            show_score: false,
+            show_enemy_count: false,
+            show_player_health: false,
+            show_game_over_text: false,
+            projectiles_move: false,
+            projectiles_expire: false,
+            projectiles_damage_enemies: false,
+            projectiles_despawn_on_hit: false,
+            spawners_spawn_prefabs: false,
+            enemies_animate_by_movement: false,
+            dead_enemies_play_death_animation: false,
+            dead_enemies_despawn_after_animation: false,
         }
     }
 
@@ -77,7 +104,77 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
     }
 
     pub fn show_basic_ui(mut self) -> Self {
-        self.basic_ui = true;
+        self.show_score = true;
+        self
+    }
+
+    pub fn show_score(mut self) -> Self {
+        self.show_score = true;
+        self
+    }
+
+    pub fn show_enemy_count(mut self) -> Self {
+        self.show_enemy_count = true;
+        self
+    }
+
+    pub fn show_player_health(mut self) -> Self {
+        self.show_player_health = true;
+        self
+    }
+
+    pub fn show_game_over_text(mut self) -> Self {
+        self.show_game_over_text = true;
+        self
+    }
+
+    pub fn projectiles_move(mut self) -> Self {
+        self.projectiles_move = true;
+        self
+    }
+
+    pub fn projectiles_expire_after_lifetime(mut self) -> Self {
+        self.projectiles_expire = true;
+        self
+    }
+
+    pub fn projectiles_damage_enemies(mut self) -> Self {
+        self.projectiles_damage_enemies = true;
+        self
+    }
+
+    pub fn projectiles_despawn_on_hit(mut self) -> Self {
+        self.projectiles_despawn_on_hit = true;
+        self
+    }
+
+    /// Enables the common movement, damage, hit-despawn, and lifetime rules for
+    /// player-fired projectiles.
+    pub fn projectiles(mut self) -> Self {
+        self.projectiles_move = true;
+        self.projectiles_expire = true;
+        self.projectiles_damage_enemies = true;
+        self.projectiles_despawn_on_hit = true;
+        self
+    }
+
+    pub fn spawners_spawn_prefabs(mut self) -> Self {
+        self.spawners_spawn_prefabs = true;
+        self
+    }
+
+    pub fn animate_enemies_by_movement(mut self) -> Self {
+        self.enemies_animate_by_movement = true;
+        self
+    }
+
+    pub fn dead_enemies_play_death_animation(mut self) -> Self {
+        self.dead_enemies_play_death_animation = true;
+        self
+    }
+
+    pub fn dead_enemies_despawn_after_animation(mut self) -> Self {
+        self.dead_enemies_despawn_after_animation = true;
         self
     }
 
@@ -102,7 +199,21 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             if self.pause_and_reset {
                 top_down = top_down.with_pause_death_ui();
             }
+            if self.enemies_animate_by_movement {
+                top_down = top_down.with_enemy_animation_by_movement();
+            }
             top_down.build();
+        }
+
+        if self.top_down.is_none()
+            && (self.enemies_animate_by_movement
+                || self.dead_enemies_play_death_animation
+                || self.dead_enemies_despawn_after_animation)
+        {
+            if self.enemies_animate_by_movement {
+                app.every_frame(enemy_animation_by_movement_system);
+            }
+            app.every_frame(|game: &mut GameCtx<'_, '_>, dt| game.update_animations(dt));
         }
 
         if self.collect_pickups {
@@ -123,19 +234,289 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             });
         }
 
-        if self.basic_ui {
-            app.draw_ui(basic_ui_system);
+        if self.dead_enemies_play_death_animation {
+            app.every_tick(dead_enemies_play_death_animation_system);
+        }
+
+        if self.dead_enemies_despawn_after_animation {
+            app.every_tick(dead_enemies_despawn_after_animation_system);
+        }
+
+        if self.show_score
+            || self.show_enemy_count
+            || self.show_player_health
+            || self.show_game_over_text
+        {
+            let show_score = self.show_score;
+            let show_enemy_count = self.show_enemy_count;
+            let show_player_health = self.show_player_health;
+            let show_game_over_text = self.show_game_over_text;
+            app.draw_ui(move |game, _dt| {
+                high_level_ui_system(
+                    game,
+                    show_score,
+                    show_enemy_count,
+                    show_player_health,
+                    show_game_over_text,
+                );
+            });
+        }
+
+        if self.projectiles_move {
+            app.every_tick(projectiles_move_system);
+        }
+
+        if self.projectiles_expire {
+            app.every_tick(projectiles_expire_system);
+        }
+
+        if self.projectiles_damage_enemies {
+            let despawn_on_hit = self.projectiles_despawn_on_hit;
+            app.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+                projectiles_damage_enemies_system(game, despawn_on_hit);
+            });
+        }
+
+        if self.spawners_spawn_prefabs {
+            app.every_tick(spawners_spawn_prefabs_system);
         }
     }
 }
 
-fn basic_ui_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
-    let score = game.score().value();
-    game.text(
-        &format!("Score: {score}"),
-        vec2(24.0, 72.0),
-        vec4(1.0, 0.95, 0.35, 1.0),
-    );
+fn enemy_animation_by_movement_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    for id in game.entities_with::<crate::beginner::actors::Enemy>() {
+        if game.is_dead(id) {
+            continue;
+        }
+        let Some(animation) = game.component::<crate::beginner::animation::Animation>(id) else {
+            continue;
+        };
+        let Some(set) = game.component::<crate::beginner::animation::AnimationSet>(id) else {
+            continue;
+        };
+        if set
+            .get(&animation.current)
+            .is_some_and(|clip| !clip.looping)
+        {
+            continue;
+        }
+        let moving = game
+            .component::<game_core::world::Velocity>(id)
+            .is_some_and(|velocity| velocity.0.length_squared() > 0.0001);
+        game.play_animation(id, if moving { "walk" } else { "idle" });
+    }
+}
+
+fn dead_enemies_play_death_animation_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    for id in game.enemy_ids() {
+        if !game.is_dead(id) {
+            continue;
+        }
+        if game
+            .component::<DeathAnimationPolicy>(id)
+            .is_some_and(|policy| policy.despawn_after_animation)
+        {
+            game.play_animation(id, "die");
+        }
+    }
+}
+
+fn dead_enemies_despawn_after_animation_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    let despawn = game
+        .enemy_ids()
+        .into_iter()
+        .filter(|id| game.is_dead(*id))
+        .filter(|id| {
+            game.component::<DeathAnimationPolicy>(*id)
+                .is_some_and(|policy| policy.despawn_after_animation)
+        })
+        .filter(|id| {
+            game.component::<crate::beginner::animation::Animation>(*id)
+                .is_none_or(|_| game.animation_finished(*id, "die"))
+        })
+        .collect::<Vec<_>>();
+    let mut commands = game.commands();
+    for id in despawn {
+        commands.despawn(id);
+    }
+}
+
+fn projectiles_move_system(game: &mut GameCtx<'_, '_>, dt: f32) {
+    let velocities = game
+        .entities_with::<Projectile>()
+        .into_iter()
+        .filter_map(|id| {
+            game.component::<game_core::world::Velocity>(id)
+                .map(|velocity| (id, velocity.0))
+        })
+        .collect::<Vec<_>>();
+
+    for (id, velocity) in velocities {
+        if let Some(transform) = game.component_mut::<game_core::world::Transform>(id) {
+            transform.pos += velocity * dt.max(0.0);
+        }
+    }
+}
+
+fn projectiles_expire_system(game: &mut GameCtx<'_, '_>, dt: f32) {
+    let mut expired = Vec::new();
+    for id in game.entities_with::<Projectile>() {
+        let Some(lifetime) = game.component_mut::<Lifetime>(id) else {
+            continue;
+        };
+        lifetime.seconds_left -= dt.max(0.0);
+        if lifetime.seconds_left <= 0.0 {
+            expired.push(id);
+        }
+    }
+
+    let mut commands = game.commands();
+    for id in expired {
+        commands.despawn(id);
+    }
+}
+
+fn projectiles_damage_enemies_system(game: &mut GameCtx<'_, '_>, despawn_on_hit: bool) {
+    const HIT_DISTANCE: f32 = 16.0;
+
+    let enemies = game.living_enemy_ids();
+    let projectiles = game.entities_with::<PlayerProjectile>();
+    let mut despawn = Vec::new();
+
+    for projectile in projectiles {
+        let Some(position) = game.position(projectile) else {
+            continue;
+        };
+        let Some(damage) = game
+            .component::<ProjectileDamage>(projectile)
+            .map(|damage| damage.amount)
+        else {
+            continue;
+        };
+        let should_despawn = despawn_on_hit && game.has::<DespawnOnHit>(projectile);
+
+        for enemy in &enemies {
+            let Some(enemy_position) = game.position(*enemy) else {
+                continue;
+            };
+            if position.distance(enemy_position) > HIT_DISTANCE {
+                continue;
+            }
+            game.damage_entity(*enemy, damage);
+            if should_despawn {
+                despawn.push(projectile);
+                break;
+            }
+        }
+    }
+
+    let mut commands = game.commands();
+    for id in despawn {
+        commands.despawn(id);
+    }
+}
+
+#[derive(Clone)]
+struct SpawnRequest {
+    prefab: String,
+    placement: SpawnPlacement,
+    at_spawner: Vec2,
+}
+
+fn spawners_spawn_prefabs_system(game: &mut GameCtx<'_, '_>, dt: f32) {
+    let spawners = game
+        .entities_with::<Spawner>()
+        .into_iter()
+        .filter_map(|id| {
+            let spawner = game.component::<Spawner>(id)?.clone();
+            let position = game.position(id)?;
+            Some((id, spawner, position))
+        })
+        .collect::<Vec<_>>();
+    let mut pending_by_prefab: HashMap<String, usize> = HashMap::new();
+    let mut requests = Vec::new();
+
+    for (id, snapshot, position) in spawners {
+        let alive = count_alive_prefab(game, &snapshot.prefab);
+        let already_pending = pending_by_prefab
+            .get(&snapshot.prefab)
+            .copied()
+            .unwrap_or_default();
+        let mut spawn_count = 0usize;
+
+        if let Some(spawner) = game.component_mut::<Spawner>(id) {
+            spawner.timer += dt.max(0.0);
+            while spawner.timer >= spawner.every_seconds
+                && spawner
+                    .max_alive
+                    .is_none_or(|max| alive + already_pending + spawn_count < max)
+            {
+                spawner.timer -= spawner.every_seconds;
+                spawn_count += 1;
+            }
+        }
+
+        if spawn_count > 0 {
+            *pending_by_prefab
+                .entry(snapshot.prefab.clone())
+                .or_default() += spawn_count;
+            for _ in 0..spawn_count {
+                requests.push(SpawnRequest {
+                    prefab: snapshot.prefab.clone(),
+                    placement: snapshot.placement.clone(),
+                    at_spawner: position,
+                });
+            }
+        }
+    }
+
+    for request in requests {
+        let position = match request.placement {
+            SpawnPlacement::AtSpawner => Some(request.at_spawner),
+            SpawnPlacement::NearPlayer { radius } => game
+                .player_position()
+                .map(|player| player + Vec2::new(radius, 0.0)),
+            SpawnPlacement::AtFirstFloor => game.first_floor_center(),
+        };
+        if let Some(position) = position {
+            game.spawn(request.prefab).at_world(position);
+        }
+    }
+}
+
+fn count_alive_prefab(game: &GameCtx<'_, '_>, prefab: &str) -> usize {
+    game.entities_with::<PrefabName>()
+        .into_iter()
+        .filter(|id| {
+            game.component::<PrefabName>(*id)
+                .is_some_and(|name| name.matches(prefab))
+                && !game.is_dead(*id)
+        })
+        .count()
+}
+
+fn high_level_ui_system(
+    game: &mut GameCtx<'_, '_>,
+    show_score: bool,
+    show_enemy_count: bool,
+    show_player_health: bool,
+    show_game_over_text: bool,
+) {
+    let player_is_dead = show_game_over_text && game.player_is_dead();
+    let mut ui = game.ui().top_left();
+    if show_score {
+        ui = ui.score_label();
+    }
+    if show_enemy_count {
+        ui = ui.enemy_count_label();
+    }
+    if show_player_health {
+        ui = ui.player_health_bar();
+    }
+    if player_is_dead {
+        ui = ui.center_text("Game Over");
+    }
+    ui.build();
 }
 
 fn doors_change_maps_system(game: &mut GameCtx<'_, '_>) {
@@ -172,9 +553,11 @@ fn doors_change_maps_system(game: &mut GameCtx<'_, '_>) {
 #[cfg(test)]
 mod tests {
     use game_core::backend::TextureHandle;
+    use game_core::world::{Transform, Velocity};
 
     use crate::app::{GameApp, GamePlugin};
-    use crate::beginner::actors::Pickup;
+    use crate::beginner::actors::{Enemy, Pickup, PlayerProjectile, Projectile, Spawner};
+    use crate::beginner::animation::{Animation, AnimationSet, SpriteSheet};
     use crate::beginner::collections::Score;
     use crate::harness::GameTestHarness;
 
@@ -220,6 +603,9 @@ mod tests {
                 .camera_follows_player()
                 .pause_and_reset()
                 .show_basic_ui()
+                .show_enemy_count()
+                .show_player_health()
+                .show_game_over_text()
                 .build();
 
             Ok(())
@@ -239,5 +625,199 @@ mod tests {
         assert_eq!(game.world().get_resource::<Score>().unwrap().value, 1);
         game.frame(0.0);
         game.assert_ui_contains("Score: 1");
+        game.assert_ui_contains("Enemies: 0");
+        game.assert_ui_contains("Health:");
+
+        let player = game.player();
+        game.set_entity_health(player, 0);
+        game.frame(0.0);
+        game.assert_ui_contains("Game Over");
+    }
+
+    struct ProjectileRulesPlugin;
+
+    impl GamePlugin for ProjectileRulesPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            game.asset_bag()
+                .texture("player", "textures/player.png")?
+                .texture("slime", "textures/slime.png")?
+                .texture("bolt", "textures/bolt.png")?
+                .texture("floor", "textures/floor.png")?
+                .texture("wall", "textures/wall.png")?
+                .build();
+            let controls = game.input(|input| input.top_down_controls())?;
+
+            game.player_prefab("player")
+                .sprite("player")
+                .moves_with(controls.movement, 120.0)
+                .build()?;
+            game.enemy_prefab("slime")
+                .sprite("slime")
+                .health(20)
+                .build()?;
+            game.projectile_prefab("bolt")
+                .sprite("bolt")
+                .speed(120.0)
+                .damage(20)
+                .lifetime(0.25)
+                .despawn_on_hit()
+                .build()?;
+            game.map("projectiles")
+                .tile_size(16.0)
+                .tiles(["#######", "#P..E.#", "#######"])
+                .simple_theme("floor", "wall")
+                .legend('P', "player")
+                .legend('E', "slime")
+                .start();
+            game.on_start(|game| game.spawn_start_map());
+
+            game.rules().projectiles().build();
+            game.on_action(controls.attack, |game| {
+                game.player().shoot("bolt").right();
+            });
+            game.on_action(controls.reset, |game| {
+                game.player().shoot("bolt").left();
+            });
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn projectile_rules_move_damage_expire_and_despawn_player_shots() {
+        let mut hit_game = GameTestHarness::from_plugin(ProjectileRulesPlugin).unwrap();
+        hit_game.tap_action("attack");
+        assert_eq!(hit_game.count::<Projectile>(), 1);
+        let projectile = hit_game.world().ids_with::<Projectile>()[0];
+        assert_eq!(hit_game.count::<PlayerProjectile>(), 1);
+        assert_eq!(
+            hit_game.world().get::<Velocity>(projectile).unwrap().0,
+            glam::vec2(120.0, 0.0)
+        );
+        let enemy = hit_game.world().ids_with::<Enemy>()[0];
+        assert_eq!(
+            hit_game.world().get::<Transform>(projectile).unwrap().pos,
+            glam::vec2(24.0, 24.0)
+        );
+        assert_eq!(
+            hit_game.world().get::<Transform>(enemy).unwrap().pos,
+            glam::vec2(72.0, 24.0)
+        );
+        hit_game.fixed_step(0.5);
+        assert_eq!(hit_game.count::<Projectile>(), 0);
+        hit_game.assert_enemy_dead(0);
+
+        let mut expiry_game = GameTestHarness::from_plugin(ProjectileRulesPlugin).unwrap();
+        expiry_game.tap_action("reset");
+        assert_eq!(expiry_game.count::<Projectile>(), 1);
+        expiry_game.fixed_step(0.3);
+        assert_eq!(expiry_game.count::<Projectile>(), 0);
+        assert_eq!(expiry_game.count::<Enemy>(), 1);
+    }
+
+    struct SpawnerRulesPlugin;
+
+    impl GamePlugin for SpawnerRulesPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            game.asset_bag()
+                .texture("player", "textures/player.png")?
+                .texture("slime", "textures/slime.png")?
+                .texture("floor", "textures/floor.png")?
+                .texture("wall", "textures/wall.png")?
+                .build();
+            let controls = game.input(|input| input.top_down_controls())?;
+            game.player_prefab("player")
+                .sprite("player")
+                .moves_with(controls.movement, 120.0)
+                .build()?;
+            game.enemy_prefab("slime")
+                .sprite("slime")
+                .health(10)
+                .build()?;
+            game.spawner_prefab("spawner")
+                .spawn("slime")
+                .every_seconds(0.2)
+                .max_alive(2)
+                .near_player(32.0)
+                .build()?;
+            game.map("waves")
+                .tile_size(16.0)
+                .tiles(["#######", "#P...S#", "#######"])
+                .simple_theme("floor", "wall")
+                .legend('P', "player")
+                .legend('S', "spawner")
+                .start();
+            game.on_start(|game| game.spawn_start_map());
+            game.rules().spawners_spawn_prefabs().build();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn spawner_rule_places_prefabs_near_player_and_respects_max_alive() {
+        let mut game = GameTestHarness::from_plugin(SpawnerRulesPlugin).unwrap();
+        assert_eq!(game.count::<Spawner>(), 1);
+
+        game.fixed_step(0.2);
+        assert_eq!(game.enemy_count(), 1);
+        assert_eq!(
+            game.enemy(0).position(),
+            game.player().position() + glam::vec2(32.0, 0.0)
+        );
+
+        game.fixed_step(0.2);
+        assert_eq!(game.enemy_count(), 2);
+        game.fixed_step(0.2);
+        assert_eq!(game.enemy_count(), 2);
+    }
+
+    struct AnimatedEnemyRulesPlugin;
+
+    impl GamePlugin for AnimatedEnemyRulesPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            let sheet = SpriteSheet::new(TextureHandle(2), 4, 1);
+            game.enemy_prefab("slime")
+                .spritesheet(sheet)
+                .idle(0..1)
+                .walk(1..2)
+                .die(2..4)
+                .despawn_after_death_animation()
+                .build()?;
+            game.map("animated-enemy")
+                .tiles(["###", "#E#", "###"])
+                .simple_theme(TextureHandle(10), TextureHandle(11))
+                .legend('E', "slime")
+                .start();
+            game.on_start(|game| game.spawn_start_map());
+            game.rules()
+                .animate_enemies_by_movement()
+                .dead_enemies_play_death_animation()
+                .dead_enemies_despawn_after_animation()
+                .build();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn animation_rules_drive_enemy_movement_and_despawn_after_death_clip() {
+        let mut game = GameTestHarness::from_plugin(AnimatedEnemyRulesPlugin).unwrap();
+        let enemy = game.enemy(0);
+        game.world_mut().get_mut::<Velocity>(enemy.id()).unwrap().0 = glam::Vec2::X;
+        game.frame(0.0);
+        assert_eq!(
+            game.world().get::<Animation>(enemy.id()).unwrap().current,
+            "walk"
+        );
+
+        game.set_enemy_health(0, 0);
+        game.step();
+        assert_eq!(
+            game.world().get::<Animation>(enemy.id()).unwrap().current,
+            "die"
+        );
+        assert!(game.world().get::<AnimationSet>(enemy.id()).is_some());
+
+        game.frame(0.4);
+        game.step();
+        game.assert_enemy_count(0);
     }
 }

@@ -1,12 +1,13 @@
 //! Input authoring (Phase 3).
 //!
 //! [`InputAuthor`] names logical controls (actions and 2D axes) and binds them to
-//! keys, without exposing the engine's `InputRegistry`. Reached through
+//! keys and controller inputs, without exposing the engine's `InputRegistry`. Reached through
 //! [`GameApp::input`].
 
 use anyhow::Result;
 use game_core::input::{
-    ActionBindingBuilder, ActionId, Axis2dBindingBuilder, Axis2dId, InputRegistry, Key, MouseButton,
+    ActionBindingBuilder, ActionId, Axis2dBindingBuilder, Axis2dId, GamepadAxis, GamepadButton,
+    InputRegistry, Key, MouseButton,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -48,15 +49,41 @@ impl<'a> InputAuthor<'a> {
     }
 
     pub fn top_down_controls(&mut self) -> Result<TopDownControls> {
+        self.top_down_controls_with_gamepad()
+    }
+
+    /// Declares the standard top-down controls with keyboard, mouse, and first
+    /// controller support. This is also what [`Self::top_down_controls`] uses.
+    pub fn top_down_controls_with_gamepad(&mut self) -> Result<TopDownControls> {
         Ok(TopDownControls {
-            movement: self.axis2d("move")?.wasd().arrows(),
-            attack: self.action("attack")?.space_or_enter(),
-            pause: self.action("pause")?.escape_or_p(),
-            reset: self.action("reset")?.key(Key::R),
+            movement: self.axis2d("move")?.wasd().arrows_and_gamepad_left_stick(),
+            attack: self
+                .action("attack")?
+                .space_or_enter_or_mouse_left_or_gamepad_south(),
+            pause: self.action("pause")?.escape_or_p_or_gamepad_start(),
+            reset: self
+                .action("reset")?
+                .key_or_gamepad(Key::R, GamepadButton::Select),
             debug_die: self.action("debug_die")?.key(Key::K),
             debug_overlay: self.action("debug_overlay")?.key(Key::F1),
             zoom_in: self.action("zoom_in")?.key(Key::Plus),
             zoom_out: self.action("zoom_out")?.key(Key::Minus),
+        })
+    }
+
+    /// Declares controller-only top-down controls using the first connected
+    /// gamepad. Use [`Self::top_down_controls_with_gamepad`] for the usual
+    /// keyboard-and-controller configuration.
+    pub fn top_down_gamepad_controls(&mut self) -> Result<TopDownControls> {
+        Ok(TopDownControls {
+            movement: self.axis2d("move")?.gamepad_left_stick(),
+            attack: self.action("attack")?.gamepad_south(),
+            pause: self.action("pause")?.gamepad_start(),
+            reset: self.action("reset")?.gamepad_select(),
+            debug_die: self.action("debug_die")?.gamepad_west(),
+            debug_overlay: self.action("debug_overlay")?.gamepad_north(),
+            zoom_in: self.action("zoom_in")?.gamepad_right_shoulder(),
+            zoom_out: self.action("zoom_out")?.gamepad_left_shoulder(),
         })
     }
 }
@@ -116,6 +143,64 @@ impl ActionAuthor<'_> {
     pub fn mouse_middle(self) -> ActionId {
         self.mouse(MouseButton::Middle)
     }
+
+    /// Binds one controller button and finalizes the action.
+    pub fn gamepad(self, button: GamepadButton) -> ActionId {
+        self.builder.bind_gamepad(button).id()
+    }
+
+    pub fn gamepad_south(self) -> ActionId {
+        self.gamepad(GamepadButton::South)
+    }
+
+    pub fn gamepad_east(self) -> ActionId {
+        self.gamepad(GamepadButton::East)
+    }
+
+    pub fn gamepad_west(self) -> ActionId {
+        self.gamepad(GamepadButton::West)
+    }
+
+    pub fn gamepad_north(self) -> ActionId {
+        self.gamepad(GamepadButton::North)
+    }
+
+    pub fn gamepad_start(self) -> ActionId {
+        self.gamepad(GamepadButton::Start)
+    }
+
+    pub fn gamepad_select(self) -> ActionId {
+        self.gamepad(GamepadButton::Select)
+    }
+
+    pub fn gamepad_left_shoulder(self) -> ActionId {
+        self.gamepad(GamepadButton::LeftShoulder)
+    }
+
+    pub fn gamepad_right_shoulder(self) -> ActionId {
+        self.gamepad(GamepadButton::RightShoulder)
+    }
+
+    pub fn key_or_gamepad(self, key: Key, button: GamepadButton) -> ActionId {
+        self.builder.bind(key).bind_gamepad(button).id()
+    }
+
+    fn space_or_enter_or_mouse_left_or_gamepad_south(self) -> ActionId {
+        self.builder
+            .bind(Key::Space)
+            .bind(Key::Enter)
+            .bind_mouse(MouseButton::Left)
+            .bind_gamepad(GamepadButton::South)
+            .id()
+    }
+
+    fn escape_or_p_or_gamepad_start(self) -> ActionId {
+        self.builder
+            .bind(Key::Escape)
+            .bind(Key::P)
+            .bind_gamepad(GamepadButton::Start)
+            .id()
+    }
 }
 
 /// Binds directional keys to one logical 2D axis.
@@ -147,6 +232,26 @@ impl<'a> Axis2dAuthor<'a> {
             .id()
     }
 
+    /// Binds the first controller's left stick and finalizes the axis.
+    pub fn gamepad_left_stick(self) -> Axis2dId {
+        self.builder.bind_gamepad_axis(GamepadAxis::LeftStick).id()
+    }
+
+    /// Binds the first controller's right stick and finalizes the axis.
+    pub fn gamepad_right_stick(self) -> Axis2dId {
+        self.builder.bind_gamepad_axis(GamepadAxis::RightStick).id()
+    }
+
+    fn arrows_and_gamepad_left_stick(self) -> Axis2dId {
+        self.builder
+            .negative_x(Key::Left)
+            .positive_x(Key::Right)
+            .negative_y(Key::Up)
+            .positive_y(Key::Down)
+            .bind_gamepad_axis(GamepadAxis::LeftStick)
+            .id()
+    }
+
     /// Adds explicit directional bindings and finalizes the axis.
     pub fn keys(self, left: Key, right: Key, up: Key, down: Key) -> Axis2dId {
         self.builder
@@ -160,7 +265,7 @@ impl<'a> Axis2dAuthor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use game_core::input::{InputRegistry, Key, MouseButton};
+    use game_core::input::{GamepadAxis, GamepadButton, InputRegistry, Key, MouseButton};
 
     use super::InputAuthor;
 
@@ -199,6 +304,38 @@ mod tests {
         assert_eq!(
             registry.action_binding(controls.pause).unwrap().keys,
             [Key::Escape, Key::P]
+        );
+        assert_eq!(
+            registry
+                .action_binding(controls.attack)
+                .unwrap()
+                .gamepad_buttons,
+            [GamepadButton::South]
+        );
+        assert_eq!(
+            registry
+                .axis2d_binding(controls.movement)
+                .unwrap()
+                .gamepad_axes,
+            [GamepadAxis::LeftStick]
+        );
+    }
+
+    #[test]
+    fn gamepad_authors_bind_named_controls() {
+        let mut registry = InputRegistry::new();
+        let mut input = InputAuthor::new(&mut registry);
+
+        let attack = input.action("attack").unwrap().gamepad_south();
+        let movement = input.axis2d("move").unwrap().gamepad_left_stick();
+
+        assert_eq!(
+            registry.action_binding(attack).unwrap().gamepad_buttons,
+            [GamepadButton::South]
+        );
+        assert_eq!(
+            registry.axis2d_binding(movement).unwrap().gamepad_axes,
+            [GamepadAxis::LeftStick]
         );
     }
 }

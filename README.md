@@ -60,8 +60,7 @@ use game_kit::beginner::prelude::*;
 
 impl GamePlugin for DemoPlugin {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        let assets = game
-            .asset_bag()
+        game.asset_bag()
             .texture("player", "textures/test.png")?
             .texture("slime", "textures/test.png")?
             .texture("floor", "textures/test.png")?
@@ -72,18 +71,18 @@ impl GamePlugin for DemoPlugin {
         let controls = game.input(|input| input.top_down_controls())?;
 
         game.player_prefab("player")
-            .sprite(assets.texture("player"))
+            .sprite("player")
             .moves_with(controls.movement, 130.0)
             .build()?;
 
         game.enemy_prefab("slime")
-            .sprite(assets.texture("slime"))
+            .sprite("slime")
             .chases_player()
             .build()?;
 
         game.map("level_1")
             .tiles(["#####", "#P.E#", "#####"])
-            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('E', "slime")
             .start();
@@ -101,6 +100,11 @@ impl GamePlugin for DemoPlugin {
 
 This is the intended first path: content code talks to `game-kit`, not to
 runtime/backend/registry/schedule internals.
+
+`testbed-content` intentionally uses the advanced API. It is useful for engine
+testing, RON maps, patrol setup, and lower-level examples, but beginners should
+copy `simple-content`, `arena-content`, `examples/one-file-demo`, or
+`templates/simple-demo` instead.
 
 ### Advanced API
 
@@ -142,12 +146,17 @@ guide.
 
 - Beginner API: player, enemy, map, action, scene, sound, animation, and
   top-down helper APIs. Copy `simple-content`, `arena-content`, the tutorials,
-  or `examples/one-file-demo` first. Planned and tracked in
-  [`docs/beginner-authoring-roadmap.md`](docs/beginner-authoring-roadmap.md).
+  or `examples/one-file-demo` first. Read the
+  [beginner authoring guide](docs/beginner-authoring.md) and tutorials before
+  looking at the advanced facade.
 - Advanced content API: the current `game-kit` ECS facade for custom prefabs,
   systems, queries, and tests. `testbed-content` is the advanced demo-lab.
 - Engine/runtime API: internal engine, runtime, renderer, platform, and audio
   crates. Not for content.
+
+Further reading: [beginner authoring](docs/beginner-authoring.md),
+[advanced content authoring](docs/advanced-content-authoring.md), and the
+[architecture guide](docs/architecture.md).
 
 ## Requirements
 

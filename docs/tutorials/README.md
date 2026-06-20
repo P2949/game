@@ -10,6 +10,10 @@ generated project:
 use game_kit::beginner::prelude::*;
 ```
 
+`testbed-content` is intentionally an advanced lab for manual systems and RON
+maps. Keep following the examples below or copy `simple-content` rather than
+using it as a beginner starting point.
+
 1. [Run the demo](01-run-the-demo.md)
 2. [Your first player](02-your-first-player.md)
 3. [Add a map](03-add-a-map.md)

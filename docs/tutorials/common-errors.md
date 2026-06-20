@@ -31,19 +31,19 @@ let assets = game
 let controls = game.input(|input| input.top_down_controls())?;
 
 game.player_prefab("player")
-    .sprite(assets.texture("player"))
+    .sprite("player")
     .moves_with(controls.movement, 130.0)
     .build()?;
 
 game.enemy_prefab("slime")
-    .sprite(assets.texture("slime"))
+    .sprite("slime")
     .chases_player()
     .melee(26.0, 6)
     .build()?;
 
 game.map("level_1")
     .tiles(["#####", "#P.E#", "#####"])
-    .simple_theme(assets.texture("floor"), assets.texture("wall"))
+    .simple_theme("floor", "wall")
     .legend('P', "player")
     .legend('E', "slime")
     .start();
@@ -71,7 +71,7 @@ disappear once the first missing builder call is restored.
 Add:
 
 ```rust
-.sprite(assets.texture("player"))
+.sprite("player")
 ```
 
 `player prefab 'player' has no movement axis`
@@ -87,7 +87,7 @@ Add:
 Add:
 
 ```rust
-.simple_theme(assets.texture("floor"), assets.texture("wall"))
+.simple_theme("floor", "wall")
 ```
 
 `references unknown prefab`
@@ -112,6 +112,48 @@ Use paths relative to `assets/`:
 .sound("hit", "sounds/hit.wav")?
 ```
 
+For the standard folders, avoid repeating those paths:
+
+```rust
+game.asset_bag()
+    .texture_auto("player")?
+    .sound_auto("hit")?
+    .build();
+```
+
+`Map 'level_1' uses symbol 'X' but no legend was registered`
+
+Add a legend for every non-`.`/`#` character in a text map:
+
+```rust
+.legend('X', "some_prefab")
+```
+
+Text maps live under `assets/` and use the same symbolic legend format:
+
+```rust
+game.map_from_text("level_1", "maps/level_1.txt")
+    .simple_theme("floor", "wall")
+    .legend('P', "player")
+    .start();
+```
+
+`Unknown texture asset 'plaeyr'`
+
+Fix the key or register it before using `.sprite("player")`:
+
+```rust
+game.asset_bag().texture_auto("player")?.build();
+```
+
+`Map 'level_1' has no player spawn`
+
+Put a `P` in the map and connect it to the player prefab:
+
+```rust
+.legend('P', "player")
+```
+
 `Sound file '...' uses unsupported format`
 
 Use a WAV file with mono or stereo audio. The runtime accepts PCM16 and float32
@@ -120,6 +162,59 @@ files, convert them first:
 
 ```bash
 ffmpeg -i input.wav -ac 2 -ar 48000 assets/sounds/hit.wav
+```
+
+Named playback stays inside your gameplay callback:
+
+```rust
+game.audio().play_sound("hit");
+game.audio().play_music("theme").volume(0.4);
+```
+
+Use `set_master_volume`, `set_sfx_volume`, and `set_music_volume` for global
+mix levels. `fade_music_to`, `pause_music`, and `resume_music` control the
+current music track without touching raw audio handles.
+
+## Controller input
+
+`input.top_down_controls()` supports the first connected controller as well as
+keyboard and mouse: use its left stick to move, the south face button to attack,
+Start to pause, and Select to reset. No SDL-specific code is needed in a game.
+
+For a custom controller-only binding, use the same input builder:
+
+```rust
+let move_axis = game.input(|input| input.axis2d("move")?.gamepad_left_stick())?;
+let attack = game.input(|input| input.action("attack")?.gamepad_south())?;
+```
+
+`No controller detected`
+
+Keyboard and mouse keep working. Connect a controller before starting the game;
+`top_down_controls()` uses the first detected controller automatically.
+
+`Projectile does not move`
+
+Enable the projectile behavior after defining the prefab:
+
+```rust
+game.rules().projectiles().build();
+```
+
+`Spawner does not spawn`
+
+Enable the spawner behavior:
+
+```rust
+game.rules().spawners_spawn_prefabs().build();
+```
+
+`Door does not work`
+
+Enable map-changing door behavior:
+
+```rust
+game.rules().doors_change_maps().build();
 ```
 
 ## Next step
