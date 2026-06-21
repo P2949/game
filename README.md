@@ -88,10 +88,14 @@ content_plugin!(MyContent, plugin, |game| {
 });
 ```
 
-Copy `simple-content`, `arena-content`, `examples/one-file-demo`, or
-`templates/simple-demo` for beginner games. `testbed-content` is intentionally
-advanced; see the [advanced authoring guide](docs/advanced-content-authoring.md)
-only when you need that separate path. The [beginner guide](docs/beginner-authoring.md),
+Start a project from anywhere with
+`cargo generate gh:P2949/game templates/simple-demo`; it creates a one-file
+beginner game with a git dependency on `game-starter`. From a local checkout,
+`cargo xtask new-demo my-game` creates the same starter with a local path
+dependency. `simple-content`, `arena-content`, and `examples/one-file-demo`
+remain useful examples to copy. `testbed-content` is intentionally advanced;
+see the [advanced authoring guide](docs/advanced-content-authoring.md) only when
+you need that separate path. The [beginner guide](docs/beginner-authoring.md),
 [tutorials](docs/tutorials/README.md), and [cookbook](docs/cookbook/README.md)
 are the normal starting points.
 
@@ -161,7 +165,7 @@ Release packages should not rely on the source-tree fallback.
 | `GAME_DEMO` | Selects the content plugin: `arena` (default), `simple`, or `testbed`. |
 | `GAME_SMOKE_FRAMES` | If set to `N`, initializes normally, renders exactly `N` frames, then exits. `0` exits after initialization before rendering. Invalid values fail early. |
 | `GAME_ASSET_DIR` | Overrides runtime asset root discovery. |
-| `GAME_DEV_RELOAD` | Set to `1` in a release build to enable F5 text-map reload. Debug builds enable it automatically. |
+| `GAME_DEV_RELOAD` | Set to `1` in a release build to enable F5 text-map reload and optional configured tuning reload. Debug builds enable it automatically. |
 | `GAME_PRESENT_MODE` | `fifo` (default), `mailbox`, or `immediate`; unavailable opt-in modes fall back to FIFO. |
 | `GAME_VK_DEVICE_NAME` | Selects a suitable Vulkan GPU whose device name contains the given substring. |
 | `GAME_FRAME_TIMINGS` | Set to `1`, `true`, `yes`, or `on` to emit periodic debug frame timing logs. |
@@ -196,7 +200,7 @@ The crate manifest directory is only a debug development fallback (used by
 - No texture atlas yet
 - No bindless descriptors
 - Simple bitmap text
-- No texture or sound hot reload (text maps reload with F5 in development)
+- No texture or sound hot reload (text maps and configured tuning reload with F5 in development)
 
 Sprites are batched by layer and texture. Layer order always wins. Within one
 layer, texture batching groups draws by texture; same-layer cross-texture

@@ -21,6 +21,8 @@ The first editor loop is deliberately code-and-text based: put files in the
 conventional asset folders, load a map with `map_from_text_auto("level_1")`,
 edit `assets/maps/level_1.txt`, and press F5 in a debug build. The reload keeps
 the same prefabs, legends, and theme while rebuilding the current map.
+When a tuning file is configured, it reloads that RON data first so respawned
+actors use the new numeric values.
 
 Press F1 for the debug overlay: it names the active map, shows how many assets
 were registered, and reports whether the latest reload succeeded. Release builds

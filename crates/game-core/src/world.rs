@@ -1,5 +1,5 @@
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::{Vec2, Vec4};
 
@@ -8,6 +8,56 @@ use crate::backend::TextureHandle;
 pub trait Component: 'static {}
 
 impl<T: 'static> Component for T {}
+
+/// Beginner-authored string tags attached to one entity.
+///
+/// Tags intentionally use names rather than Rust types so high-level content
+/// can describe a new kind of actor without declaring a component struct.
+#[derive(Clone, Debug, Default)]
+pub struct Tags(pub HashSet<String>);
+
+impl Tags {
+    pub fn has(&self, tag: &str) -> bool {
+        self.0.contains(tag)
+    }
+}
+
+/// Small, named values attached to an entity by beginner prefab builders.
+///
+/// This is deliberately a narrow, non-generic vocabulary: content can add
+/// data without having to introduce a Rust type or component implementation.
+#[derive(Clone, Debug, Default)]
+pub struct NamedValues {
+    floats: HashMap<String, f32>,
+    flags: HashMap<String, bool>,
+}
+
+impl NamedValues {
+    pub fn get_f32(&self, key: &str) -> Option<f32> {
+        self.floats.get(key).copied()
+    }
+
+    pub fn set_f32(&mut self, key: impl Into<String>, value: f32) {
+        self.floats.insert(key.into(), value);
+    }
+
+    pub fn get_flag(&self, key: &str) -> bool {
+        self.flags.get(key).copied().unwrap_or(false)
+    }
+
+    pub fn set_flag(&mut self, key: impl Into<String>, value: bool) {
+        self.flags.insert(key.into(), value);
+    }
+}
+
+impl From<HashMap<String, f32>> for NamedValues {
+    fn from(floats: HashMap<String, f32>) -> Self {
+        Self {
+            floats,
+            flags: HashMap::new(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Transform {
@@ -197,6 +247,12 @@ impl ComponentStores {
             .expect("component store TypeId must match stored component type")
     }
 
+    fn existing_store_mut<T: Component>(&mut self) -> Option<&mut ComponentStore<T>> {
+        self.stores
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|store| store.as_any_mut().downcast_mut())
+    }
+
     fn remove_entity(&mut self, id: EntityId) {
         for store in self.stores.values_mut() {
             store.remove_entity(id);
@@ -340,6 +396,21 @@ impl World {
         self.components.store_mut::<T>().entries.get_mut(&id)
     }
 
+    /// Internal raw component access used by the query parameter implementation.
+    ///
+    /// Query registration proves that the pointer will not alias another
+    /// extracted parameter before it is converted back to a reference.
+    pub(crate) fn component_ptr<T: Component>(&mut self, id: EntityId) -> Option<*mut T> {
+        if !self.is_alive(id) {
+            return None;
+        }
+        self.components
+            .existing_store_mut::<T>()?
+            .entries
+            .get_mut(&id)
+            .map(|component| component as *mut T)
+    }
+
     pub fn remove<T: Component>(&mut self, id: EntityId) -> Option<T> {
         if !self.is_alive(id) {
             return None;
@@ -417,7 +488,8 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use super::{Entity, Transform, Velocity, World};
+    use super::{Entity, NamedValues, Tags, Transform, Velocity, World};
+    use std::collections::HashSet;
 
     #[test]
     fn despawn_invalidates_old_ids() {
@@ -510,5 +582,29 @@ mod tests {
             world.remove_resource::<String>(),
             Some(String::from("next"))
         );
+    }
+
+    #[test]
+    fn beginner_tags_and_named_values_are_ordinary_components() {
+        let mut world = World::new();
+        let id = world.spawn(
+            Entity::new(glam::Vec2::ZERO)
+                .with(Tags(HashSet::from(["explosive".to_owned()])))
+                .with(NamedValues::from(std::collections::HashMap::from([(
+                    "fuse".to_owned(),
+                    3.0,
+                )]))),
+        );
+
+        assert!(world.get::<Tags>(id).unwrap().has("explosive"));
+        assert_eq!(
+            world.get::<NamedValues>(id).unwrap().get_f32("fuse"),
+            Some(3.0)
+        );
+
+        let values = world.get_mut::<NamedValues>(id).unwrap();
+        values.set_flag("armed", true);
+        assert!(values.get_flag("armed"));
+        assert!(!values.get_flag("missing"));
     }
 }

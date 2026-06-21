@@ -10,7 +10,10 @@ pub use game_ai::{AiController, ChaseTarget, PathFollow, Patrol};
 pub use game_combat::{Faction, FactionId, Health, MeleeAttack};
 pub use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
 pub use game_core::camera::Camera2D;
-pub use game_core::input::{ActionId, Axis2dId, GamepadAxis, GamepadButton, Key, MouseButton};
+pub use game_core::input::{
+    ActionId, Axis2dId, GamepadAxis, GamepadButton, Input, Key, MouseButton,
+};
+pub use game_core::query::{DeltaTime, Query, Res, ResMut, With, Without};
 pub use game_core::world::{Component, EntityId, Sprite, Transform, Velocity};
 pub use game_map::{MapCell, cell};
 pub use game_physics::Collider;

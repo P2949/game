@@ -2,13 +2,14 @@
 
 use game_combat::Health;
 use game_core::builder::PropertyBag;
-use game_core::world::{EntityId, Velocity};
+use game_core::world::{EntityId, Tags, Velocity};
 use glam::Vec2;
 
 use crate::assets::SoundRef;
 use crate::beginner::actors::{
     CollectSound, DespawnOnCollect, Enemy, HealValue, Pickup, Player, ScoreValue,
 };
+use crate::beginner::events::{ActorToken, EventActor};
 use crate::context::GameCtx;
 
 const PROJECTILE_DIRECTION_X: &str = "beginner/projectile_direction_x";
@@ -66,6 +67,18 @@ impl<'g, 'a, 'w> PlayerActor<'g, 'a, 'w> {
             return false;
         };
         self.game.damage_entity(id, amount)
+    }
+
+    /// Damages the player only when they are within `range` of `point`.
+    pub fn damage_if_near(&mut self, point: Vec2, range: f32, amount: i32) -> bool {
+        let Some(position) = self.position() else {
+            return false;
+        };
+        let range = range.max(0.0);
+        if position.distance_squared(point) > range * range {
+            return false;
+        }
+        self.damage(amount)
     }
 
     pub fn kill(&mut self) {
@@ -285,6 +298,81 @@ pub struct PickupCollection<'g, 'a, 'w> {
     filter: PickupFilter,
 }
 
+/// A collection of actors selected by a content-authored string tag.
+///
+/// This keeps custom rules at the beginner surface: content selects actors by
+/// the same names it used in `.tag("...")`, without naming engine entities or
+/// components.
+pub struct TaggedActors<'g, 'a, 'w> {
+    game: &'g mut GameCtx<'a, 'w>,
+    tag: String,
+    near: Option<(Vec2, f32)>,
+}
+
+impl<'g, 'a, 'w> TaggedActors<'g, 'a, 'w> {
+    pub(crate) fn new(game: &'g mut GameCtx<'a, 'w>, tag: impl Into<String>) -> Self {
+        Self {
+            game,
+            tag: tag.into(),
+            near: None,
+        }
+    }
+
+    /// Keeps only actors within `range` world units of `point`.
+    pub fn near(mut self, point: Vec2, range: f32) -> Self {
+        self.near = Some((point, range.max(0.0)));
+        self
+    }
+
+    pub fn count(&self) -> usize {
+        self.ids().len()
+    }
+
+    /// Runs a custom rule for every currently matching actor.
+    pub fn for_each(&mut self, mut f: impl FnMut(&mut EventActor<'_, 'a, 'w>)) {
+        for id in self.ids() {
+            f(&mut EventActor::new(self.game, ActorToken::new(id)));
+        }
+    }
+
+    /// Damages all matching actors and returns how many had health to damage.
+    pub fn damage(&mut self, amount: i32) -> usize {
+        self.ids()
+            .into_iter()
+            .filter(|id| self.game.damage_entity(*id, amount))
+            .count()
+    }
+
+    /// Queues removal of all matching actors and returns how many were queued.
+    pub fn despawn(&mut self) -> usize {
+        let ids = self.ids();
+        let mut commands = self.game.commands();
+        for id in &ids {
+            commands.despawn(*id);
+        }
+        ids.len()
+    }
+
+    fn ids(&self) -> Vec<EntityId> {
+        self.game
+            .entities_with::<Tags>()
+            .into_iter()
+            .filter(|id| {
+                self.game
+                    .component::<Tags>(*id)
+                    .is_some_and(|tags| tags.has(&self.tag))
+            })
+            .filter(|id| {
+                self.near.is_none_or(|(point, range)| {
+                    self.game
+                        .position(*id)
+                        .is_some_and(|position| position.distance_squared(point) <= range * range)
+                })
+            })
+            .collect()
+    }
+}
+
 impl<'g, 'a, 'w> PickupCollection<'g, 'a, 'w> {
     pub(crate) fn new(game: &'g mut GameCtx<'a, 'w>) -> Self {
         Self {
@@ -426,6 +514,11 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub fn pickups(&mut self) -> PickupCollection<'_, 'a, 'w> {
         PickupCollection::new(self)
+    }
+
+    /// All actors carrying a tag authored with a prefab's `.tag("...")` call.
+    pub fn actors_tagged(&mut self, tag: &str) -> TaggedActors<'_, 'a, 'w> {
+        TaggedActors::new(self, tag)
     }
 
     pub fn collect_pickups_near_player(&mut self, range: f32) -> usize {

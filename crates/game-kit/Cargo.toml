@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description.workspace = true
 
 # The content-authoring facade. Content crates depend on this crate (plus anyhow
 # and glam) and nothing else. It wraps the engine-neutral gameplay crates behind

@@ -385,6 +385,39 @@ fn script_like_custom_rules_demo_stays_ecs_free() {
 }
 
 #[test]
+fn flag_builders_delegate_to_independent_behaviors() {
+    let root = workspace_root();
+    let defaults = fs::read_to_string(root.join("crates/game-kit/src/beginner/defaults.rs"))
+        .expect("failed to read top-down defaults builder");
+    for required in [
+        "app.use_behavior(MovementBehavior",
+        "app.use_behavior(MeleeCombatBehavior",
+        "app.use_behavior(EnemyChaseBehavior",
+        "app.use_behavior(CollisionBehavior",
+        "app.use_behavior(CameraFollowBehavior",
+    ] {
+        assert!(
+            defaults.contains(required),
+            "TopDownGameAuthor::build should delegate through {required:?}"
+        );
+    }
+
+    let rules = fs::read_to_string(root.join("crates/game-kit/src/beginner/rules.rs"))
+        .expect("failed to read rules builder");
+    for required in [
+        "app.use_behavior(CollectPickupsBehavior)",
+        "app.use_behavior(ProjectileMovementBehavior)",
+        "app.use_behavior(SpawnerBehavior)",
+        "app.use_behavior(HighLevelUiBehavior",
+    ] {
+        assert!(
+            rules.contains(required),
+            "RulesAuthor::build should delegate through {required:?}"
+        );
+    }
+}
+
+#[test]
 fn content_tests_use_layered_testing_preludes() {
     for crate_name in ["simple-content", "arena-content"] {
         let tests_dir = workspace_root().join(format!("crates/{crate_name}/tests"));
@@ -593,6 +626,15 @@ fn beginner_docs_use_named_assets_before_typed_or_advanced_sections() {
             "content-authoring index should not expose advanced detail {forbidden:?}"
         );
     }
+
+    let custom_tags = fs::read_to_string(root.join("docs/cookbook/custom-tags-and-timers.md"))
+        .expect("failed to read custom tags cookbook page");
+    for required in ["actors_tagged", ".tag(", ".data("] {
+        assert!(
+            custom_tags.contains(required),
+            "custom tags cookbook page should demonstrate {required:?}"
+        );
+    }
 }
 
 #[test]
@@ -654,6 +696,7 @@ fn no_rust_experience_tutorial_course_stays_complete_and_beginner_first() {
         "08-add-sound-and-music.md",
         "09-add-ui-and-menu.md",
         "10-package-your-demo.md",
+        "11-custom-behavior.md",
     ];
 
     for chapter in chapters {

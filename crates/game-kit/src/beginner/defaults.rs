@@ -1,11 +1,14 @@
 //! Beginner default game bundles.
 
+use anyhow::Result;
+
+use game_ai::ChaseTarget;
 use game_core::backend::SoundHandle;
 use game_core::input::{ActionId, Axis2dId};
 use game_core::world::{EntityId, Velocity};
 use glam::{vec2, vec4};
 
-use crate::app::GameApp;
+use crate::app::{GameApp, GamePlugin};
 use crate::beginner::actors::{Enemy, FacingDirection, Player, PlayerMovement, Speed};
 use crate::beginner::animation::{Animation, AnimationSet};
 use crate::beginner::combat::MeleeCombatConfig;
@@ -87,7 +90,6 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             .menu_navigation(controls.menu_up, controls.menu_down, controls.menu_accept)
             .debug_kill(controls.debug_die)
             .debug_toggle(controls.debug_overlay)
-            .debug_restart(controls.reset)
             .zoom(controls.zoom_in, controls.zoom_out)
     }
 
@@ -227,15 +229,10 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
 
     pub fn build(self) {
         let app = self.app;
-        app.on_start(startup_simple_game);
-        let menu_navigation = self.menu_navigation;
-        app.on_start(move |game| {
-            game.init_resource::<UiFocus>();
-            if let Some((up, down, accept)) = menu_navigation {
-                game.insert_resource(UiNavigation::new(up, down, accept));
-            }
-            Ok(())
-        });
+        app.use_behavior(SimpleGameStartupBehavior {
+            menu_navigation: self.menu_navigation,
+        })
+        .expect("simple game startup behavior should register");
 
         if self.debug_overlay.is_some() {
             app.configure_debug_overlay(|overlay| overlay.enabled = false);
@@ -250,36 +247,34 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             debug_restart: self.debug_restart,
             attack: self.attack,
         };
-        app.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
-            state_input_system(game, state_actions);
-        });
+        app.use_behavior(StateInputBehavior {
+            actions: state_actions,
+        })
+        .expect("state input behavior should register");
 
-        if self.movement.is_some() {
-            app.every_active_tick::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, _dt| {
-                game.drive_input::<PlayerMovement, Speed>();
-            });
+        if let Some(axis) = self.movement {
+            app.use_behavior(MovementBehavior { axis })
+                .expect("movement behavior should register");
         }
 
         if self.player_directional_animation || self.directional_attack_animation {
-            app.every_active_tick::<SimpleGameState>(update_player_facing_direction_system);
+            app.use_behavior(PlayerFacingBehavior)
+                .expect("player-facing behavior should register");
         }
 
         if self.enemy_chase {
-            app.every_active_tick::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
-                game.chase_first::<Player>(dt);
-            });
+            app.use_behavior(EnemyChaseBehavior::default())
+                .expect("enemy chase behavior should register");
         }
 
         if self.enemy_patrol {
-            app.every_active_tick::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
-                game.run_patrol(dt);
-            });
+            app.use_behavior(EnemyPatrolBehavior)
+                .expect("enemy patrol behavior should register");
         }
 
         if self.collision {
-            app.every_active_tick::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
-                game.move_and_collide(dt);
-            });
+            app.use_behavior(CollisionBehavior)
+                .expect("collision behavior should register");
         }
 
         if self.melee_combat {
@@ -291,9 +286,8 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
                     player_attack_animation: self.attack_animation,
                     directional_player_attack_animation: self.directional_attack_animation,
                 };
-                app.every_active_tick::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
-                    game.run_melee_combat(config, dt);
-                });
+                app.use_behavior(MeleeCombatBehavior { config })
+                    .expect("melee combat behavior should register");
             } else {
                 log::warn!("with_melee_combat() was enabled but no attack action was configured");
             }
@@ -301,12 +295,11 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
 
         if self.directional_attack_animation && !self.melee_combat {
             if let Some(attack) = self.attack {
-                let fallback = self.attack_animation;
-                app.every_active_tick::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, _dt| {
-                    if game.pressed(attack) {
-                        game.play_player_attack_animation(true, fallback);
-                    }
-                });
+                app.use_behavior(DirectionalAttackBehavior {
+                    attack,
+                    fallback: self.attack_animation,
+                })
+                .expect("directional attack behavior should register");
             } else {
                 log::warn!(
                     "with_directional_attack_animation() was enabled but no attack action was configured"
@@ -315,49 +308,291 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
         }
 
         if self.player_animation_by_movement {
-            app.every_active_frame::<SimpleGameState>(player_animation_by_movement_system);
+            app.use_behavior(PlayerAnimationByMovementBehavior)
+                .expect("player animation behavior should register");
         }
 
         if self.enemy_animation_by_movement {
-            app.every_active_frame::<SimpleGameState>(enemy_animation_by_movement_system);
+            app.use_behavior(EnemyAnimationByMovementBehavior)
+                .expect("enemy animation behavior should register");
         }
 
         if self.player_directional_animation {
-            app.every_active_frame::<SimpleGameState>(player_directional_animation_system);
+            app.use_behavior(PlayerDirectionalAnimationBehavior)
+                .expect("player directional animation behavior should register");
         }
 
         if self.enemy_directional_animation {
-            app.every_active_frame::<SimpleGameState>(enemy_directional_animation_system);
+            app.use_behavior(EnemyDirectionalAnimationBehavior)
+                .expect("enemy directional animation behavior should register");
         }
 
-        app.every_active_frame::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
-            game.update_animations(dt);
-        });
+        app.use_behavior(AnimationUpdateBehavior)
+            .expect("animation update behavior should register");
 
-        app.every_tick(death_state_system);
+        app.use_behavior(DeathStateBehavior)
+            .expect("death state behavior should register");
 
-        if self.zoom.is_some() || self.camera_follow {
-            let zoom = self.zoom;
-            let camera_follow = self.camera_follow;
-            app.every_frame(move |game: &mut GameCtx<'_, '_>, dt| {
-                if let Some((zoom_in, zoom_out)) = zoom {
-                    game.zoom_camera_from_actions(zoom_in, zoom_out, dt);
-                }
-                if camera_follow {
-                    game.camera_follow_first::<Player>();
-                }
-            });
+        if let Some((zoom_in, zoom_out)) = self.zoom {
+            app.use_behavior(CameraZoomBehavior { zoom_in, zoom_out })
+                .expect("camera zoom behavior should register");
+        }
+        if self.camera_follow {
+            app.use_behavior(CameraFollowBehavior)
+                .expect("camera follow behavior should register");
         }
 
         if self.pause_death_ui {
-            app.draw_ui(pause_death_ui_system);
+            app.use_behavior(PauseDeathUiBehavior)
+                .expect("pause and death UI behavior should register");
         }
 
-        app.every_frame(|game: &mut GameCtx<'_, '_>, dt| {
-            game.update_camera_shake(dt);
-        });
+        app.use_behavior(CameraShakeBehavior)
+            .expect("camera shake behavior should register");
 
         app.fixed_systems_are_pause_guarded();
+    }
+}
+
+/// Installs the beginner state and spawns the start map.
+pub struct SimpleGameStartupBehavior {
+    pub menu_navigation: Option<(ActionId, ActionId, ActionId)>,
+}
+
+impl GamePlugin for SimpleGameStartupBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.on_start(startup_simple_game);
+        let menu_navigation = self.menu_navigation;
+        game.on_start(move |game| {
+            game.init_resource::<UiFocus>();
+            if let Some((up, down, accept)) = menu_navigation {
+                game.insert_resource(UiNavigation::new(up, down, accept));
+            }
+            Ok(())
+        });
+        Ok(())
+    }
+}
+
+pub(crate) struct StateInputBehavior {
+    actions: StateActions,
+}
+
+impl GamePlugin for StateInputBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let actions = self.actions;
+        game.every_tick(move |game, _dt| state_input_system(game, actions));
+        Ok(())
+    }
+}
+
+/// Drives a player movement axis while the simple game is active.
+pub struct MovementBehavior {
+    pub axis: Axis2dId,
+}
+
+impl GamePlugin for MovementBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let _axis = self.axis;
+        game.every_active_tick::<SimpleGameState>(|game, _dt| {
+            game.drive_input::<PlayerMovement, Speed>();
+        });
+        Ok(())
+    }
+}
+
+/// Makes enemies chase the player while the simple game is active.
+///
+/// Set `range` to override each chasing prefab's authored aggro radius; leave
+/// it as `None` to preserve the prefab's own `.chase_range(...)` setting.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EnemyChaseBehavior {
+    pub range: Option<f32>,
+}
+
+impl GamePlugin for EnemyChaseBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let range = self.range.map(|range| range.max(0.0));
+        game.every_active_tick::<SimpleGameState>(move |game, dt| {
+            if let Some(range) = range {
+                for id in game.entities_with::<ChaseTarget>() {
+                    if let Some(chase) = game.component_mut::<ChaseTarget>(id) {
+                        chase.aggro_radius = range;
+                    }
+                }
+            }
+            game.chase_first::<Player>(dt);
+        });
+        Ok(())
+    }
+}
+
+/// Advances authored enemy patrol paths while the simple game is active.
+pub struct EnemyPatrolBehavior;
+
+impl GamePlugin for EnemyPatrolBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_active_tick::<SimpleGameState>(|game, dt| game.run_patrol(dt));
+        Ok(())
+    }
+}
+
+/// Applies collision-aware movement while the simple game is active.
+pub struct CollisionBehavior;
+
+impl GamePlugin for CollisionBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_active_tick::<SimpleGameState>(|game, dt| game.move_and_collide(dt));
+        Ok(())
+    }
+}
+
+/// Runs the standard player/enemy melee rules while the simple game is active.
+pub struct MeleeCombatBehavior {
+    pub config: MeleeCombatConfig,
+}
+
+impl GamePlugin for MeleeCombatBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let config = self.config;
+        game.every_active_tick::<SimpleGameState>(move |game, dt| {
+            game.run_melee_combat(config, dt);
+        });
+        Ok(())
+    }
+}
+
+/// Tracks the latest movement direction for directional player animations.
+pub struct PlayerFacingBehavior;
+
+impl GamePlugin for PlayerFacingBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_active_tick::<SimpleGameState>(update_player_facing_direction_system);
+        Ok(())
+    }
+}
+
+/// Plays directional player attack clips when the configured action is pressed.
+pub struct DirectionalAttackBehavior {
+    pub attack: ActionId,
+    pub fallback: Option<&'static str>,
+}
+
+impl GamePlugin for DirectionalAttackBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let attack = self.attack;
+        let fallback = self.fallback;
+        game.every_active_tick::<SimpleGameState>(move |game, _dt| {
+            if game.pressed(attack) {
+                game.play_player_attack_animation(true, fallback);
+            }
+        });
+        Ok(())
+    }
+}
+
+/// Updates ordinary player walk and idle animations every frame.
+pub struct PlayerAnimationByMovementBehavior;
+
+impl GamePlugin for PlayerAnimationByMovementBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_active_frame::<SimpleGameState>(player_animation_by_movement_system);
+        Ok(())
+    }
+}
+
+/// Updates ordinary enemy walk and idle animations every frame.
+pub struct EnemyAnimationByMovementBehavior;
+
+impl GamePlugin for EnemyAnimationByMovementBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_active_frame::<SimpleGameState>(enemy_animation_by_movement_system);
+        Ok(())
+    }
+}
+
+/// Updates player directional walk animations every frame.
+pub struct PlayerDirectionalAnimationBehavior;
+
+impl GamePlugin for PlayerDirectionalAnimationBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_active_frame::<SimpleGameState>(player_directional_animation_system);
+        Ok(())
+    }
+}
+
+/// Updates enemy directional walk animations every frame.
+pub struct EnemyDirectionalAnimationBehavior;
+
+impl GamePlugin for EnemyDirectionalAnimationBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_active_frame::<SimpleGameState>(enemy_directional_animation_system);
+        Ok(())
+    }
+}
+
+/// Advances all configured sprite animations while the simple game is active.
+pub struct AnimationUpdateBehavior;
+
+impl GamePlugin for AnimationUpdateBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_active_frame::<SimpleGameState>(|game, dt| game.update_animations(dt));
+        Ok(())
+    }
+}
+
+/// Keeps the camera centered on the player each frame.
+pub struct CameraFollowBehavior;
+
+impl GamePlugin for CameraFollowBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_frame(|game, _dt| game.camera_follow_first::<Player>());
+        Ok(())
+    }
+}
+
+/// Applies zoom actions each frame.
+pub struct CameraZoomBehavior {
+    pub zoom_in: ActionId,
+    pub zoom_out: ActionId,
+}
+
+impl GamePlugin for CameraZoomBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let zoom_in = self.zoom_in;
+        let zoom_out = self.zoom_out;
+        game.every_frame(move |game, dt| game.zoom_camera_from_actions(zoom_in, zoom_out, dt));
+        Ok(())
+    }
+}
+
+/// Draws the simple game's pause and death notices.
+pub struct PauseDeathUiBehavior;
+
+impl GamePlugin for PauseDeathUiBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.draw_ui(pause_death_ui_system);
+        Ok(())
+    }
+}
+
+/// Keeps the `player_dead` state field synchronized with player health.
+pub struct DeathStateBehavior;
+
+impl GamePlugin for DeathStateBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(death_state_system);
+        Ok(())
+    }
+}
+
+/// Advances camera-shake effects every frame.
+pub struct CameraShakeBehavior;
+
+impl GamePlugin for CameraShakeBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_frame(|game, dt| game.update_camera_shake(dt));
+        Ok(())
     }
 }
 
@@ -397,6 +632,7 @@ fn state_input_system(game: &mut GameCtx<'_, '_>, actions: StateActions) {
     }
 
     if development_reload_enabled() && pressed(game, actions.reload) {
+        game.reload_tuning_if_configured_or_log();
         game.reload_current_map_or_log();
         state = SimpleGameState::default();
     }

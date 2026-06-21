@@ -37,6 +37,15 @@ pub enum TextureRef {
     Key(String),
 }
 
+/// Values accepted by beginner `.sprite(...)` methods.
+#[diagnostic::on_unimplemented(
+    message = "`.sprite(...)` needs a texture name registered with `.texture(\"name\", \"path\")` or a `TextureHandle`",
+    label = "this is not a texture reference"
+)]
+pub trait IntoTextureRef {
+    fn into_texture_ref(self) -> TextureRef;
+}
+
 impl From<TextureHandle> for TextureRef {
     fn from(handle: TextureHandle) -> Self {
         Self::Handle(handle)
@@ -52,6 +61,30 @@ impl From<&str> for TextureRef {
 impl From<String> for TextureRef {
     fn from(key: String) -> Self {
         Self::Key(key)
+    }
+}
+
+impl IntoTextureRef for TextureRef {
+    fn into_texture_ref(self) -> TextureRef {
+        self
+    }
+}
+
+impl IntoTextureRef for TextureHandle {
+    fn into_texture_ref(self) -> TextureRef {
+        self.into()
+    }
+}
+
+impl IntoTextureRef for &str {
+    fn into_texture_ref(self) -> TextureRef {
+        self.into()
+    }
+}
+
+impl IntoTextureRef for String {
+    fn into_texture_ref(self) -> TextureRef {
+        self.into()
     }
 }
 

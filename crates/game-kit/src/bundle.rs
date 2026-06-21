@@ -63,6 +63,8 @@ impl_bundle_for_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
 impl_bundle_for_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
 impl_bundle_for_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
 impl_bundle_for_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q);
+impl_bundle_for_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R);
+impl_bundle_for_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S);
 
 #[cfg(test)]
 mod tests {

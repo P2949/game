@@ -93,7 +93,30 @@ game.for_each3_copy_mut::<PlayerController, MoveSpeed, Velocity>(
 
 Use the explicit `for_each*` names when they make borrowing or copy behavior
 clearer. The facade intentionally does not provide query macros or automatic
-system-parameter injection.
+system-parameter injection for beginner content. Advanced top-level functions
+can additionally use typed query parameters:
+
+```rust
+fn move_player(
+    mut players: Query<(&mut Transform, &Speed), With<Player>>,
+    input: Res<Input>,
+    dt: DeltaTime,
+) {
+    let _mouse = input.mouse_position();
+    for (_, (transform, speed)) in &mut players {
+        transform.pos.x += speed.0 * dt.0;
+    }
+}
+
+game.fixed_params(move_player)?;
+```
+
+`fixed_params` and `update_params` validate all component and resource
+accesses while the plugin is built. A mutable query cannot coexist with another
+query or filter that reads or mutates the same component type; split that logic
+into two systems or query different component types. `With<T>` and
+`Without<T>` filter entities, `Res<T>` reads a resource (including the
+frame's `Input`), and `ResMut<T>` mutates a world resource.
 
 Startup systems are fallible because content initialization can fail. Fixed,
 update, and UI systems are infallible by design. Runtime operations that should

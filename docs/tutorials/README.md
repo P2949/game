@@ -23,12 +23,15 @@ using it as a beginner starting point.
 8. [Add sound and music](08-add-sound-and-music.md)
 9. [Add UI and menu](09-add-ui-and-menu.md)
 10. [Package your demo](10-package-your-demo.md)
-11. [Fast iteration](11-fast-iteration.md)
+11. [Custom behavior](11-custom-behavior.md)
+12. [Fast iteration](12-fast-iteration.md)
 
 Keep [common errors](common-errors.md) nearby while editing. The messages are
 written to point back to the builder call that fixes the problem.
 
 Every chapter includes a goal, files to edit, full code, an explanation, common
-errors, and a next step. For focused "How do I add X?" recipes, use the
-[cookbook](../cookbook/README.md). The older combat and animation pages remain
-as optional follow-up recipes once you have finished this course.
+errors, and a next step. The custom-behavior chapter is the bridge before you
+choose to graduate to a content crate or the deliberately advanced ECS path.
+For focused "How do I add X?" recipes, use the [cookbook](../cookbook/README.md).
+The older combat and animation pages remain as optional follow-up recipes once
+you have finished this course.

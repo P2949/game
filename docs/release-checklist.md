@@ -45,6 +45,32 @@ cp -r assets /tmp/game-package/
 ( cd /tmp/game-package && GAME_SMOKE_FRAMES=120 ./game )
 ```
 
+## crates.io preflight
+
+Only an authorized maintainer with crates.io credentials should perform this
+section. First run the package dry-runs in dependency order; they rewrite
+workspace path dependencies to their published versions and catch an invalid
+release graph before any real publish:
+
+```bash
+cargo publish -p game-core --dry-run
+cargo publish -p game-map --dry-run
+cargo publish -p game-combat --dry-run
+cargo publish -p game-audio --dry-run
+cargo publish -p game-platform-sdl --dry-run
+cargo publish -p game-renderer-vulkan --dry-run
+cargo publish -p game-ai --dry-run
+cargo publish -p game-physics --dry-run
+cargo publish -p game-runtime --dry-run
+cargo publish -p game-kit --dry-run
+cargo publish -p game-starter --dry-run
+```
+
+After every dependency is publicly available at the intended version, publish
+in the same order. Finally create a clean temporary project with
+`cargo add game-starter` and run its starter example before advertising the
+crates.io route in the tutorials.
+
 ## Manual smoke (interactive)
 
 Run `GAME_ASSET_DIR=assets cargo run -p game --release` and verify:

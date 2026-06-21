@@ -2,6 +2,7 @@
 name = "{{crate_name}}"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
-game-starter = { path = "{{game_path}}/crates/game-starter" }
+game-starter = {{game_starter_dependency}}

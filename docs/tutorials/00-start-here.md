@@ -3,12 +3,26 @@
 ## Goal
 
 Create the smallest possible one-file game project. You only need a Rust
-editor, Cargo, and this workspace; you do not need to learn ECS, lifetimes, or
-engine setup first.
+editor and Cargo; you do not need to clone this workspace or learn ECS,
+lifetimes, or engine setup first.
 
 ## Files to edit
 
-Create `src/main.rs` in a project that depends on `game-starter`.
+Create the project from anywhere:
+
+```bash
+cargo install cargo-generate
+cargo generate gh:P2949/game templates/simple-demo
+cd my-game
+cargo run
+```
+
+The generator asks for a project name and game title. It gives the project a
+git dependency on `game-starter`; the first build creates tiny placeholder
+textures you can replace later. If you already have a local checkout, the
+equivalent command is `cargo xtask new-demo my-game`.
+
+Then edit `src/main.rs`.
 
 ## Full code
 
@@ -35,9 +49,18 @@ which makes the program playable.
 
 ## Common errors
 
-If `game_starter` cannot be found, add a `game-starter` dependency to your
-project's `Cargo.toml`. If Cargo cannot run at all, install Rust from
-<https://rustup.rs> and restart your terminal.
+Before installing Rust packages or changing game code, install the graphics
+prerequisites for your operating system:
+
+- [Windows setup](../setup/windows.md)
+- [macOS setup](../setup/macos.md)
+- [Linux setup](../setup/linux.md)
+
+Then run `cargo xtask doctor` from a local repository checkout when you need a
+prerequisite check. If `game_starter` cannot be fetched, first check your
+network connection and the generated `Cargo.toml` git dependency. If Cargo
+cannot run at all, install Rust from <https://rustup.rs> and restart your
+terminal.
 
 ## Next step
 

@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use game_combat::Health;
-use game_core::world::EntityId;
+use game_core::world::{EntityId, NamedValues, Tags};
 use glam::Vec2;
 
 use crate::beginner::collections::ScoreOps;
@@ -48,6 +48,27 @@ impl<'g, 'a, 'w> EventActor<'g, 'a, 'w> {
     /// The actor's current world position, when it still exists.
     pub fn position(&self) -> Option<Vec2> {
         self.game.position(self.token.id)
+    }
+
+    /// Reads a named numeric value configured with `.data("key", value)`.
+    pub fn data(&self, key: &str) -> Option<f32> {
+        self.game
+            .component::<NamedValues>(self.token.id)
+            .and_then(|values| values.get_f32(key))
+    }
+
+    /// Replaces a named numeric value, doing nothing if this actor has none.
+    pub fn set_data(&mut self, key: impl Into<String>, value: f32) {
+        if let Some(values) = self.game.component_mut::<NamedValues>(self.token.id) {
+            values.set_f32(key, value);
+        }
+    }
+
+    /// Returns whether this actor carries a particular author-defined tag.
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.game
+            .component::<Tags>(self.token.id)
+            .is_some_and(|tags| tags.has(tag))
     }
 
     /// Applies damage and reports whether the actor had health to damage.

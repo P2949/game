@@ -13,6 +13,7 @@ use anyhow::{Context, Result, anyhow};
 use game_core::builder::{GameBuilder, PrefabValidator};
 use game_core::commands::CommandQueue;
 use game_core::input::ActionId;
+use game_core::query::ParamSystem;
 use game_core::world::{EntityId, Transform};
 use game_map::GameMap;
 use game_physics::Collider;
@@ -37,11 +38,12 @@ use crate::beginner::rules::RulesAuthor;
 use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
 use crate::beginner::state::SimpleGameState;
 use crate::beginner::time::MIN_TIMER_SECONDS;
+use crate::beginner::tuning::TuningFile;
 use crate::context::{GameCtx, StartupGameCtx};
 use crate::helpers::SimulationState;
 use crate::input::InputAuthor;
 use crate::map::{ContentRuntime, MapAuthor, PendingMap};
-use crate::prefab::PrefabAuthor;
+use crate::prefab::{IntoContentName, PrefabAuthor};
 use crate::system::{GameSystem, StartupSystem};
 
 /// A deferred prefab component requirement: applies one
@@ -105,6 +107,15 @@ impl<'app> GameApp<'app> {
         }
     }
 
+    /// Adds one independently composable game behavior.
+    ///
+    /// Beginner presets use this internally, and content can use the same
+    /// behavior types when it needs a custom combination instead of a whole
+    /// preset builder.
+    pub fn use_behavior(&mut self, behavior: impl GamePlugin) -> Result<()> {
+        behavior.build(self)
+    }
+
     /// Declares assets, returning whatever the closure builds (typically the
     /// content's asset-handle struct).
     pub fn assets<R>(&mut self, f: impl FnOnce(&mut AssetAuthor<'_>) -> Result<R>) -> Result<R> {
@@ -121,6 +132,18 @@ impl<'app> GameApp<'app> {
     /// `assets/music` filenames with friendly keys.
     pub fn assets_from_folders(&mut self) -> AssetFolderAuthor<'_> {
         AssetFolderAuthor::new(self.asset_bag())
+    }
+
+    /// Loads named numeric values from an `assets/` RON file and installs the
+    /// same file as a runtime resource for development-time reload support.
+    pub fn tuning_from_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<TuningFile> {
+        let tuning = TuningFile::from_file(path)?;
+        let startup_tuning = tuning.clone();
+        self.on_start(move |game| {
+            game.insert_resource(startup_tuning.clone());
+            Ok(())
+        });
+        Ok(tuning)
     }
 
     pub(crate) fn resolve_texture(&self, key: &str) -> Result<game_core::backend::TextureHandle> {
@@ -166,11 +189,11 @@ impl<'app> GameApp<'app> {
     /// Defines a prefab under `name`.
     pub fn prefab(
         &mut self,
-        name: impl Into<String>,
+        name: impl IntoContentName,
         build: impl FnOnce(&mut PrefabAuthor<'_>) -> Result<()>,
     ) -> Result<()> {
         let mut author = PrefabAuthor::new(
-            name.into(),
+            name.into_content_name(),
             self.builder.prefabs_mut(),
             &mut self.prefab_requirements,
         );
@@ -178,52 +201,52 @@ impl<'app> GameApp<'app> {
     }
 
     /// Begins a beginner-friendly player prefab.
-    pub fn player_prefab(&mut self, name: impl Into<String>) -> PlayerPrefabAuthor<'_, 'app> {
-        PlayerPrefabAuthor::new(self, name.into())
+    pub fn player_prefab(&mut self, name: impl IntoContentName) -> PlayerPrefabAuthor<'_, 'app> {
+        PlayerPrefabAuthor::new(self, name.into_content_name())
     }
 
     /// Begins a beginner-friendly enemy prefab.
-    pub fn enemy_prefab(&mut self, name: impl Into<String>) -> EnemyPrefabAuthor<'_, 'app> {
-        EnemyPrefabAuthor::new(self, name.into())
+    pub fn enemy_prefab(&mut self, name: impl IntoContentName) -> EnemyPrefabAuthor<'_, 'app> {
+        EnemyPrefabAuthor::new(self, name.into_content_name())
     }
 
     /// Begins a beginner-friendly pickup prefab.
-    pub fn pickup_prefab(&mut self, name: impl Into<String>) -> PickupPrefabAuthor<'_, 'app> {
-        PickupPrefabAuthor::new(self, name.into())
+    pub fn pickup_prefab(&mut self, name: impl IntoContentName) -> PickupPrefabAuthor<'_, 'app> {
+        PickupPrefabAuthor::new(self, name.into_content_name())
     }
 
     /// Begins a beginner-friendly door prefab.
-    pub fn door_prefab(&mut self, name: impl Into<String>) -> DoorPrefabAuthor<'_, 'app> {
-        DoorPrefabAuthor::new(self, name.into())
+    pub fn door_prefab(&mut self, name: impl IntoContentName) -> DoorPrefabAuthor<'_, 'app> {
+        DoorPrefabAuthor::new(self, name.into_content_name())
     }
 
     /// Begins a non-solid area prefab that can drive enter/exit callbacks.
-    pub fn area_prefab(&mut self, name: impl Into<String>) -> AreaPrefabAuthor<'_, 'app> {
-        AreaPrefabAuthor::new(self, name.into())
+    pub fn area_prefab(&mut self, name: impl IntoContentName) -> AreaPrefabAuthor<'_, 'app> {
+        AreaPrefabAuthor::new(self, name.into_content_name())
     }
 
     /// Alias for [`Self::area_prefab`].
-    pub fn trigger_prefab(&mut self, name: impl Into<String>) -> AreaPrefabAuthor<'_, 'app> {
+    pub fn trigger_prefab(&mut self, name: impl IntoContentName) -> AreaPrefabAuthor<'_, 'app> {
         self.area_prefab(name)
     }
 
     /// Begins a non-solid checkpoint marker that rules can activate and use as
     /// a respawn position.
-    pub fn checkpoint_prefab(&mut self, name: impl Into<String>) -> AreaPrefabAuthor<'_, 'app> {
-        AreaPrefabAuthor::new_checkpoint(self, name.into())
+    pub fn checkpoint_prefab(&mut self, name: impl IntoContentName) -> AreaPrefabAuthor<'_, 'app> {
+        AreaPrefabAuthor::new_checkpoint(self, name.into_content_name())
     }
 
     /// Begins a beginner-friendly projectile prefab.
     pub fn projectile_prefab(
         &mut self,
-        name: impl Into<String>,
+        name: impl IntoContentName,
     ) -> ProjectilePrefabAuthor<'_, 'app> {
-        ProjectilePrefabAuthor::new(self, name.into())
+        ProjectilePrefabAuthor::new(self, name.into_content_name())
     }
 
     /// Begins a beginner-friendly spawner prefab.
-    pub fn spawner_prefab(&mut self, name: impl Into<String>) -> SpawnerPrefabAuthor<'_, 'app> {
-        SpawnerPrefabAuthor::new(self, name.into())
+    pub fn spawner_prefab(&mut self, name: impl IntoContentName) -> SpawnerPrefabAuthor<'_, 'app> {
+        SpawnerPrefabAuthor::new(self, name.into_content_name())
     }
 
     /// Begins configuring a beginner top-down game preset.
@@ -237,8 +260,8 @@ impl<'app> GameApp<'app> {
     }
 
     /// Begins declaring an in-code map.
-    pub fn map(&mut self, name: impl Into<String>) -> MapAuthor<'_, 'app> {
-        MapAuthor::in_code(self, name.into())
+    pub fn map(&mut self, name: impl IntoContentName) -> MapAuthor<'_, 'app> {
+        MapAuthor::in_code(self, name.into_content_name())
     }
 
     /// Begins declaring a map from an external RON document.
@@ -249,15 +272,15 @@ impl<'app> GameApp<'app> {
     /// Begins a beginner-friendly text map loaded from `assets/<path>`.
     pub fn map_from_text(
         &mut self,
-        name: impl Into<String>,
+        name: impl IntoContentName,
         path: impl Into<String>,
     ) -> MapAuthor<'_, 'app> {
-        MapAuthor::from_text(self, name.into(), path.into())
+        MapAuthor::from_text(self, name.into_content_name(), path.into())
     }
 
     /// Begins a text map named `<name>` from `assets/maps/<name>.txt`.
-    pub fn map_from_text_auto(&mut self, name: impl Into<String>) -> MapAuthor<'_, 'app> {
-        let name = name.into();
+    pub fn map_from_text_auto(&mut self, name: impl IntoContentName) -> MapAuthor<'_, 'app> {
+        let name = name.into_content_name();
         let path = format!("maps/{name}.txt");
         MapAuthor::from_text(self, name, path)
     }
@@ -265,10 +288,10 @@ impl<'app> GameApp<'app> {
     /// Begins a map imported from an LDtk project under `assets/<path>`.
     pub fn map_from_ldtk(
         &mut self,
-        name: impl Into<String>,
+        name: impl IntoContentName,
         path: impl Into<String>,
     ) -> MapAuthor<'_, 'app> {
-        MapAuthor::from_ldtk(self, name.into(), path.into())
+        MapAuthor::from_ldtk(self, name.into_content_name(), path.into())
     }
 
     /// Declares a named beginner scene.
@@ -356,9 +379,29 @@ impl<'app> GameApp<'app> {
         });
     }
 
-    /// Beginner alias for [`Self::fixed`].
-    pub fn every_tick(&mut self, system: impl GameSystem) {
-        self.fixed(system);
+    /// Registers an advanced fixed-timestep function whose arguments are
+    /// extracted from the current frame, such as a component Query or Res<Input>.
+    ///
+    /// This path validates all declared component and resource borrows while the
+    /// content plugin is built, before the schedule can run the system.
+    pub fn fixed_params<Marker>(&mut self, mut system: impl ParamSystem<Marker>) -> Result<()> {
+        system.validate_params()?;
+        self.builder.schedule_mut().add_fixed(move |ctx, dt| {
+            system.run_params(ctx.world, ctx.input, dt);
+        });
+        Ok(())
+    }
+
+    /// Registers a beginner fixed-timestep callback.
+    ///
+    /// Taking the callback's concrete signature, rather than only a trait
+    /// bound, lets Rust infer `game` and `dt` for a closure such as
+    /// `game.every_tick(|game, dt| { ... })`.
+    pub fn every_tick(&mut self, mut system: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static) {
+        self.builder.schedule_mut().add_fixed(move |ctx, dt| {
+            let mut game = GameCtx::new(ctx);
+            system(&mut game, dt);
+        });
     }
 
     /// Registers a fixed-timestep system that runs only while resource `S` is
@@ -374,12 +417,21 @@ impl<'app> GameApp<'app> {
         });
     }
 
-    /// Beginner alias for [`Self::fixed_active`].
-    pub fn every_active_tick<S>(&mut self, system: impl GameSystem)
-    where
+    /// Registers a beginner fixed-timestep callback while state `S` is active.
+    ///
+    /// Like [`Self::every_tick`], this accepts the concrete callback signature
+    /// so content closures keep their arguments inferred.
+    pub fn every_active_tick<S>(
+        &mut self,
+        mut system: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static,
+    ) where
         S: SimulationState + 'static,
     {
-        self.fixed_active::<S>(system);
+        self.every_tick(move |game, dt| {
+            if game.resource::<S>().is_some_and(SimulationState::active) {
+                system(game, dt);
+            }
+        });
     }
 
     /// Registers a per-frame update system.
@@ -390,9 +442,21 @@ impl<'app> GameApp<'app> {
         });
     }
 
-    /// Beginner alias for [`Self::update`].
-    pub fn every_frame(&mut self, system: impl GameSystem) {
-        self.update(system);
+    /// Registers an advanced frame-rate-paced parameter system.
+    pub fn update_params<Marker>(&mut self, mut system: impl ParamSystem<Marker>) -> Result<()> {
+        system.validate_params()?;
+        self.builder.schedule_mut().add_update(move |ctx, dt| {
+            system.run_params(ctx.world, ctx.input, dt);
+        });
+        Ok(())
+    }
+
+    /// Registers a beginner per-frame callback with inferred closure arguments.
+    pub fn every_frame(&mut self, mut system: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static) {
+        self.builder.schedule_mut().add_update(move |ctx, dt| {
+            let mut game = GameCtx::new(ctx);
+            system(&mut game, dt);
+        });
     }
 
     /// Registers an update system that runs only while resource `S` is present
@@ -408,12 +472,18 @@ impl<'app> GameApp<'app> {
         });
     }
 
-    /// Beginner alias for [`Self::update_active`].
-    pub fn every_active_frame<S>(&mut self, system: impl GameSystem)
-    where
+    /// Registers a beginner per-frame callback while state `S` is active.
+    pub fn every_active_frame<S>(
+        &mut self,
+        mut system: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static,
+    ) where
         S: SimulationState + 'static,
     {
-        self.update_active::<S>(system);
+        self.every_frame(move |game, dt| {
+            if game.resource::<S>().is_some_and(SimulationState::active) {
+                system(game, dt);
+            }
+        });
     }
 
     /// Registers a per-frame render-extraction system. (The runtime extracts

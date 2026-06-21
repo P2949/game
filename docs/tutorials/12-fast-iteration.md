@@ -40,6 +40,10 @@ Run a debug build, edit `assets/maps/level_1.txt`, save it, then press F5. The
 game reparses the current text map and respawns its objects with the same
 prefabs, legend, and tile theme.
 
+If your prefab values come from `game.tuning_from_file(...)`, F5 reloads that
+RON file first. The respawned actors then use the new health, speed, and damage
+values. See [Live tuning](../cookbook/live-tuning.md) for the complete pattern.
+
 Debug builds enable this automatically. For a release build, explicitly opt in:
 
 ```bash

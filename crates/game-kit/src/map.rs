@@ -27,6 +27,7 @@ use game_map::{
 use crate::app::GameApp;
 use crate::assets::TextureRef;
 use crate::bundle::vec2s;
+use crate::prefab::IntoContentName;
 
 /// Tile floor/wall sprites for a map. Re-exported from the engine so content can
 /// build a theme with the prelude's `Sprite` type: `TileTheme { floor, wall }`.
@@ -271,7 +272,7 @@ fn validate_game_map(
     Ok(())
 }
 
-fn beginner_asset_path(path: &str) -> PathBuf {
+pub(crate) fn beginner_asset_path(path: &str) -> PathBuf {
     let path = PathBuf::from(path);
     if path.is_absolute() {
         return path;
@@ -414,13 +415,13 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
     /// RON maps declare objects in the file).
     pub fn spawn(
         mut self,
-        id: impl Into<String>,
-        prefab: impl Into<String>,
+        id: impl IntoContentName,
+        prefab: impl IntoContentName,
         cell: MapCell,
     ) -> Self {
         match &mut self.pending.source {
             MapSource::InCode { objects, .. } | MapSource::Text { objects, .. } => {
-                objects.push((id.into(), prefab.into(), cell));
+                objects.push((id.into_content_name(), prefab.into_content_name(), cell));
             }
             MapSource::Ron { .. } => {
                 self.pending
@@ -439,10 +440,10 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
     /// Spawns a prefab wherever `symbol` appears in the tile rows. Symbols are
     /// treated as floor for collision. For example, `P` can mark the player start:
     /// `.tiles(["#P#"]).legend('P', "player")`.
-    pub fn legend(mut self, symbol: char, prefab: impl Into<String>) -> Self {
+    pub fn legend(mut self, symbol: char, prefab: impl IntoContentName) -> Self {
         match &mut self.pending.source {
             MapSource::InCode { legends, .. } | MapSource::Text { legends, .. } => {
-                legends.push((symbol, prefab.into()));
+                legends.push((symbol, prefab.into_content_name()));
             }
             MapSource::Ron { .. } => {
                 self.pending

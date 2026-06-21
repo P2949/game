@@ -20,6 +20,7 @@ use glam::{Vec2, Vec4};
 use crate::assets::AssetLookup;
 use crate::beginner::audio::AudioOps;
 use crate::beginner::debug::DebugIterationInfo;
+use crate::beginner::tuning::TuningFile;
 use crate::helpers::{InputDriven, MovementSpeed};
 use crate::map::{
     ContentRuntime, change_to_map_world, reset_to_start_map_world, restart_current_map_world,
@@ -570,6 +571,41 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         }
     }
 
+    /// Re-reads the tuning file registered with [`GameApp::tuning_from_file`](crate::GameApp::tuning_from_file).
+    ///
+    /// This updates the values used by future authoring/reload-aware spawns;
+    /// values already copied into existing entity components intentionally stay
+    /// unchanged until those entities are recreated.
+    pub fn reload_tuning(&mut self) -> Result<()> {
+        let tuning = self.resource_mut::<TuningFile>().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no tuning file is registered. Call game.tuning_from_file(\"tuning/game.ron\") during setup first."
+            )
+        })?;
+        tuning.reload()
+    }
+
+    /// Reloads tuning and logs a useful error instead of interrupting gameplay.
+    pub fn reload_tuning_or_log(&mut self) {
+        if let Err(error) = self.reload_tuning() {
+            log::error!("failed to reload tuning: {error:#}");
+        }
+    }
+
+    /// Reloads tuning when this game registered a tuning file, without logging
+    /// anything for games that use only literal prefab values.
+    ///
+    /// This lets the standard development reload action serve both text maps
+    /// and optional tuning files while preserving its quiet behavior for games
+    /// that never opted into tuning.
+    pub fn reload_tuning_if_configured_or_log(&mut self) -> bool {
+        if self.resource::<TuningFile>().is_none() {
+            return false;
+        }
+        self.reload_tuning_or_log();
+        true
+    }
+
     pub fn change_map(&mut self, map: &str) -> Result<()> {
         let map_id = change_to_map_world(self.inner.world, map)?;
         self.commands().change_map(map_id);
@@ -741,6 +777,7 @@ impl<'a, 'w> StartupGameCtx<'a, 'w> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::fs;
     use std::rc::Rc;
 
     use game_core::app::{Ctx, RenderFrame};
@@ -760,6 +797,7 @@ mod tests {
 
     use super::GameCtx;
     use crate::assets::AssetLookup;
+    use crate::beginner::tuning::TuningFile;
     use crate::map::ContentRuntime;
 
     #[derive(Clone, Copy)]
@@ -930,6 +968,68 @@ mod tests {
             .drain()
             .collect::<Vec<_>>();
         assert_eq!(commands, vec![Command::ChangeMap(MapId(1))]);
+    }
+
+    #[test]
+    fn reload_tuning_replaces_the_registered_values() {
+        let path = std::env::temp_dir().join(format!(
+            "game-kit-context-tuning-{}-{}.ron",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "{ \"slime.health\": 40.0 }").unwrap();
+
+        let mut world = World::new();
+        world.insert_resource(TuningFile::from_file(&path).unwrap());
+        fs::write(&path, "{ \"slime.health\": 75.0 }").unwrap();
+
+        with_game_ctx(&mut world, |game| game.reload_tuning().unwrap());
+
+        assert_eq!(
+            world
+                .get_resource::<TuningFile>()
+                .unwrap()
+                .int("slime.health")
+                .initial(),
+            75
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn optional_tuning_reload_is_quiet_without_tuning_and_reloads_when_configured() {
+        let mut world = World::new();
+        assert!(!with_game_ctx(&mut world, |game| {
+            game.reload_tuning_if_configured_or_log()
+        }));
+
+        let path = std::env::temp_dir().join(format!(
+            "game-kit-context-optional-tuning-{}-{}.ron",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "{ \"slime.health\": 40.0 }").unwrap();
+        world.insert_resource(TuningFile::from_file(&path).unwrap());
+        fs::write(&path, "{ \"slime.health\": 75.0 }").unwrap();
+
+        assert!(with_game_ctx(&mut world, |game| {
+            game.reload_tuning_if_configured_or_log()
+        }));
+        assert_eq!(
+            world
+                .get_resource::<TuningFile>()
+                .unwrap()
+                .int("slime.health")
+                .initial(),
+            75
+        );
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

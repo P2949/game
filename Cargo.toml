@@ -48,6 +48,7 @@ edition = "2024"
 rust-version = "1.87"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/P2949/game"
+description = "A beginner-friendly Rust 2D game framework and toolkit"
 
 [workspace.dependencies]
 anyhow = "1"

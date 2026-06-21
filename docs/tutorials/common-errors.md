@@ -240,6 +240,19 @@ Enable map-changing door behavior:
 game.rules().doors_change_maps().build();
 ```
 
+## Rust compiler errors from advanced code
+
+**Populate after the first round of outside playtesting.** This guide will add
+two or three real compiler diagnostics beside plain-English translations once
+new players have shown which errors they actually encounter—most likely a
+borrow-checker error after copying advanced code, or a missing `?` on a
+fallible builder call.
+
+We intentionally do not invent raw `rustc` output here. Compiler wording and
+the mistakes beginners actually make are both evidence-sensitive; until that
+playtest data exists, the tailored compiler messages for common sprite, name,
+and movement-type mistakes are the trustworthy guidance.
+
 ## Next step
 
 Return to the tutorial you were following and rerun the demo after each small

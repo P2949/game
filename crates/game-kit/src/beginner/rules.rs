@@ -4,7 +4,9 @@ use std::collections::HashMap;
 
 use glam::Vec2;
 
-use crate::app::GameApp;
+use anyhow::Result;
+
+use crate::app::{GameApp, GamePlugin};
 use crate::beginner::actors::{
     Checkpoint, CheckpointState, DeathAnimationPolicy, DespawnOnHit, Door, DoorAction, DoorTarget,
     DropSpawned, DropsPrefab, Enemy, Lifetime, PlayerProjectile, PrefabName, Projectile,
@@ -338,65 +340,67 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
                 || self.projectile_impact_before_despawn)
         {
             if self.player_directional_animation {
-                app.every_frame(player_directional_animation_system);
+                app.use_behavior(RulesPlayerDirectionalAnimationBehavior)
+                    .expect("player directional animation behavior should register");
             }
             if self.enemies_animate_by_movement {
-                app.every_frame(enemy_animation_by_movement_system);
+                app.use_behavior(RulesEnemyAnimationByMovementBehavior)
+                    .expect("enemy animation behavior should register");
             }
             if self.enemies_directional_animation {
-                app.every_frame(enemy_directional_animation_system);
+                app.use_behavior(RulesEnemyDirectionalAnimationBehavior)
+                    .expect("enemy directional animation behavior should register");
             }
-            app.every_frame(|game: &mut GameCtx<'_, '_>, dt| game.update_animations(dt));
+            app.use_behavior(RulesAnimationUpdateBehavior)
+                .expect("rules animation update behavior should register");
         }
 
         if self.collect_pickups {
-            app.every_tick(|game: &mut GameCtx<'_, '_>, _dt| {
-                game.collect_pickups_near_player(DEFAULT_PICKUP_COLLECT_RANGE);
-            });
+            app.use_behavior(CollectPickupsBehavior)
+                .expect("collect pickups behavior should register");
         }
 
         if self.doors_change_maps {
-            app.every_tick(|game: &mut GameCtx<'_, '_>, _dt| {
-                doors_change_maps_system(game);
-            });
+            app.use_behavior(DoorsChangeMapsBehavior)
+                .expect("doors behavior should register");
         }
 
         if self.dead_enemies_despawn {
-            app.every_tick(|game: &mut GameCtx<'_, '_>, _dt| {
-                game.enemies().dead().despawn();
-            });
+            app.use_behavior(DeadEnemiesDespawnBehavior)
+                .expect("dead enemy despawn behavior should register");
         }
 
         if self.dead_enemies_play_death_animation {
-            app.every_tick(dead_enemies_play_death_animation_system);
+            app.use_behavior(DeathAnimationBehavior)
+                .expect("death animation behavior should register");
         }
 
         if self.dead_enemies_despawn_after_animation {
-            app.every_tick(dead_enemies_despawn_after_animation_system);
+            app.use_behavior(DeathAnimationDespawnBehavior)
+                .expect("death animation despawn behavior should register");
         }
 
         if self.enemy_drops {
-            app.every_tick(enemy_drops_system);
+            app.use_behavior(EnemyDropsBehavior)
+                .expect("enemy drops behavior should register");
         }
 
         if self.player_activates_checkpoints {
-            app.every_tick(checkpoint_activation_system);
+            app.use_behavior(CheckpointActivationBehavior)
+                .expect("checkpoint activation behavior should register");
         }
 
         if self.respawn_at_checkpoint {
-            app.every_tick(checkpoint_respawn_system);
+            app.use_behavior(CheckpointRespawnBehavior)
+                .expect("checkpoint respawn behavior should register");
         }
 
         if self.win_when_all_pickups_collected || self.win_when_all_enemies_dead {
-            let require_pickups = self.win_when_all_pickups_collected;
-            let require_enemies = self.win_when_all_enemies_dead;
-            app.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
-                let pickups_done = !require_pickups || game.pickups().count() == 0;
-                let enemies_done = !require_enemies || game.enemies().alive().count() == 0;
-                if pickups_done && enemies_done {
-                    game.change_scene_or_log("win");
-                }
-            });
+            app.use_behavior(WinConditionBehavior {
+                require_pickups: self.win_when_all_pickups_collected,
+                require_enemies: self.win_when_all_enemies_dead,
+            })
+            .expect("win condition behavior should register");
         }
 
         if self.show_score
@@ -407,7 +411,7 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             || self.show_game_over_panel
             || self.show_win_panel
         {
-            let options = HighLevelUiOptions {
+            app.use_behavior(HighLevelUiBehavior {
                 show_score: self.show_score,
                 show_enemy_count: self.show_enemy_count,
                 show_player_health: self.show_player_health,
@@ -415,34 +419,36 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
                 show_pause_menu: self.show_pause_menu,
                 show_game_over_panel: self.show_game_over_panel,
                 show_win_panel: self.show_win_panel,
-            };
-            app.draw_ui(move |game, _dt| {
-                high_level_ui_system(game, options);
-            });
+            })
+            .expect("high-level UI behavior should register");
         }
 
         if self.projectiles_move {
-            app.every_tick(projectiles_move_system);
+            app.use_behavior(ProjectileMovementBehavior)
+                .expect("projectile movement behavior should register");
         }
 
         if self.projectiles_expire {
-            app.every_tick(projectiles_expire_system);
+            app.use_behavior(ProjectileLifetimeBehavior)
+                .expect("projectile lifetime behavior should register");
         }
 
         if self.projectiles_damage_enemies {
-            let despawn_on_hit = self.projectiles_despawn_on_hit;
-            let impact_before_despawn = self.projectile_impact_before_despawn;
-            app.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
-                projectiles_damage_enemies_system(game, despawn_on_hit, impact_before_despawn);
-            });
+            app.use_behavior(ProjectileDamageBehavior {
+                despawn_on_hit: self.projectiles_despawn_on_hit,
+                impact_before_despawn: self.projectile_impact_before_despawn,
+            })
+            .expect("projectile damage behavior should register");
         }
 
         if self.projectile_impact_before_despawn {
-            app.every_tick(projectile_impact_despawn_system);
+            app.use_behavior(ProjectileImpactDespawnBehavior)
+                .expect("projectile impact despawn behavior should register");
         }
 
         if self.spawners_spawn_prefabs {
-            app.every_tick(spawners_spawn_prefabs_system);
+            app.use_behavior(SpawnerBehavior)
+                .expect("spawner behavior should register");
         }
     }
 }
@@ -864,6 +870,235 @@ fn doors_change_maps_system(game: &mut GameCtx<'_, '_>) {
             DoorAction::ChangeScene(scene) => game.change_scene_or_log(&scene),
             DoorAction::RestartLevel => game.restart_level(),
         }
+    }
+}
+
+/// Collects ordinary pickup prefabs near the player every fixed tick.
+pub struct CollectPickupsBehavior;
+
+impl GamePlugin for CollectPickupsBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(|game, _dt| {
+            game.collect_pickups_near_player(DEFAULT_PICKUP_COLLECT_RANGE);
+        });
+        Ok(())
+    }
+}
+
+/// Activates nearby door prefabs every fixed tick.
+pub struct DoorsChangeMapsBehavior;
+
+impl GamePlugin for DoorsChangeMapsBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(|game, _dt| doors_change_maps_system(game));
+        Ok(())
+    }
+}
+
+/// Queues removal of defeated enemies every fixed tick.
+pub struct DeadEnemiesDespawnBehavior;
+
+impl GamePlugin for DeadEnemiesDespawnBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(|game, _dt| {
+            game.enemies().dead().despawn();
+        });
+        Ok(())
+    }
+}
+
+/// Starts configured death animations for defeated enemies.
+pub struct DeathAnimationBehavior;
+
+impl GamePlugin for DeathAnimationBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(dead_enemies_play_death_animation_system);
+        Ok(())
+    }
+}
+
+/// Removes enemies after their configured death animation has finished.
+pub struct DeathAnimationDespawnBehavior;
+
+impl GamePlugin for DeathAnimationDespawnBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(dead_enemies_despawn_after_animation_system);
+        Ok(())
+    }
+}
+
+/// Spawns configured drops from defeated enemies.
+pub struct EnemyDropsBehavior;
+
+impl GamePlugin for EnemyDropsBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(enemy_drops_system);
+        Ok(())
+    }
+}
+
+/// Records the checkpoint currently occupied by the player.
+pub struct CheckpointActivationBehavior;
+
+impl GamePlugin for CheckpointActivationBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(checkpoint_activation_system);
+        Ok(())
+    }
+}
+
+/// Restarts a dead player at the last activated checkpoint.
+pub struct CheckpointRespawnBehavior;
+
+impl GamePlugin for CheckpointRespawnBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(checkpoint_respawn_system);
+        Ok(())
+    }
+}
+
+/// Moves all projectile prefabs according to their velocity.
+pub struct ProjectileMovementBehavior;
+
+impl GamePlugin for ProjectileMovementBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(projectiles_move_system);
+        Ok(())
+    }
+}
+
+/// Expires projectile prefabs when their configured lifetime runs out.
+pub struct ProjectileLifetimeBehavior;
+
+impl GamePlugin for ProjectileLifetimeBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(projectiles_expire_system);
+        Ok(())
+    }
+}
+
+/// Damages enemies hit by player projectiles.
+pub struct ProjectileDamageBehavior {
+    pub despawn_on_hit: bool,
+    pub impact_before_despawn: bool,
+}
+
+impl GamePlugin for ProjectileDamageBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let despawn_on_hit = self.despawn_on_hit;
+        let impact_before_despawn = self.impact_before_despawn;
+        game.every_tick(move |game, _dt| {
+            projectiles_damage_enemies_system(game, despawn_on_hit, impact_before_despawn);
+        });
+        Ok(())
+    }
+}
+
+/// Removes projectile impact animations after they finish.
+pub struct ProjectileImpactDespawnBehavior;
+
+impl GamePlugin for ProjectileImpactDespawnBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(projectile_impact_despawn_system);
+        Ok(())
+    }
+}
+
+/// Advances author-configured spawners every fixed tick.
+pub struct SpawnerBehavior;
+
+impl GamePlugin for SpawnerBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_tick(spawners_spawn_prefabs_system);
+        Ok(())
+    }
+}
+
+/// Changes to the conventional `win` scene once selected objectives are met.
+pub struct WinConditionBehavior {
+    pub require_pickups: bool,
+    pub require_enemies: bool,
+}
+
+impl GamePlugin for WinConditionBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let require_pickups = self.require_pickups;
+        let require_enemies = self.require_enemies;
+        game.every_tick(move |game, _dt| {
+            let pickups_done = !require_pickups || game.pickups().count() == 0;
+            let enemies_done = !require_enemies || game.enemies().alive().count() == 0;
+            if pickups_done && enemies_done {
+                game.change_scene_or_log("win");
+            }
+        });
+        Ok(())
+    }
+}
+
+/// Draws the selected high-level UI elements and panels.
+pub struct HighLevelUiBehavior {
+    pub show_score: bool,
+    pub show_enemy_count: bool,
+    pub show_player_health: bool,
+    pub show_menu: bool,
+    pub show_pause_menu: bool,
+    pub show_game_over_panel: bool,
+    pub show_win_panel: bool,
+}
+
+impl GamePlugin for HighLevelUiBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let options = HighLevelUiOptions {
+            show_score: self.show_score,
+            show_enemy_count: self.show_enemy_count,
+            show_player_health: self.show_player_health,
+            show_menu: self.show_menu,
+            show_pause_menu: self.show_pause_menu,
+            show_game_over_panel: self.show_game_over_panel,
+            show_win_panel: self.show_win_panel,
+        };
+        game.draw_ui(move |game, _dt| high_level_ui_system(game, options));
+        Ok(())
+    }
+}
+
+/// Updates ordinary enemy walk and idle animations for rules-only games.
+pub struct RulesEnemyAnimationByMovementBehavior;
+
+impl GamePlugin for RulesEnemyAnimationByMovementBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_frame(enemy_animation_by_movement_system);
+        Ok(())
+    }
+}
+
+/// Updates player directional walk animations for rules-only games.
+pub struct RulesPlayerDirectionalAnimationBehavior;
+
+impl GamePlugin for RulesPlayerDirectionalAnimationBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_frame(player_directional_animation_system);
+        Ok(())
+    }
+}
+
+/// Updates enemy directional walk animations for rules-only games.
+pub struct RulesEnemyDirectionalAnimationBehavior;
+
+impl GamePlugin for RulesEnemyDirectionalAnimationBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_frame(enemy_directional_animation_system);
+        Ok(())
+    }
+}
+
+/// Advances animations for rules-only games that do not install the preset.
+pub struct RulesAnimationUpdateBehavior;
+
+impl GamePlugin for RulesAnimationUpdateBehavior {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.every_frame(|game, dt| game.update_animations(dt));
+        Ok(())
     }
 }
 

@@ -9,6 +9,7 @@ pub mod gfx;
 pub mod input;
 pub mod nav;
 pub mod plugin;
+pub mod query;
 pub mod schedule;
 pub mod tilemap;
 pub mod world;
@@ -29,6 +30,10 @@ pub mod prelude {
     pub use crate::gfx::{Gfx, SpriteDraw, TextDraw, UiRect};
     pub use crate::input::{ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, Key};
     pub use crate::nav::NavGrid;
+    pub use crate::query::{
+        DeltaTime, ParamAccess, ParamSystem, Query, QueryData, Res, ResMut, SystemParam, With,
+        Without,
+    };
     pub use crate::tilemap::{Tile, TileMap};
     pub use crate::world::{Component, Entity, EntityId, Sprite, Transform, Velocity, World};
 }
@@ -65,6 +70,10 @@ pub mod internal_prelude {
     };
     pub use crate::nav::NavGrid;
     pub use crate::plugin::GamePlugin;
+    pub use crate::query::{
+        DeltaTime, ParamAccess, ParamSystem, Query, QueryData, Res, ResMut, SystemParam, With,
+        Without,
+    };
     pub use crate::schedule::{Schedule, ScheduleValidator, StartupSystem, System};
     pub use crate::tilemap::{Tile, TileMap};
     pub use crate::world::{
@@ -102,6 +111,10 @@ pub use input::{ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, InputRe
 pub use nav::NavGrid;
 #[allow(unused_imports)]
 pub use plugin::GamePlugin;
+#[allow(unused_imports)]
+pub use query::{
+    DeltaTime, ParamAccess, ParamSystem, Query, QueryData, Res, ResMut, SystemParam, With, Without,
+};
 #[allow(unused_imports)]
 pub use schedule::{Schedule, ScheduleValidator, StartupSystem, System};
 #[allow(unused_imports)]

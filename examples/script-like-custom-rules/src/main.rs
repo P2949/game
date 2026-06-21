@@ -26,6 +26,19 @@ fn main() -> Result<()> {
         game.enemy_prefab("slime")
             .sprite("slime")
             .chases_player()
+            .tag("enemy")
+            .health(30)
+            .melee(26.0, 6)
+            .build()?;
+
+        // A custom actor needs no new component type: tags and named data are
+        // enough to make this enemy explode after its short fuse burns down.
+        game.enemy_prefab("bomber")
+            .sprite("slime")
+            .chases_player()
+            .tag("enemy")
+            .tag("explosive")
+            .data("fuse", 3.0)
             .health(30)
             .melee(26.0, 6)
             .build()?;
@@ -67,9 +80,10 @@ fn main() -> Result<()> {
             .start();
 
         game.map("level_2")
-            .tiles(["##########", "#P..E.C..#", "#........#", "##########"])
+            .tiles(["##########", "#P.BE.C..#", "#........#", "##########"])
             .simple_theme("floor", "wall")
             .legend('P', "player")
+            .legend('B', "bomber")
             .legend('E', "slime")
             .legend('C', "coin")
             .finish();
@@ -93,6 +107,21 @@ fn main() -> Result<()> {
         game.on_action_cooldown(controls.attack, 0.2, |game| {
             game.player().shoot("bolt").towards_mouse();
             game.play_sound_named("shoot");
+        });
+
+        game.every_active_tick::<SimpleGameState>(|game, dt| {
+            let mut explosions = Vec::new();
+            game.actors_tagged("explosive").for_each(|actor| {
+                let remaining = actor.data("fuse").unwrap_or(0.0) - dt;
+                actor.set_data("fuse", remaining);
+                if remaining <= 0.0 {
+                    explosions.push(actor.position());
+                }
+            });
+            for position in explosions.into_iter().flatten() {
+                game.actors_tagged("enemy").near(position, 48.0).damage(20);
+                game.player().damage_if_near(position, 48.0, 20);
+            }
         });
 
         Ok(())

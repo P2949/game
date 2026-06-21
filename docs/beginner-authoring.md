@@ -61,3 +61,6 @@ Use `map_from_text_auto("level_1")` for `assets/maps/level_1.txt`. In a debug
 build, press F5 after editing that file to reload the current map without
 recompiling Rust. Release builds keep this development action disabled unless
 you deliberately set `GAME_DEV_RELOAD=1`.
+
+If the project also uses `game.tuning_from_file(...)`, the same F5 action
+reloads its tuning RON file before respawning the text map.

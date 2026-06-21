@@ -3,6 +3,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -18,12 +19,99 @@ fn main() -> Result<()> {
             }
             new_demo(&name)
         }
+        Some("doctor") => {
+            if let Some(extra) = args.next() {
+                bail!("unexpected argument for doctor: '{extra}'");
+            }
+            doctor();
+            Ok(())
+        }
         _ => {
             bail!(
-                "usage:\n    cargo xtask new-demo <name-or-path>\n\nCreates an outside-workspace beginner demo."
+                "usage:\n    cargo xtask new-demo <name-or-path>\n    cargo xtask doctor\n\nCreates an outside-workspace beginner demo, or checks local graphics prerequisites."
             );
         }
     }
+}
+
+fn doctor() {
+    println!("game environment doctor\n");
+
+    let shader = executable_on_path("glslc") || executable_on_path("shaderc");
+    report(
+        shader,
+        "shader compiler (glslc or shaderc)",
+        "install the Vulkan SDK or your distribution's shaderc package; set GLSLC to an explicit path if needed",
+    );
+
+    let vulkan = command_succeeds("vulkaninfo", &["--summary"]);
+    report(
+        vulkan,
+        "Vulkan loader and a usable driver",
+        "install a Vulkan loader/driver, then run `vulkaninfo --summary` to check it",
+    );
+
+    let sdl3 = command_succeeds("pkg-config", &["--exists", "sdl3"])
+        || std::env::var_os("SDL3_DIR").is_some();
+    report(
+        sdl3,
+        "SDL3 development files",
+        "install SDL3 (or set SDL3_DIR); on Linux, `pkg-config --exists sdl3` should succeed",
+    );
+
+    let validation = vulkan
+        && Command::new("vulkaninfo")
+            .output()
+            .ok()
+            .is_some_and(|output| {
+                String::from_utf8_lossy(&output.stdout).contains("VK_LAYER_KHRONOS_validation")
+            });
+    if validation {
+        println!("[ok] Vulkan validation layers");
+    } else {
+        println!(
+            "[warn] Vulkan validation layers — install them for debug diagnostics, or run with GAME_DISABLE_VALIDATION=1"
+        );
+    }
+
+    if shader && vulkan && sdl3 {
+        println!("\nCore prerequisites look available. Try: cargo run -p game");
+    } else {
+        println!("\nFix the failed checks above, then run this command again.");
+    }
+}
+
+fn report(ok: bool, name: &str, fix: &str) {
+    if ok {
+        println!("[ok] {name}");
+    } else {
+        println!("[fail] {name} — {fix}");
+    }
+}
+
+fn command_succeeds(command: &str, args: &[&str]) -> bool {
+    Command::new(command)
+        .args(args)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn executable_on_path(name: &str) -> bool {
+    let Some(paths) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&paths).any(|dir| {
+        let plain = dir.join(name);
+        if plain.is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            return dir.join(format!("{name}.exe")).is_file();
+        }
+        #[cfg(not(windows))]
+        false
+    })
 }
 
 fn new_demo(name_or_path: &str) -> Result<()> {
@@ -35,12 +123,13 @@ fn new_demo(name_or_path: &str) -> Result<()> {
 
     let crate_name = crate_name_from_destination(&destination)?;
     let game_path = game_path_from_destination(&workspace, &destination)?;
+    let game_starter_dependency = format!("{{ path = \"{game_path}/crates/game-starter\" }}");
     let title = title_from_crate_name(&crate_name);
 
     let template = workspace.join("templates/simple-demo");
     let mut values = HashMap::new();
     values.insert("crate_name", crate_name.as_str());
-    values.insert("game_path", game_path.as_str());
+    values.insert("game_starter_dependency", game_starter_dependency.as_str());
     values.insert("title", title.as_str());
 
     copy_template(&template, &destination, &values)?;
@@ -144,6 +233,9 @@ fn copy_template(src: &Path, dst: &Path, values: &HashMap<&str, &str>) -> Result
 
     for entry in fs::read_dir(src).with_context(|| format!("failed to read '{}'", src.display()))? {
         let entry = entry?;
+        if entry.file_name() == "cargo-generate.toml" {
+            continue;
+        }
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
         if src_path.is_dir() {

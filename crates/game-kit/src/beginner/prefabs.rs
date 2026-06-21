@@ -1,17 +1,19 @@
 //! Beginner prefab builders.
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::Result;
 use game_ai::{AiController, ChaseTarget, PathFollow, Patrol};
 use game_combat::{Faction, Health, MeleeAttack};
 use game_core::backend::TextureHandle;
 use game_core::builder::PropertyBag;
 use game_core::input::Axis2dId;
-use game_core::world::{Sprite, Transform, Velocity};
+use game_core::world::{NamedValues, Sprite, Tags, Transform, Velocity};
 use game_physics::{Collider, Trigger};
 use glam::{Vec2, Vec4, vec2};
 
 use crate::app::GameApp;
-use crate::assets::{SoundRef, TextureRef};
+use crate::assets::{IntoTextureRef, SoundRef, TextureRef};
 use crate::beginner::actors::{
     Area, AreaName, Checkpoint, CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect,
     DespawnOnHit, Door, DoorAction, DoorTarget, DropsPrefab, Enemy, ExitDoor, FacingDirection,
@@ -22,7 +24,9 @@ use crate::beginner::animation::{
     Animation, AnimationClip, AnimationSet, AnimationSheet, SpriteSheet, attack_frames, die_frames,
     idle_frames, walk_frames,
 };
+use crate::beginner::tuning::{TunedF32, TunedI32};
 use crate::bundle::vec2s;
+use crate::prefab::{IntoContentName, IntoMovementAxis};
 
 const PLAYER_SIZE: f32 = 20.0;
 const ENEMY_SIZE: f32 = 22.0;
@@ -54,10 +58,10 @@ fn projectile_direction(properties: &PropertyBag) -> Vec2 {
     vec2(x, y).normalize_or_zero()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct MeleeSpec {
     range: f32,
-    damage: i32,
+    damage: TunedI32,
     cooldown: f32,
 }
 
@@ -80,12 +84,14 @@ struct ActorPrefabSpec {
     size: Vec2,
     tint: Vec4,
     layer: i16,
-    health: i32,
-    speed: f32,
+    health: TunedI32,
+    speed: TunedF32,
     melee: Option<MeleeSpec>,
     collider: Option<Vec2>,
     animations: Vec<(String, AnimationClip)>,
     play_animation: Option<String>,
+    tags: HashSet<String>,
+    named_values: HashMap<String, f32>,
 }
 
 impl ActorPrefabSpec {
@@ -96,12 +102,14 @@ impl ActorPrefabSpec {
             size: vec2s(PLAYER_SIZE),
             tint: Vec4::ONE,
             layer: DEFAULT_LAYER,
-            health: PLAYER_HEALTH,
-            speed: PLAYER_SPEED,
+            health: PLAYER_HEALTH.into(),
+            speed: PLAYER_SPEED.into(),
             melee: None,
             collider: None,
             animations: Vec::new(),
             play_animation: None,
+            tags: HashSet::new(),
+            named_values: HashMap::new(),
         }
     }
 
@@ -112,12 +120,14 @@ impl ActorPrefabSpec {
             size: vec2s(ENEMY_SIZE),
             tint: Vec4::ONE,
             layer: DEFAULT_LAYER,
-            health: ENEMY_HEALTH,
-            speed: ENEMY_SPEED,
+            health: ENEMY_HEALTH.into(),
+            speed: ENEMY_SPEED.into(),
             melee: None,
             collider: None,
             animations: Vec::new(),
             play_animation: None,
+            tags: HashSet::new(),
+            named_values: HashMap::new(),
         }
     }
 
@@ -217,6 +227,8 @@ struct ObjectPrefabSpec {
     tint: Vec4,
     layer: i16,
     collider: Option<Vec2>,
+    tags: HashSet<String>,
+    named_values: HashMap<String, f32>,
 }
 
 impl ObjectPrefabSpec {
@@ -228,6 +240,8 @@ impl ObjectPrefabSpec {
             tint: Vec4::ONE,
             layer: DEFAULT_LAYER,
             collider: None,
+            tags: HashSet::new(),
+            named_values: HashMap::new(),
         }
     }
 
@@ -291,13 +305,25 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
         }
     }
 
-    pub fn named(mut self, display_name: impl Into<String>) -> Self {
-        self.spec.display_name = Some(display_name.into());
+    pub fn named(mut self, display_name: impl IntoContentName) -> Self {
+        self.spec.display_name = Some(display_name.into_content_name());
         self
     }
 
-    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
-        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
+    /// Adds a named marker that custom beginner rules can select later.
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.spec.tags.insert(tag.into());
+        self
+    }
+
+    /// Adds a named numeric value that custom beginner rules can update later.
+    pub fn data(mut self, key: impl Into<String>, value: f32) -> Self {
+        self.spec.named_values.insert(key.into(), value);
+        self
+    }
+
+    pub fn sprite(mut self, texture: impl IntoTextureRef) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into_texture_ref()));
         self
     }
 
@@ -397,26 +423,26 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn health(mut self, health: i32) -> Self {
-        self.spec.health = health;
+    pub fn health(mut self, health: impl Into<TunedI32>) -> Self {
+        self.spec.health = health.into();
         self
     }
 
-    pub fn speed(mut self, speed: f32) -> Self {
-        self.spec.speed = speed;
+    pub fn speed(mut self, speed: impl Into<TunedF32>) -> Self {
+        self.spec.speed = speed.into();
         self
     }
 
-    pub fn moves_with(mut self, axis: Axis2dId, speed: f32) -> Self {
-        self.movement_axis = Some(axis);
-        self.spec.speed = speed;
+    pub fn moves_with(mut self, axis: impl IntoMovementAxis, speed: impl Into<TunedF32>) -> Self {
+        self.movement_axis = Some(axis.into_movement_axis());
+        self.spec.speed = speed.into();
         self
     }
 
-    pub fn melee(mut self, range: f32, damage: i32) -> Self {
+    pub fn melee(mut self, range: f32, damage: impl Into<TunedI32>) -> Self {
         self.spec.melee = Some(MeleeSpec {
             range,
-            damage,
+            damage: damage.into(),
             cooldown: 0.0,
         });
         self
@@ -434,9 +460,9 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
         let prefab_name = self.name.clone();
         let display_name = spec.display_name(&prefab_name);
         let collider = spec.collider();
-        let melee = spec.melee.unwrap_or(MeleeSpec {
+        let melee = spec.melee.clone().unwrap_or(MeleeSpec {
             range: 30.0,
-            damage: 0,
+            damage: 0.into(),
             cooldown: 0.0,
         });
         let animation_components =
@@ -450,7 +476,7 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
                     .copied()
                     .unwrap_or(0);
                 prefab
-                    .spawn(move |at| {
+                    .spawn_with_world(move |world, at| {
                         (
                             Name::new(display_name.clone()),
                             Transform::at(at),
@@ -458,13 +484,16 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
                             Player,
                             FacingDirection::default(),
                             PlayerMovement::axis(movement_axis),
-                            Speed::new(spec.speed),
-                            Health::new(spec.health),
-                            MeleeAttack::new(melee.range, melee.damage).cooldown(melee.cooldown),
+                            Speed::new(spec.speed.resolve(world)),
+                            Health::new(spec.health.resolve(world)),
+                            MeleeAttack::new(melee.range, melee.damage.resolve(world))
+                                .cooldown(melee.cooldown),
                             Faction::player(),
                             spec.sprite(sprite_source, first_frame),
                             animation.clone(),
                             animation_set.clone(),
+                            Tags(spec.tags.clone()),
+                            NamedValues::from(spec.named_values.clone()),
                             Collider::box_of(collider),
                         )
                     })?
@@ -485,7 +514,7 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
         } else {
             self.app.prefab(self.name, move |prefab| {
                 prefab
-                    .spawn(move |at| {
+                    .spawn_with_world(move |world, at| {
                         (
                             Name::new(display_name.clone()),
                             Transform::at(at),
@@ -493,11 +522,14 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
                             Player,
                             FacingDirection::default(),
                             PlayerMovement::axis(movement_axis),
-                            Speed::new(spec.speed),
-                            Health::new(spec.health),
-                            MeleeAttack::new(melee.range, melee.damage).cooldown(melee.cooldown),
+                            Speed::new(spec.speed.resolve(world)),
+                            Health::new(spec.health.resolve(world)),
+                            MeleeAttack::new(melee.range, melee.damage.resolve(world))
+                                .cooldown(melee.cooldown),
                             Faction::player(),
                             spec.sprite(sprite_source, 0),
+                            Tags(spec.tags.clone()),
+                            NamedValues::from(spec.named_values.clone()),
                             Collider::box_of(collider),
                         )
                     })?
@@ -555,13 +587,25 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
         }
     }
 
-    pub fn named(mut self, display_name: impl Into<String>) -> Self {
-        self.spec.display_name = Some(display_name.into());
+    pub fn named(mut self, display_name: impl IntoContentName) -> Self {
+        self.spec.display_name = Some(display_name.into_content_name());
         self
     }
 
-    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
-        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
+    /// Adds a named marker that custom beginner rules can select later.
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.spec.tags.insert(tag.into());
+        self
+    }
+
+    /// Adds a named numeric value that custom beginner rules can update later.
+    pub fn data(mut self, key: impl Into<String>, value: f32) -> Self {
+        self.spec.named_values.insert(key.into(), value);
+        self
+    }
+
+    pub fn sprite(mut self, texture: impl IntoTextureRef) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into_texture_ref()));
         self
     }
 
@@ -669,20 +713,20 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn health(mut self, health: i32) -> Self {
-        self.spec.health = health;
+    pub fn health(mut self, health: impl Into<TunedI32>) -> Self {
+        self.spec.health = health.into();
         self
     }
 
-    pub fn speed(mut self, speed: f32) -> Self {
-        self.spec.speed = speed;
+    pub fn speed(mut self, speed: impl Into<TunedF32>) -> Self {
+        self.spec.speed = speed.into();
         self
     }
 
-    pub fn melee(mut self, range: f32, damage: i32) -> Self {
+    pub fn melee(mut self, range: f32, damage: impl Into<TunedI32>) -> Self {
         self.spec.melee = Some(MeleeSpec {
             range,
-            damage,
+            damage: damage.into(),
             cooldown: ENEMY_MELEE_COOLDOWN,
         });
         self
@@ -691,7 +735,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
     pub fn melee_cooldown(mut self, cooldown: f32) -> Self {
         let melee = self.spec.melee.get_or_insert(MeleeSpec {
             range: 26.0,
-            damage: 0,
+            damage: 0.into(),
             cooldown: ENEMY_MELEE_COOLDOWN,
         });
         melee.cooldown = cooldown;
@@ -776,15 +820,15 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
         let prefab_name = self.name.clone();
         let display_name = spec.display_name(&prefab_name);
         let collider = spec.collider();
-        let melee = spec.melee.unwrap_or(MeleeSpec {
+        let melee = spec.melee.clone().unwrap_or(MeleeSpec {
             range: 26.0,
-            damage: 0,
+            damage: 0.into(),
             cooldown: ENEMY_MELEE_COOLDOWN,
         });
         let animation_components =
             spec.animation_components(sprite_source, "enemy", &prefab_name)?;
         let patrol = self.patrol;
-        let patrol_speed = self.patrol_speed.unwrap_or(spec.speed);
+        let patrol_speed = self.patrol_speed;
         let death_animation_policy = DeathAnimationPolicy {
             despawn_after_animation: self.despawn_after_death_animation,
         };
@@ -806,7 +850,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                         .copied()
                         .unwrap_or(0);
                     prefab
-                        .spawn(move |at| {
+                        .spawn_with_world(move |world, at| {
                             (
                                 Name::new(display_name.clone()),
                                 Transform::at(at),
@@ -814,22 +858,24 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Enemy,
                                 death_animation_policy,
                                 drops.clone(),
-                                Speed::new(spec.speed),
-                                Health::new(spec.health),
+                                Speed::new(spec.speed.resolve(world)),
+                                Health::new(spec.health.resolve(world)),
                                 Faction::enemy(),
-                                MeleeAttack::new(melee.range, melee.damage)
+                                MeleeAttack::new(melee.range, melee.damage.resolve(world))
                                     .cooldown(melee.cooldown),
                                 AiController::chase_player(),
                                 ChaseTarget::player(
                                     chase.range,
                                     stop_distance,
-                                    spec.speed,
+                                    spec.speed.resolve(world),
                                     chase.repath_seconds,
                                 ),
                                 PathFollow::default(),
                                 spec.sprite(sprite_source, first_frame),
                                 animation.clone(),
                                 animation_set.clone(),
+                                Tags(spec.tags.clone()),
+                                NamedValues::from(spec.named_values.clone()),
                                 Collider::box_of(collider),
                             )
                         })?
@@ -850,7 +896,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
             } else {
                 self.app.prefab(self.name, move |prefab| {
                     prefab
-                        .spawn(move |at| {
+                        .spawn_with_world(move |world, at| {
                             (
                                 Name::new(display_name.clone()),
                                 Transform::at(at),
@@ -858,20 +904,22 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Enemy,
                                 death_animation_policy,
                                 drops.clone(),
-                                Speed::new(spec.speed),
-                                Health::new(spec.health),
+                                Speed::new(spec.speed.resolve(world)),
+                                Health::new(spec.health.resolve(world)),
                                 Faction::enemy(),
-                                MeleeAttack::new(melee.range, melee.damage)
+                                MeleeAttack::new(melee.range, melee.damage.resolve(world))
                                     .cooldown(melee.cooldown),
                                 AiController::chase_player(),
                                 ChaseTarget::player(
                                     chase.range,
                                     stop_distance,
-                                    spec.speed,
+                                    spec.speed.resolve(world),
                                     chase.repath_seconds,
                                 ),
                                 PathFollow::default(),
                                 spec.sprite(sprite_source, 0),
+                                Tags(spec.tags.clone()),
+                                NamedValues::from(spec.named_values.clone()),
                                 Collider::box_of(collider),
                             )
                         })?
@@ -897,7 +945,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                         .copied()
                         .unwrap_or(0);
                     prefab
-                        .spawn(move |at| {
+                        .spawn_with_world(move |world, at| {
                             let waypoints = match patrol {
                                 PatrolSpec::Between(a, b) => vec![a, b],
                                 PatrolSpec::Horizontal { half_distance } => {
@@ -914,15 +962,20 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Enemy,
                                 death_animation_policy,
                                 drops.clone(),
-                                Speed::new(spec.speed),
-                                Health::new(spec.health),
+                                Speed::new(spec.speed.resolve(world)),
+                                Health::new(spec.health.resolve(world)),
                                 Faction::enemy(),
-                                MeleeAttack::new(melee.range, melee.damage)
+                                MeleeAttack::new(melee.range, melee.damage.resolve(world))
                                     .cooldown(melee.cooldown),
-                                Patrol::new(waypoints, patrol_speed),
+                                Patrol::new(
+                                    waypoints,
+                                    patrol_speed.unwrap_or_else(|| spec.speed.resolve(world)),
+                                ),
                                 spec.sprite(sprite_source, first_frame),
                                 animation.clone(),
                                 animation_set.clone(),
+                                Tags(spec.tags.clone()),
+                                NamedValues::from(spec.named_values.clone()),
                                 Collider::box_of(collider),
                             )
                         })?
@@ -943,7 +996,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
             } else {
                 self.app.prefab(self.name, move |prefab| {
                     prefab
-                        .spawn(move |at| {
+                        .spawn_with_world(move |world, at| {
                             let waypoints = match patrol {
                                 PatrolSpec::Between(a, b) => vec![a, b],
                                 PatrolSpec::Horizontal { half_distance } => {
@@ -960,13 +1013,18 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Enemy,
                                 death_animation_policy,
                                 drops.clone(),
-                                Speed::new(spec.speed),
-                                Health::new(spec.health),
+                                Speed::new(spec.speed.resolve(world)),
+                                Health::new(spec.health.resolve(world)),
                                 Faction::enemy(),
-                                MeleeAttack::new(melee.range, melee.damage)
+                                MeleeAttack::new(melee.range, melee.damage.resolve(world))
                                     .cooldown(melee.cooldown),
-                                Patrol::new(waypoints, patrol_speed),
+                                Patrol::new(
+                                    waypoints,
+                                    patrol_speed.unwrap_or_else(|| spec.speed.resolve(world)),
+                                ),
                                 spec.sprite(sprite_source, 0),
+                                Tags(spec.tags.clone()),
+                                NamedValues::from(spec.named_values.clone()),
                                 Collider::box_of(collider),
                             )
                         })?
@@ -992,7 +1050,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                         .copied()
                         .unwrap_or(0);
                     prefab
-                        .spawn(move |at| {
+                        .spawn_with_world(move |world, at| {
                             (
                                 Name::new(display_name.clone()),
                                 Transform::at(at),
@@ -1000,14 +1058,16 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Enemy,
                                 death_animation_policy,
                                 drops.clone(),
-                                Speed::new(spec.speed),
-                                Health::new(spec.health),
+                                Speed::new(spec.speed.resolve(world)),
+                                Health::new(spec.health.resolve(world)),
                                 Faction::enemy(),
-                                MeleeAttack::new(melee.range, melee.damage)
+                                MeleeAttack::new(melee.range, melee.damage.resolve(world))
                                     .cooldown(melee.cooldown),
                                 spec.sprite(sprite_source, first_frame),
                                 animation.clone(),
                                 animation_set.clone(),
+                                Tags(spec.tags.clone()),
+                                NamedValues::from(spec.named_values.clone()),
                                 Collider::box_of(collider),
                             )
                         })?
@@ -1027,7 +1087,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
             } else {
                 self.app.prefab(self.name, move |prefab| {
                     prefab
-                        .spawn(move |at| {
+                        .spawn_with_world(move |world, at| {
                             (
                                 Name::new(display_name.clone()),
                                 Transform::at(at),
@@ -1035,12 +1095,14 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Enemy,
                                 death_animation_policy,
                                 drops.clone(),
-                                Speed::new(spec.speed),
-                                Health::new(spec.health),
+                                Speed::new(spec.speed.resolve(world)),
+                                Health::new(spec.health.resolve(world)),
                                 Faction::enemy(),
-                                MeleeAttack::new(melee.range, melee.damage)
+                                MeleeAttack::new(melee.range, melee.damage.resolve(world))
                                     .cooldown(melee.cooldown),
                                 spec.sprite(sprite_source, 0),
+                                Tags(spec.tags.clone()),
+                                NamedValues::from(spec.named_values.clone()),
                                 Collider::box_of(collider),
                             )
                         })?
@@ -1083,13 +1145,25 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
         }
     }
 
-    pub fn named(mut self, display_name: impl Into<String>) -> Self {
-        self.spec.display_name = Some(display_name.into());
+    pub fn named(mut self, display_name: impl IntoContentName) -> Self {
+        self.spec.display_name = Some(display_name.into_content_name());
         self
     }
 
-    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
-        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
+    /// Adds a named marker that custom beginner rules can select later.
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.spec.tags.insert(tag.into());
+        self
+    }
+
+    /// Adds a named numeric value that custom beginner rules can update later.
+    pub fn data(mut self, key: impl Into<String>, value: f32) -> Self {
+        self.spec.named_values.insert(key.into(), value);
+        self
+    }
+
+    pub fn sprite(mut self, texture: impl IntoTextureRef) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into_texture_ref()));
         self
     }
 
@@ -1171,6 +1245,8 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
                             CollectSound(sound),
                             DespawnOnCollect,
                             spec.sprite(sprite_source),
+                            Tags(spec.tags.clone()),
+                            NamedValues::from(spec.named_values.clone()),
                             Collider::box_of(collider),
                         )
                     })?
@@ -1196,6 +1272,8 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
                             HealValue(heal),
                             CollectSound(sound),
                             spec.sprite(sprite_source),
+                            Tags(spec.tags.clone()),
+                            NamedValues::from(spec.named_values.clone()),
                             Collider::box_of(collider),
                         )
                     })?
@@ -1220,6 +1298,8 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
                             HealValue(heal),
                             DespawnOnCollect,
                             spec.sprite(sprite_source),
+                            Tags(spec.tags.clone()),
+                            NamedValues::from(spec.named_values.clone()),
                             Collider::box_of(collider),
                         )
                     })?
@@ -1243,6 +1323,8 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
                             ScoreValue(score),
                             HealValue(heal),
                             spec.sprite(sprite_source),
+                            Tags(spec.tags.clone()),
+                            NamedValues::from(spec.named_values.clone()),
                             Collider::box_of(collider),
                         )
                     })?
@@ -1279,6 +1361,8 @@ pub struct AreaPrefabAuthor<'a, 'app> {
     tint: Vec4,
     layer: i16,
     checkpoint: bool,
+    tags: HashSet<String>,
+    named_values: HashMap<String, f32>,
 }
 
 impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
@@ -1293,6 +1377,8 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
             tint: Vec4::new(1.0, 0.2, 0.2, 0.35),
             layer: DEFAULT_LAYER,
             checkpoint: false,
+            tags: HashSet::new(),
+            named_values: HashMap::new(),
         }
     }
 
@@ -1302,8 +1388,20 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
         author
     }
 
-    pub fn named(mut self, name: impl Into<String>) -> Self {
-        self.display_name = Some(name.into());
+    pub fn named(mut self, name: impl IntoContentName) -> Self {
+        self.display_name = Some(name.into_content_name());
+        self
+    }
+
+    /// Adds a named marker that custom beginner rules can select later.
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.insert(tag.into());
+        self
+    }
+
+    /// Adds a named numeric value that custom beginner rules can update later.
+    pub fn data(mut self, key: impl Into<String>, value: f32) -> Self {
+        self.named_values.insert(key.into(), value);
         self
     }
 
@@ -1330,14 +1428,14 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
     }
 
     /// Adds an optional, non-gameplay debug sprite to this area.
-    pub fn visible_debug(mut self, texture: impl Into<TextureRef>) -> Self {
-        self.debug_sprite = Some(SpriteSourceRef::Texture(texture.into()));
+    pub fn visible_debug(mut self, texture: impl IntoTextureRef) -> Self {
+        self.debug_sprite = Some(SpriteSourceRef::Texture(texture.into_texture_ref()));
         self
     }
 
     /// Displays this area with a sprite. For normal areas this is a visual aid;
     /// checkpoint areas use it as their regular marker.
-    pub fn sprite(self, texture: impl Into<TextureRef>) -> Self {
+    pub fn sprite(self, texture: impl IntoTextureRef) -> Self {
         self.visible_debug(texture)
     }
 
@@ -1369,6 +1467,8 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
         let collider = self.collider.unwrap_or(size);
         let tint = self.tint;
         let layer = self.layer;
+        let tags = self.tags;
+        let named_values = self.named_values;
         let checkpoint = Checkpoint {
             enabled: self.checkpoint,
         };
@@ -1393,6 +1493,8 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
                             Trigger,
                             Collider::box_of(collider),
                             sprite,
+                            Tags(tags.clone()),
+                            NamedValues::from(named_values.clone()),
                         )
                     })?
                     .require::<Transform>()
@@ -1417,6 +1519,8 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
                             AreaName(area_name.clone()),
                             Trigger,
                             Collider::box_of(collider),
+                            Tags(tags.clone()),
+                            NamedValues::from(named_values.clone()),
                         )
                     })?
                     .require::<Transform>()
@@ -1442,13 +1546,25 @@ impl<'a, 'app> DoorPrefabAuthor<'a, 'app> {
         }
     }
 
-    pub fn named(mut self, display_name: impl Into<String>) -> Self {
-        self.spec.display_name = Some(display_name.into());
+    pub fn named(mut self, display_name: impl IntoContentName) -> Self {
+        self.spec.display_name = Some(display_name.into_content_name());
         self
     }
 
-    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
-        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
+    /// Adds a named marker that custom beginner rules can select later.
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.spec.tags.insert(tag.into());
+        self
+    }
+
+    /// Adds a named numeric value that custom beginner rules can update later.
+    pub fn data(mut self, key: impl Into<String>, value: f32) -> Self {
+        self.spec.named_values.insert(key.into(), value);
+        self
+    }
+
+    pub fn sprite(mut self, texture: impl IntoTextureRef) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into_texture_ref()));
         self
     }
 
@@ -1529,6 +1645,8 @@ impl<'a, 'app> DoorPrefabAuthor<'a, 'app> {
                             requires_all_enemies_dead,
                         },
                         spec.sprite(sprite_source),
+                        Tags(spec.tags.clone()),
+                        NamedValues::from(spec.named_values.clone()),
                         Collider::box_of(collider),
                     )
                 })?
@@ -1570,13 +1688,25 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
         }
     }
 
-    pub fn named(mut self, display_name: impl Into<String>) -> Self {
-        self.spec.display_name = Some(display_name.into());
+    pub fn named(mut self, display_name: impl IntoContentName) -> Self {
+        self.spec.display_name = Some(display_name.into_content_name());
         self
     }
 
-    pub fn sprite(mut self, texture: impl Into<TextureRef>) -> Self {
-        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into()));
+    /// Adds a named marker that custom beginner rules can select later.
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.spec.tags.insert(tag.into());
+        self
+    }
+
+    /// Adds a named numeric value that custom beginner rules can update later.
+    pub fn data(mut self, key: impl Into<String>, value: f32) -> Self {
+        self.spec.named_values.insert(key.into(), value);
+        self
+    }
+
+    pub fn sprite(mut self, texture: impl IntoTextureRef) -> Self {
+        self.spec.sprite = Some(SpriteSourceRef::Texture(texture.into_texture_ref()));
         self
     }
 
@@ -1692,6 +1822,8 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
                             spec.sprite_at(sprite_source, first_frame),
                             animation.clone(),
                             animation_set.clone(),
+                            Tags(spec.tags.clone()),
+                            NamedValues::from(spec.named_values.clone()),
                             Collider::box_of(collider),
                         )
                     })?
@@ -1728,6 +1860,8 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
                             spec.sprite_at(sprite_source, first_frame),
                             animation.clone(),
                             animation_set.clone(),
+                            Tags(spec.tags.clone()),
+                            NamedValues::from(spec.named_values.clone()),
                             Collider::box_of(collider),
                         )
                     })?
@@ -1807,8 +1941,8 @@ impl<'a, 'app> SpawnerPrefabAuthor<'a, 'app> {
         }
     }
 
-    pub fn named(mut self, display_name: impl Into<String>) -> Self {
-        self.display_name = Some(display_name.into());
+    pub fn named(mut self, display_name: impl IntoContentName) -> Self {
+        self.display_name = Some(display_name.into_content_name());
         self
     }
 

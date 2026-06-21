@@ -4,7 +4,6 @@ fn main() -> Result<()> {
     run_game("{{title}}", |game| {
         game.assets_from_folders()
             .required_textures(["player", "slime", "floor", "wall"])?
-            .required_sounds(["hit"])?
             .build();
 
         let controls = game.input(|input| input.top_down_controls())?;
@@ -31,7 +30,6 @@ fn main() -> Result<()> {
 
         game.use_top_down_game()
             .controls(controls)
-            .hit_sound_named("hit")
             .with_melee_combat()
             .with_enemy_chase()
             .with_collision()

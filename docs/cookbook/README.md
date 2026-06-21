@@ -24,3 +24,5 @@ Small beginner recipes for common game features. Each page points at a matching
 - [Common small-game patterns](common-small-game-patterns.md)
 - [Menu and game over](menu-and-game-over.md)
 - [Animations](animations.md)
+- [Custom tags and timers](custom-tags-and-timers.md)
+- [Live tuning](live-tuning.md)
