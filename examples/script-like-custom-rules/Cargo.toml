@@ -8,4 +8,4 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-game-starter = { path = "../../crates/game-starter" }
+game-starter = { version = "0.1.0", path = "../../crates/game-starter" }
