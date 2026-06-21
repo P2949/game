@@ -2,13 +2,12 @@ use game_starter::prelude::*;
 
 fn main() -> Result<()> {
     run_game("{{title}}", |game| {
-        let assets = game
-            .asset_bag()
-            .texture_auto("player")?
-            .texture_auto("slime")?
-            .texture_auto("floor")?
-            .texture_auto("wall")?
-            .sound_auto("hit")?
+        game.assets_from_folders()
+            .texture("player")?
+            .texture("slime")?
+            .texture("floor")?
+            .texture("wall")?
+            .sound("hit")?
             .build();
 
         let controls = game.input(|input| input.top_down_controls())?;
@@ -36,7 +35,7 @@ fn main() -> Result<()> {
 
         game.use_top_down_game()
             .controls(controls)
-            .hit_sound(assets.sound("hit"))
+            .hit_sound_named("hit")
             .with_melee_combat()
             .with_enemy_chase()
             .with_collision()

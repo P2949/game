@@ -35,6 +35,7 @@ pub struct TopDownGameAuthor<'a, 'app> {
     player_animation_by_movement: bool,
     enemy_animation_by_movement: bool,
     player_directional_animation: bool,
+    enemy_directional_animation: bool,
     attack_animation: Option<&'static str>,
 }
 
@@ -60,6 +61,7 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             player_animation_by_movement: false,
             enemy_animation_by_movement: false,
             player_directional_animation: false,
+            enemy_directional_animation: false,
             attack_animation: None,
         }
     }
@@ -120,6 +122,19 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
         self
     }
 
+    /// Uses a sound registered through `game.asset_bag()` for melee hits.
+    ///
+    /// This keeps first-game setup name based. Typed content crates can keep
+    /// using [`Self::hit_sound`] with their stored handle instead.
+    pub fn hit_sound_named(mut self, key: &str) -> Self {
+        self.hit_sound = Some(
+            self.app
+                .resolve_sound(key)
+                .unwrap_or_else(|error| panic!("{error}")),
+        );
+        self
+    }
+
     pub fn combat_sound(self, hit_sound: SoundHandle) -> Self {
         self.hit_sound(hit_sound)
     }
@@ -166,6 +181,13 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
 
     pub fn with_player_directional_animation(mut self) -> Self {
         self.player_directional_animation = true;
+        self
+    }
+
+    /// Switches enemy walk clips between `walk_up`, `walk_down`, `walk_left`,
+    /// and `walk_right` based on their velocity.
+    pub fn with_enemy_directional_animation(mut self) -> Self {
+        self.enemy_directional_animation = true;
         self
     }
 
@@ -244,6 +266,10 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
 
         if self.player_directional_animation {
             app.every_active_frame::<SimpleGameState>(player_directional_animation_system);
+        }
+
+        if self.enemy_directional_animation {
+            app.every_active_frame::<SimpleGameState>(enemy_directional_animation_system);
         }
 
         app.every_active_frame::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
@@ -371,35 +397,48 @@ fn enemy_animation_by_movement_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
     }
 }
 
-fn player_directional_animation_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+pub(crate) fn player_directional_animation_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
     for id in game.entities_with::<Player>() {
-        if one_shot_animation_is_active(game, id) {
+        animate_directionally(game, id);
+    }
+}
+
+pub(crate) fn enemy_directional_animation_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    for id in game.entities_with::<Enemy>() {
+        if game.is_dead(id) {
             continue;
         }
-        let velocity = game
-            .component::<Velocity>(id)
-            .map(|velocity| velocity.0)
-            .unwrap_or_default();
-        if velocity.length_squared() <= MOVEMENT_ANIMATION_EPSILON_SQUARED {
-            game.play_animation(id, "idle");
-            continue;
-        }
-        let name = if velocity.x.abs() >= velocity.y.abs() {
-            if velocity.x >= 0.0 {
-                "walk_right"
-            } else {
-                "walk_left"
-            }
-        } else if velocity.y >= 0.0 {
-            "walk_down"
+        animate_directionally(game, id);
+    }
+}
+
+fn animate_directionally(game: &mut GameCtx<'_, '_>, id: EntityId) {
+    if one_shot_animation_is_active(game, id) {
+        return;
+    }
+    let velocity = game
+        .component::<Velocity>(id)
+        .map(|velocity| velocity.0)
+        .unwrap_or_default();
+    if velocity.length_squared() <= MOVEMENT_ANIMATION_EPSILON_SQUARED {
+        game.play_animation(id, "idle");
+        return;
+    }
+    let name = if velocity.x.abs() >= velocity.y.abs() {
+        if velocity.x >= 0.0 {
+            "walk_right"
         } else {
-            "walk_up"
-        };
-        // A prefab may intentionally omit some directions. In that case, use
-        // its ordinary walk clip rather than freezing on the prior direction.
-        if !game.play_animation(id, name) {
-            game.play_animation(id, "walk");
+            "walk_left"
         }
+    } else if velocity.y >= 0.0 {
+        "walk_down"
+    } else {
+        "walk_up"
+    };
+    // A prefab may intentionally omit some directions. In that case, use its
+    // ordinary walk clip rather than freezing on the prior direction.
+    if !game.play_animation(id, name) {
+        game.play_animation(id, "walk");
     }
 }
 

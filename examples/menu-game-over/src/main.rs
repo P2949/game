@@ -47,9 +47,11 @@ fn main() -> Result<()> {
         game.use_simple_scene_flow()
             .menu("menu")
             .menu_text("Press Space to Start")
+            .menu_button("Start", "game")
             .game("game")
             .game_over("game_over")
             .game_over_text("Game Over - Press R")
+            .game_over_button("Restart")
             .win("win")
             .win_text("You cleared the level!")
             .win_when_all_enemies_dead()
@@ -60,6 +62,16 @@ fn main() -> Result<()> {
         game.on_scene_enter("game", |game| {
             game.score().reset();
         });
+
+        game.rules()
+            .top_down_controls(controls)
+            .enemies_damage_player()
+            .camera_follows_player()
+            .show_score()
+            .show_player_health()
+            .show_game_over_panel()
+            .show_win_panel()
+            .build();
 
         Ok(())
     })

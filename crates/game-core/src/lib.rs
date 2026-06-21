@@ -26,7 +26,7 @@ pub mod prelude {
         TextureHandle, TextureLoadRequest,
     };
     pub use crate::camera::Camera2D;
-    pub use crate::gfx::{Gfx, SpriteDraw, TextDraw};
+    pub use crate::gfx::{Gfx, SpriteDraw, TextDraw, UiRect};
     pub use crate::input::{ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, Key};
     pub use crate::nav::NavGrid;
     pub use crate::tilemap::{Tile, TileMap};
@@ -59,7 +59,7 @@ pub mod internal_prelude {
     };
     pub use crate::camera::Camera2D;
     pub use crate::commands::{Command, CommandQueue};
-    pub use crate::gfx::{Gfx, SpriteDraw, TextDraw};
+    pub use crate::gfx::{Gfx, SpriteDraw, TextDraw, UiRect};
     pub use crate::input::{
         ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, InputRegistry, Key,
     };
@@ -95,7 +95,7 @@ pub use camera::Camera2D;
 #[allow(unused_imports)]
 pub use commands::{Command, CommandQueue};
 #[allow(unused_imports)]
-pub use gfx::{Gfx, SpriteDraw, TextDraw};
+pub use gfx::{Gfx, SpriteDraw, TextDraw, UiRect};
 #[allow(unused_imports)]
 pub use input::{ActionBinding, ActionId, Axis2dBinding, Axis2dId, Input, InputRegistry, Key};
 #[allow(unused_imports)]

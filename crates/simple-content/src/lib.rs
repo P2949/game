@@ -11,8 +11,7 @@ pub fn plugin() -> game_kit::Plugin<SimplePlugin> {
 
 impl GamePlugin for SimplePlugin {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        let assets = game
-            .asset_bag()
+        game.asset_bag()
             .texture("simple/floor", "textures/test.png")?
             .texture("simple/wall", "textures/test.png")?
             .texture("simple/player", "textures/test.png")?
@@ -59,7 +58,7 @@ impl GamePlugin for SimplePlugin {
 
         game.use_top_down_game()
             .controls(controls)
-            .hit_sound(assets.sound("simple/hit"))
+            .hit_sound_named("simple/hit")
             .with_melee_combat()
             .with_enemy_chase()
             .with_collision()

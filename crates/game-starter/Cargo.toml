@@ -11,3 +11,6 @@ anyhow.workspace = true
 env_logger.workspace = true
 game-kit = { version = "0.1.0", path = "../game-kit" }
 game-runtime = { version = "0.1.0", path = "../game-runtime" }
+
+[features]
+ogg = ["game-runtime/ogg"]

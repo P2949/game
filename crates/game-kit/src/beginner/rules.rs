@@ -7,9 +7,13 @@ use glam::Vec2;
 use crate::app::GameApp;
 use crate::beginner::actors::{
     DeathAnimationPolicy, DespawnOnHit, Door, DoorAction, DoorTarget, Lifetime, PlayerProjectile,
-    PrefabName, Projectile, ProjectileDamage, SpawnPlacement, Spawner,
+    PrefabName, Projectile, ProjectileDamage, ProjectileImpact, SpawnPlacement, Spawner,
+};
+use crate::beginner::defaults::{
+    enemy_directional_animation_system, player_directional_animation_system,
 };
 use crate::beginner::events::DEFAULT_PICKUP_COLLECT_RANGE;
+use crate::beginner::state::SimpleGameState;
 use crate::context::GameCtx;
 use crate::input::TopDownControls;
 
@@ -27,13 +31,19 @@ pub struct RulesAuthor<'a, 'app> {
     show_score: bool,
     show_enemy_count: bool,
     show_player_health: bool,
-    show_game_over_text: bool,
+    show_menu: bool,
+    show_pause_menu: bool,
+    show_game_over_panel: bool,
+    show_win_panel: bool,
     projectiles_move: bool,
     projectiles_expire: bool,
     projectiles_damage_enemies: bool,
     projectiles_despawn_on_hit: bool,
+    projectile_impact_before_despawn: bool,
     spawners_spawn_prefabs: bool,
     enemies_animate_by_movement: bool,
+    player_directional_animation: bool,
+    enemies_directional_animation: bool,
     dead_enemies_play_death_animation: bool,
     dead_enemies_despawn_after_animation: bool,
 }
@@ -52,13 +62,19 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             show_score: false,
             show_enemy_count: false,
             show_player_health: false,
-            show_game_over_text: false,
+            show_menu: false,
+            show_pause_menu: false,
+            show_game_over_panel: false,
+            show_win_panel: false,
             projectiles_move: false,
             projectiles_expire: false,
             projectiles_damage_enemies: false,
             projectiles_despawn_on_hit: false,
+            projectile_impact_before_despawn: false,
             spawners_spawn_prefabs: false,
             enemies_animate_by_movement: false,
+            player_directional_animation: false,
+            enemies_directional_animation: false,
             dead_enemies_play_death_animation: false,
             dead_enemies_despawn_after_animation: false,
         }
@@ -124,7 +140,34 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
     }
 
     pub fn show_game_over_text(mut self) -> Self {
-        self.show_game_over_text = true;
+        self.show_game_over_panel = true;
+        self
+    }
+
+    /// Draws a conventional title panel while the active scene is named
+    /// `menu`. Scene-flow text can still supply a more specific message.
+    pub fn show_menu(mut self) -> Self {
+        self.show_menu = true;
+        self
+    }
+
+    /// Draws a conventional paused panel while the beginner game state is
+    /// paused.
+    pub fn show_pause_menu(mut self) -> Self {
+        self.show_pause_menu = true;
+        self
+    }
+
+    /// Draws a conventional game-over panel when the player dies or the active
+    /// scene is named `game_over`.
+    pub fn show_game_over_panel(mut self) -> Self {
+        self.show_game_over_panel = true;
+        self
+    }
+
+    /// Draws a conventional win panel while the active scene is named `win`.
+    pub fn show_win_panel(mut self) -> Self {
+        self.show_win_panel = true;
         self
     }
 
@@ -148,6 +191,13 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
         self
     }
 
+    /// Plays a projectile's optional `impact` clip before removing it after a
+    /// hit. Projectiles without that clip keep their normal immediate despawn.
+    pub fn projectile_impact_animation_before_despawn(mut self) -> Self {
+        self.projectile_impact_before_despawn = true;
+        self
+    }
+
     /// Enables the common movement, damage, hit-despawn, and lifetime rules for
     /// player-fired projectiles.
     pub fn projectiles(mut self) -> Self {
@@ -165,6 +215,19 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
 
     pub fn animate_enemies_by_movement(mut self) -> Self {
         self.enemies_animate_by_movement = true;
+        self
+    }
+
+    /// Switches player walk clips by velocity using `walk_up`, `walk_down`,
+    /// `walk_left`, and `walk_right` when those clips exist.
+    pub fn animate_player_directionally(mut self) -> Self {
+        self.player_directional_animation = true;
+        self
+    }
+
+    /// Switches enemy walk clips by velocity using directional walk names.
+    pub fn animate_enemies_directionally(mut self) -> Self {
+        self.enemies_directional_animation = true;
         self
     }
 
@@ -202,16 +265,32 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             if self.enemies_animate_by_movement {
                 top_down = top_down.with_enemy_animation_by_movement();
             }
+            if self.player_directional_animation {
+                top_down = top_down.with_player_directional_animation();
+            }
+            if self.enemies_directional_animation {
+                top_down = top_down.with_enemy_directional_animation();
+            }
             top_down.build();
         }
 
         if self.top_down.is_none()
             && (self.enemies_animate_by_movement
+                || self.player_directional_animation
+                || self.enemies_directional_animation
                 || self.dead_enemies_play_death_animation
-                || self.dead_enemies_despawn_after_animation)
+                || self.dead_enemies_despawn_after_animation
+                || self.projectiles_move
+                || self.projectile_impact_before_despawn)
         {
+            if self.player_directional_animation {
+                app.every_frame(player_directional_animation_system);
+            }
             if self.enemies_animate_by_movement {
                 app.every_frame(enemy_animation_by_movement_system);
+            }
+            if self.enemies_directional_animation {
+                app.every_frame(enemy_directional_animation_system);
             }
             app.every_frame(|game: &mut GameCtx<'_, '_>, dt| game.update_animations(dt));
         }
@@ -245,20 +324,22 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
         if self.show_score
             || self.show_enemy_count
             || self.show_player_health
-            || self.show_game_over_text
+            || self.show_menu
+            || self.show_pause_menu
+            || self.show_game_over_panel
+            || self.show_win_panel
         {
-            let show_score = self.show_score;
-            let show_enemy_count = self.show_enemy_count;
-            let show_player_health = self.show_player_health;
-            let show_game_over_text = self.show_game_over_text;
+            let options = HighLevelUiOptions {
+                show_score: self.show_score,
+                show_enemy_count: self.show_enemy_count,
+                show_player_health: self.show_player_health,
+                show_menu: self.show_menu,
+                show_pause_menu: self.show_pause_menu,
+                show_game_over_panel: self.show_game_over_panel,
+                show_win_panel: self.show_win_panel,
+            };
             app.draw_ui(move |game, _dt| {
-                high_level_ui_system(
-                    game,
-                    show_score,
-                    show_enemy_count,
-                    show_player_health,
-                    show_game_over_text,
-                );
+                high_level_ui_system(game, options);
             });
         }
 
@@ -272,9 +353,14 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
 
         if self.projectiles_damage_enemies {
             let despawn_on_hit = self.projectiles_despawn_on_hit;
+            let impact_before_despawn = self.projectile_impact_before_despawn;
             app.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
-                projectiles_damage_enemies_system(game, despawn_on_hit);
+                projectiles_damage_enemies_system(game, despawn_on_hit, impact_before_despawn);
             });
+        }
+
+        if self.projectile_impact_before_despawn {
+            app.every_tick(projectile_impact_despawn_system);
         }
 
         if self.spawners_spawn_prefabs {
@@ -352,6 +438,9 @@ fn projectiles_move_system(game: &mut GameCtx<'_, '_>, dt: f32) {
         .collect::<Vec<_>>();
 
     for (id, velocity) in velocities {
+        if game.has::<ProjectileImpact>(id) {
+            continue;
+        }
         if let Some(transform) = game.component_mut::<game_core::world::Transform>(id) {
             transform.pos += velocity * dt.max(0.0);
         }
@@ -361,6 +450,9 @@ fn projectiles_move_system(game: &mut GameCtx<'_, '_>, dt: f32) {
 fn projectiles_expire_system(game: &mut GameCtx<'_, '_>, dt: f32) {
     let mut expired = Vec::new();
     for id in game.entities_with::<Projectile>() {
+        if game.has::<ProjectileImpact>(id) {
+            continue;
+        }
         let Some(lifetime) = game.component_mut::<Lifetime>(id) else {
             continue;
         };
@@ -376,7 +468,11 @@ fn projectiles_expire_system(game: &mut GameCtx<'_, '_>, dt: f32) {
     }
 }
 
-fn projectiles_damage_enemies_system(game: &mut GameCtx<'_, '_>, despawn_on_hit: bool) {
+fn projectiles_damage_enemies_system(
+    game: &mut GameCtx<'_, '_>,
+    despawn_on_hit: bool,
+    impact_before_despawn: bool,
+) {
     const HIT_DISTANCE: f32 = 16.0;
 
     let enemies = game.living_enemy_ids();
@@ -384,6 +480,9 @@ fn projectiles_damage_enemies_system(game: &mut GameCtx<'_, '_>, despawn_on_hit:
     let mut despawn = Vec::new();
 
     for projectile in projectiles {
+        if game.has::<ProjectileImpact>(projectile) {
+            continue;
+        }
         let Some(position) = game.position(projectile) else {
             continue;
         };
@@ -404,12 +503,33 @@ fn projectiles_damage_enemies_system(game: &mut GameCtx<'_, '_>, despawn_on_hit:
             }
             game.damage_entity(*enemy, damage);
             if should_despawn {
-                despawn.push(projectile);
+                if impact_before_despawn && game.play_animation(projectile, "impact") {
+                    game.insert_component(projectile, ProjectileImpact);
+                    if let Some(velocity) =
+                        game.component_mut::<game_core::world::Velocity>(projectile)
+                    {
+                        velocity.0 = Vec2::ZERO;
+                    }
+                } else {
+                    despawn.push(projectile);
+                }
                 break;
             }
         }
     }
 
+    let mut commands = game.commands();
+    for id in despawn {
+        commands.despawn(id);
+    }
+}
+
+fn projectile_impact_despawn_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    let despawn = game
+        .entities_with::<ProjectileImpact>()
+        .into_iter()
+        .filter(|id| game.animation_finished(*id, "impact"))
+        .collect::<Vec<_>>();
     let mut commands = game.commands();
     for id in despawn {
         commands.despawn(id);
@@ -495,28 +615,57 @@ fn count_alive_prefab(game: &GameCtx<'_, '_>, prefab: &str) -> usize {
         .count()
 }
 
-fn high_level_ui_system(
-    game: &mut GameCtx<'_, '_>,
+#[derive(Clone, Copy)]
+struct HighLevelUiOptions {
     show_score: bool,
     show_enemy_count: bool,
     show_player_health: bool,
-    show_game_over_text: bool,
-) {
-    let player_is_dead = show_game_over_text && game.player_is_dead();
+    show_menu: bool,
+    show_pause_menu: bool,
+    show_game_over_panel: bool,
+    show_win_panel: bool,
+}
+
+fn high_level_ui_system(game: &mut GameCtx<'_, '_>, options: HighLevelUiOptions) {
     let mut ui = game.ui().top_left();
-    if show_score {
+    if options.show_score {
         ui = ui.score_label();
     }
-    if show_enemy_count {
+    if options.show_enemy_count {
         ui = ui.enemy_count_label();
     }
-    if show_player_health {
+    if options.show_player_health {
         ui = ui.player_health_bar();
     }
-    if player_is_dead {
-        ui = ui.center_text("Game Over");
-    }
     ui.build();
+
+    let scene = game.current_scene_name();
+    let state = game
+        .resource::<SimpleGameState>()
+        .copied()
+        .unwrap_or_default();
+    if options.show_menu && scene.as_deref() == Some("menu") {
+        game.ui()
+            .panel("Menu")
+            .line("Press Space, Enter, or South to Start")
+            .center();
+    }
+    if options.show_pause_menu && state.paused {
+        game.ui()
+            .panel("Paused")
+            .line("Press P or Escape to Resume")
+            .center();
+    }
+    if options.show_game_over_panel && (state.player_dead || scene.as_deref() == Some("game_over"))
+    {
+        game.ui()
+            .panel("Game Over")
+            .line("Press R to Restart")
+            .center();
+    }
+    if options.show_win_panel && scene.as_deref() == Some("win") {
+        game.ui().panel("You Win!").line("Great work!").center();
+    }
 }
 
 fn doors_change_maps_system(game: &mut GameCtx<'_, '_>) {
@@ -606,6 +755,7 @@ mod tests {
                 .show_enemy_count()
                 .show_player_health()
                 .show_game_over_text()
+                .show_pause_menu()
                 .build();
 
             Ok(())
@@ -632,6 +782,10 @@ mod tests {
         game.set_entity_health(player, 0);
         game.frame(0.0);
         game.assert_ui_contains("Game Over");
+
+        game.tap_action("pause");
+        game.frame(0.0);
+        game.assert_ui_contains("Paused");
     }
 
     struct ProjectileRulesPlugin;

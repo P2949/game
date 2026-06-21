@@ -71,7 +71,7 @@ fn main() -> Result<()> {
 
         game.use_top_down_game()
             .controls(controls)
-            .hit_sound(assets.sound("hit"))
+            .hit_sound_named("hit")
             .with_melee_combat()
             .with_enemy_chase()
             .with_collision()
@@ -84,7 +84,10 @@ fn main() -> Result<()> {
         game.rules()
             .player_collects_pickups()
             .doors_change_maps()
-            .show_basic_ui()
+            .show_score()
+            .show_player_health()
+            .show_pause_menu()
+            .show_game_over_panel()
             .build();
 
         Ok(())

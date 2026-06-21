@@ -12,7 +12,7 @@ The generated `src/main.rs` is a one-file beginner game. It imports:
 use game_starter::prelude::*;
 ```
 
-It registers textures and sounds with `game.asset_bag()`, builds player and
+It registers textures and sounds with `game.assets_from_folders()`, builds player and
 enemy prefabs, draws a small map, and enables the beginner top-down preset.
 
 Run it with:
@@ -31,8 +31,21 @@ Controls:
 # Assets and text maps
 
 Put `player.png`, `slime.png`, `floor.png`, and `wall.png` in
-`assets/textures/`, and put `hit.wav` in `assets/sounds/`. The template uses
-these conventional names through `texture_auto(...)` and `sound_auto(...)`.
+`assets/textures/`, and put `hit.wav` (or `hit.ogg` with the optional OGG
+feature) in `assets/sounds/`. The template loads these conventional names with:
+
+```rust
+game.assets_from_folders()
+    .texture("player")?
+    .texture("slime")?
+    .texture("floor")?
+    .texture("wall")?
+    .sound("hit")?
+    .build();
+```
+
+Music follows the same pattern: `assets/music/theme.wav` or `theme.ogg` can be
+registered with `.music("theme")?`.
 
 When the in-code level is ready to become a file, create
 `assets/maps/level_1.txt` and replace the map builder with:

@@ -14,7 +14,7 @@ use game_core::backend::TextureHandle;
 
 use crate::texture::{Texture, TextureColorSpace, TextureUpload};
 use crate::texture_registry::TextureRegistryGuard;
-use crate::{FONT_TEXTURE_HANDLE, FONT_TEXTURE_ID, TextureId, text};
+use crate::{FONT_TEXTURE_HANDLE, FONT_TEXTURE_ID, TextureId, UI_WHITE_TEXTURE_HANDLE, text};
 
 /// Creates and registers the renderer's built-in textures into `registry_guard`,
 /// returning the font atlas metadata the renderer needs for text layout.
@@ -68,6 +68,29 @@ pub fn load_textures(
         "font atlas must be the first-registered texture so its id stays stable"
     );
     handle_to_id.insert(FONT_TEXTURE_HANDLE, font_id);
+
+    let white_id = registry_guard.create_and_register(
+        descriptor_set_layout,
+        "ui white",
+        |device, allocator| {
+            let mut upload = TextureUpload {
+                device,
+                allocator,
+                queue,
+                upload_pool,
+                upload_fence,
+            };
+            Texture::from_rgba8(
+                &mut upload,
+                1,
+                1,
+                &[255, 255, 255, 255],
+                TextureColorSpace::LinearData,
+                "ui white",
+            )
+        },
+    )?;
+    handle_to_id.insert(UI_WHITE_TEXTURE_HANDLE, white_id);
 
     for (handle, path) in content_textures {
         let texture_path = asset_root.join(path);

@@ -20,13 +20,12 @@ A healthy beginner demo has this shape:
 ```rust
 use game_kit::beginner::prelude::*;
 
-let assets = game
-    .asset_bag()
-    .texture("player", "textures/test.png")?
-    .texture("slime", "textures/test.png")?
-    .texture("floor", "textures/test.png")?
-    .texture("wall", "textures/test.png")?
-    .sound("hit", "sounds/hit.wav")?
+game.assets_from_folders()
+    .texture("player")?
+    .texture("slime")?
+    .texture("floor")?
+    .texture("wall")?
+    .sound("hit")?
     .build();
 let controls = game.input(|input| input.top_down_controls())?;
 
@@ -112,12 +111,14 @@ Use paths relative to `assets/`:
 .sound("hit", "sounds/hit.wav")?
 ```
 
-For the standard folders, avoid repeating those paths:
+For the standard folders, avoid repeating those paths. PNG is the current
+texture convention; audio chooses `hit.wav` first and then `hit.ogg` when that
+is the file present:
 
 ```rust
-game.asset_bag()
-    .texture_auto("player")?
-    .sound_auto("hit")?
+game.assets_from_folders()
+    .texture("player")?
+    .sound("hit")?
     .build();
 ```
 
@@ -128,6 +129,12 @@ Add a legend for every non-`.`/`#` character in a text map:
 ```rust
 .legend('X', "some_prefab")
 ```
+
+`Map rows have inconsistent widths`
+
+Every row in a text map must have the same number of symbols. The diagnostic
+names the first row and the mismatched row; add floor `.` cells or remove extras
+until their widths match.
 
 Text maps live under `assets/` and use the same symbolic legend format:
 
@@ -140,7 +147,14 @@ game.map_from_text("level_1", "maps/level_1.txt")
 
 `Unknown texture asset 'plaeyr'`
 
-Fix the key or register it before using `.sprite("player")`:
+You probably wrote:
+
+```rust
+.sprite("plaeyr")
+```
+
+Registered textures include `player`, `slime`, `floor`, and `wall`. Fix the
+key or register it before using the prefab:
 
 ```rust
 game.asset_bag().texture_auto("player")?.build();
@@ -154,11 +168,20 @@ Put a `P` in the map and connect it to the player prefab:
 .legend('P', "player")
 ```
 
+Then put a `P` in the text-map file itself.
+
 `Sound file '...' uses unsupported format`
 
-Use a WAV file with mono or stereo audio. The runtime accepts PCM16 and float32
-WAV data and converts normal sample rates to 48 kHz automatically. For unusual
-files, convert them first:
+WAV accepts mono or stereo PCM16/float32 audio and is always available. OGG
+Vorbis also works when the runtime package enables its `ogg` feature. Both are
+converted to 48 kHz automatically. If the error says `OGG audio requires the
+ogg feature`, add this to the game package that depends on `game-starter`:
+
+```toml
+game-starter = { path = "../game/crates/game-starter", features = ["ogg"] }
+```
+
+For unusual files, convert them first:
 
 ```bash
 ffmpeg -i input.wav -ac 2 -ar 48000 assets/sounds/hit.wav

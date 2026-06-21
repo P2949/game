@@ -7,7 +7,7 @@ The recipe uses:
 
 ```rust
 game.door_prefab("exit")
-    .sprite(assets.texture("door"))
+    .sprite("door")
     .change_map("level_2")
     .requires_all_enemies_dead()
     .build()?;
@@ -20,3 +20,13 @@ game.rules()
 ```
 
 Declare the first map with `.start()` and later maps with `.finish()`.
+
+For file-authored levels, use the same setup with one map file per level:
+
+```rust
+game.map_from_text("level_2", "maps/level_2.txt")
+    .simple_theme("floor", "wall")
+    .legend('P', "player")
+    .legend('E', "slime")
+    .finish();
+```

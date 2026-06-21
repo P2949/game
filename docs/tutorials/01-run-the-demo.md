@@ -10,11 +10,67 @@ assets live.
 Nothing yet. This first step proves the workspace, runtime, renderer, assets, and
 selected content crate all start together.
 
-## Files you will edit
+## Files to edit
 
 None.
 
-## Final code
+## Full code
+
+`examples/one-file-demo/src/main.rs` is the complete working version you can
+run while following this course:
+
+```rust
+use game_starter::prelude::*;
+
+fn main() -> Result<()> {
+    run_game("My First Game", |game| {
+        game.asset_bag()
+            .texture("player", "textures/test.png")?
+            .texture("slime", "textures/test.png")?
+            .texture("floor", "textures/test.png")?
+            .texture("wall", "textures/test.png")?
+            .sound("hit", "sounds/hit.wav")?
+            .build();
+
+        let controls = game.input(|input| input.top_down_controls())?;
+
+        game.player_prefab("player")
+            .sprite("player")
+            .moves_with(controls.movement, 130.0)
+            .health(100)
+            .melee(30.0, 25)
+            .build()?;
+
+        game.enemy_prefab("slime")
+            .sprite("slime")
+            .chases_player()
+            .health(40)
+            .melee(26.0, 6)
+            .build()?;
+
+        game.map("level_1")
+            .tiles(["########", "#......#", "#..P.E.#", "#......#", "########"])
+            .simple_theme("floor", "wall")
+            .legend('P', "player")
+            .legend('E', "slime")
+            .start();
+
+        game.use_top_down_game()
+            .controls(controls)
+            .hit_sound_named("hit")
+            .with_melee_combat()
+            .with_enemy_chase()
+            .with_collision()
+            .with_camera_follow()
+            .with_pause_death_ui()
+            .build();
+
+        Ok(())
+    })
+}
+```
+
+Run that complete example now:
 
 Run the default arena demo:
 
@@ -28,7 +84,7 @@ Run the beginner-sized demo:
 GAME_DEMO=simple cargo run -p game
 ```
 
-## Explanation
+## What changed
 
 The `bin/game` binary selects one content plugin with the `GAME_DEMO`
 environment variable. With no variable, it runs `arena-content`. With
@@ -46,8 +102,8 @@ debug overlay.
 ## Common errors
 
 If startup reports a missing asset, check the path passed to
-`assets.texture(...)` or `assets.sound(...)`. The path should not include the
-leading `assets/` directory.
+`game.asset_bag().texture(...)` or `.sound(...)`. The path should not include
+the leading `assets/` directory.
 
 If the wrong demo opens, check the exact `GAME_DEMO` value. The supported values
 are `simple`, `testbed`, and the default arena demo. Stay on `simple` while

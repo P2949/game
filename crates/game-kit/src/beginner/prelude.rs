@@ -16,8 +16,8 @@ pub use crate::assets::{
     AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, SoundRef, TextureRef,
 };
 pub use crate::beginner::actors::{
-    DeathAnimationPolicy, Door, Enemy, Name, Npc, Pickup, Player, PlayerMovement, Projectile,
-    ScoreValue, Solid, Speed,
+    Area, AreaName, DeathAnimationPolicy, Door, Enemy, Name, Npc, Pickup, Player, PlayerMovement,
+    Projectile, ProjectileImpact, ScoreValue, Solid, Speed, TriggerArea,
 };
 pub use crate::beginner::animation::{
     Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
@@ -37,14 +37,14 @@ pub use crate::beginner::events::{
     AnimationFinishedEvent, CollectEvent, CollisionEvent, EnemyDeathEvent, EventActor,
 };
 pub use crate::beginner::prefabs::{
-    DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
+    AreaPrefabAuthor, DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
     ProjectilePrefabAuthor, SpawnerPrefabAuthor,
 };
 pub use crate::beginner::rules::RulesAuthor;
 pub use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
 pub use crate::beginner::spawn::SpawnAuthor;
 pub use crate::beginner::state::SimpleGameState;
-pub use crate::beginner::ui::{UiOps, UiText};
+pub use crate::beginner::ui::{UiButton, UiOps, UiPanel, UiText};
 pub use crate::bundle::vec2s;
 pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
 pub use crate::map::MapAuthor;

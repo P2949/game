@@ -6,15 +6,16 @@
 //! `game-kit` plugin to the engine's plugin trait so the runtime can run it.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow};
 use game_core::builder::{GameBuilder, PrefabValidator};
 use game_core::commands::CommandQueue;
 use game_core::input::ActionId;
-use game_core::world::EntityId;
+use game_core::world::{EntityId, Transform};
 use game_map::GameMap;
+use game_physics::Collider;
 
 use crate::assets::{
     AssetAuthor, AssetBagAuthor, AssetFolderAuthor, AssetLookup, SoundRef, TextureRef,
@@ -26,10 +27,10 @@ use crate::beginner::debug::{DebugOverlay, draw_debug_overlay};
 use crate::beginner::defaults::TopDownGameAuthor;
 use crate::beginner::events::{
     ActorToken, AnimationFinishedEvent, CollectEvent, CollisionEvent, DEFAULT_PICKUP_COLLECT_RANGE,
-    EnemyDeathEvent,
+    EnemyDeathEvent, OverlapTracker,
 };
 use crate::beginner::prefabs::{
-    DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
+    AreaPrefabAuthor, DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
     ProjectilePrefabAuthor, SpawnerPrefabAuthor,
 };
 use crate::beginner::rules::RulesAuthor;
@@ -194,6 +195,16 @@ impl<'app> GameApp<'app> {
     /// Begins a beginner-friendly door prefab.
     pub fn door_prefab(&mut self, name: impl Into<String>) -> DoorPrefabAuthor<'_, 'app> {
         DoorPrefabAuthor::new(self, name.into())
+    }
+
+    /// Begins a non-solid area prefab that can drive enter/exit callbacks.
+    pub fn area_prefab(&mut self, name: impl Into<String>) -> AreaPrefabAuthor<'_, 'app> {
+        AreaPrefabAuthor::new(self, name.into())
+    }
+
+    /// Alias for [`Self::area_prefab`].
+    pub fn trigger_prefab(&mut self, name: impl Into<String>) -> AreaPrefabAuthor<'_, 'app> {
+        self.area_prefab(name)
     }
 
     /// Begins a beginner-friendly projectile prefab.
@@ -455,6 +466,87 @@ impl<'app> GameApp<'app> {
             if cooldown == 0.0 && game.pressed(action) {
                 cooldown = seconds;
                 f(game);
+            }
+        });
+    }
+
+    /// Runs every fixed tick while matching prefab colliders overlap. This only
+    /// observes contact; it does not apply pickup, door, or damage behavior.
+    pub fn on_collision(
+        &mut self,
+        a_prefab: impl Into<String>,
+        b_prefab: impl Into<String>,
+        mut f: impl FnMut(&mut CollisionEvent<'_, '_, '_>) + 'static,
+    ) {
+        let a_prefab = a_prefab.into();
+        let b_prefab = b_prefab.into();
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            for (a, b) in matching_overlaps(game, &a_prefab, &b_prefab) {
+                let mut event = CollisionEvent::new(game, ActorToken::new(a), ActorToken::new(b));
+                f(&mut event);
+            }
+        });
+    }
+
+    /// Runs once when the matching actor starts overlapping the named area.
+    pub fn on_enter_area(
+        &mut self,
+        actor_prefab: impl Into<String>,
+        area_prefab: impl Into<String>,
+        mut f: impl FnMut(&mut CollisionEvent<'_, '_, '_>) + 'static,
+    ) {
+        let actor_prefab = actor_prefab.into();
+        let area_prefab = area_prefab.into();
+        let event_key = format!("{actor_prefab}:{area_prefab}");
+        let mut tracker = OverlapTracker::default();
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let current = matching_overlaps(game, &actor_prefab, &area_prefab)
+                .into_iter()
+                .collect::<HashSet<_>>();
+            for &(actor, area) in &current {
+                if tracker.active.insert((actor, area, event_key.clone())) {
+                    let mut event =
+                        CollisionEvent::new(game, ActorToken::new(actor), ActorToken::new(area));
+                    f(&mut event);
+                }
+            }
+            tracker.active.retain(|entry| {
+                entry.2.as_str() != event_key.as_str() || current.contains(&(entry.0, entry.1))
+            });
+        });
+    }
+
+    /// Runs once when the matching actor stops overlapping the named area.
+    pub fn on_exit_area(
+        &mut self,
+        actor_prefab: impl Into<String>,
+        area_prefab: impl Into<String>,
+        mut f: impl FnMut(&mut CollisionEvent<'_, '_, '_>) + 'static,
+    ) {
+        let actor_prefab = actor_prefab.into();
+        let area_prefab = area_prefab.into();
+        let event_key = format!("{actor_prefab}:{area_prefab}");
+        let mut tracker = OverlapTracker::default();
+        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let current = matching_overlaps(game, &actor_prefab, &area_prefab)
+                .into_iter()
+                .collect::<HashSet<_>>();
+            let exited = tracker
+                .active
+                .iter()
+                .filter(|entry| {
+                    entry.2.as_str() == event_key.as_str() && !current.contains(&(entry.0, entry.1))
+                })
+                .map(|entry| (entry.0, entry.1))
+                .collect::<Vec<_>>();
+            for (actor, area) in exited {
+                tracker.active.remove(&(actor, area, event_key.clone()));
+                let mut event =
+                    CollisionEvent::new(game, ActorToken::new(actor), ActorToken::new(area));
+                f(&mut event);
+            }
+            for (actor, area) in current {
+                tracker.active.insert((actor, area, event_key.clone()));
             }
         });
     }
@@ -778,6 +870,52 @@ impl<'app> GameApp<'app> {
 fn prefab_matches(game: &GameCtx<'_, '_>, entity: EntityId, expected: &str) -> bool {
     game.component::<PrefabName>(entity)
         .is_some_and(|name| name.matches(expected))
+}
+
+fn matching_overlaps(
+    game: &GameCtx<'_, '_>,
+    a_prefab: &str,
+    b_prefab: &str,
+) -> Vec<(EntityId, EntityId)> {
+    let a_entities = game
+        .entities_with::<PrefabName>()
+        .into_iter()
+        .filter(|entity| prefab_matches(game, *entity, a_prefab))
+        .collect::<Vec<_>>();
+    let b_entities = game
+        .entities_with::<PrefabName>()
+        .into_iter()
+        .filter(|entity| prefab_matches(game, *entity, b_prefab))
+        .collect::<Vec<_>>();
+    let mut overlaps = Vec::new();
+
+    for a in a_entities {
+        for &b in &b_entities {
+            if a != b && colliders_overlap(game, a, b) {
+                overlaps.push((a, b));
+            }
+        }
+    }
+    overlaps
+}
+
+fn colliders_overlap(game: &GameCtx<'_, '_>, a: EntityId, b: EntityId) -> bool {
+    let Some(a_transform) = game.component::<Transform>(a) else {
+        return false;
+    };
+    let Some(a_collider) = game.component::<Collider>(a) else {
+        return false;
+    };
+    let Some(b_transform) = game.component::<Transform>(b) else {
+        return false;
+    };
+    let Some(b_collider) = game.component::<Collider>(b) else {
+        return false;
+    };
+
+    let delta = a_transform.pos - b_transform.pos;
+    delta.x.abs() < a_collider.half_extents.x + b_collider.half_extents.x
+        && delta.y.abs() < a_collider.half_extents.y + b_collider.half_extents.y
 }
 
 pub struct DebugOverlayAuthor<'a, 'app> {

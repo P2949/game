@@ -532,6 +532,8 @@ pub struct Input {
     pressed: HashSet<ActionId>,
     down: HashSet<ActionId>,
     axes2d: HashMap<Axis2dId, Vec2>,
+    mouse_down: [bool; MOUSE_BUTTON_COUNT],
+    mouse_pressed: [bool; MOUSE_BUTTON_COUNT],
     mouse_position: Vec2,
     viewport_size: Vec2,
 }
@@ -557,6 +559,18 @@ impl Input {
 
     pub fn mouse_position(&self) -> Vec2 {
         self.mouse_position
+    }
+
+    /// True while a physical mouse button is held. Most gameplay should use a
+    /// named action instead; UI controls need the raw button to avoid making a
+    /// one-off action binding for every button.
+    pub fn mouse_down(&self, button: MouseButton) -> bool {
+        self.mouse_down[button.index()]
+    }
+
+    /// True on the frame a physical mouse button was pressed.
+    pub fn mouse_pressed(&self, button: MouseButton) -> bool {
+        self.mouse_pressed[button.index()]
     }
 
     pub fn viewport_size(&self) -> Vec2 {
@@ -585,6 +599,13 @@ impl Input {
     pub fn with_mouse_position(mut self, position: Vec2, viewport_size: Vec2) -> Self {
         self.mouse_position = sanitize_finite_vec2(position);
         self.viewport_size = sanitize_viewport_size(viewport_size);
+        self
+    }
+
+    /// Test/builder helper for a physical mouse-button click.
+    pub fn with_mouse_pressed(mut self, button: MouseButton) -> Self {
+        self.mouse_down[button.index()] = true;
+        self.mouse_pressed[button.index()] = true;
         self
     }
 
@@ -618,6 +639,24 @@ impl Input {
             pressed: HashSet::new(),
             down,
             axes2d,
+            mouse_down: std::array::from_fn(|index| {
+                state.mouse_down(match index {
+                    0 => MouseButton::Left,
+                    1 => MouseButton::Right,
+                    2 => MouseButton::Middle,
+                    3 => MouseButton::Back,
+                    _ => MouseButton::Forward,
+                })
+            }),
+            mouse_pressed: std::array::from_fn(|index| {
+                state.mouse_pressed(match index {
+                    0 => MouseButton::Left,
+                    1 => MouseButton::Right,
+                    2 => MouseButton::Middle,
+                    3 => MouseButton::Back,
+                    _ => MouseButton::Forward,
+                })
+            }),
             mouse_position: state.mouse_position(),
             viewport_size: state.viewport_size(),
         }

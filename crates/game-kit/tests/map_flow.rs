@@ -72,9 +72,11 @@ impl GamePlugin for SimpleSceneFlowPlugin {
         game.use_simple_scene_flow()
             .menu("menu")
             .menu_text("Start the adventure")
+            .menu_button("Play", "game")
             .game("game")
             .game_over("game_over")
             .game_over_text("Defeated - press R")
+            .game_over_button("Try again")
             .start_on(controls.attack)
             .restart_on(controls.reset)
             .build();
@@ -227,6 +229,33 @@ fn simple_scene_flow_drives_menu_level_game_over_restart() {
             .map(|scene| scene.current().to_owned()),
         Some("game".to_owned())
     );
+    assert_eq!(game.player_count(), 1);
+}
+
+#[test]
+fn simple_scene_flow_buttons_start_and_restart_the_game() {
+    let mut game = GameTestHarness::from_plugin(SimpleSceneFlowPlugin)
+        .unwrap()
+        .click_mouse_left_at(vec2(400.0, 356.0), vec2(800.0, 600.0));
+
+    game.frame(1.0 / 120.0);
+    assert_eq!(game.current_map_name(), Some("game".to_owned()));
+    assert_eq!(
+        game.world()
+            .get_resource::<SceneState>()
+            .map(|scene| scene.current().to_owned()),
+        Some("game".to_owned())
+    );
+
+    let player = game.player();
+    game.set_entity_health(player, 0);
+    game.clear_input();
+    game.frame(1.0 / 120.0);
+    assert_eq!(game.current_map_name(), Some("game_over".to_owned()));
+
+    game = game.click_mouse_left_at(vec2(400.0, 356.0), vec2(800.0, 600.0));
+    game.frame(1.0 / 120.0);
+    assert_eq!(game.current_map_name(), Some("game".to_owned()));
     assert_eq!(game.player_count(), 1);
 }
 

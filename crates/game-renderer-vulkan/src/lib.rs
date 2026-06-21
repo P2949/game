@@ -38,6 +38,10 @@ pub const FONT_TEXTURE_ID: TextureId = TextureId(0);
 pub const FONT_TEXTURE_HANDLE: game_core::backend::TextureHandle =
     game_core::backend::TextureHandle(u32::MAX);
 
+/// Sentinel texture handle for renderer-owned solid-colour UI rectangles.
+pub const UI_WHITE_TEXTURE_HANDLE: game_core::backend::TextureHandle =
+    game_core::backend::TextureHandle(u32::MAX - 1);
+
 #[derive(Clone, Copy, Debug)]
 pub struct RenderCamera {
     center: glam::Vec2,

@@ -2,7 +2,7 @@ use glam::Vec2;
 
 use crate::audio::Audio;
 use crate::camera::Camera2D;
-use crate::gfx::{Gfx, SpriteDraw, TextDraw};
+use crate::gfx::{Gfx, SpriteDraw, TextDraw, UiRect};
 use crate::input::Input;
 use crate::nav::NavGrid;
 use crate::tilemap::{Tile, TileMap};
@@ -45,6 +45,7 @@ pub struct RenderFrame {
     pub camera: Camera2D,
     pub world_sprites: Vec<SpriteDraw>,
     pub ui_sprites: Vec<SpriteDraw>,
+    pub ui_rects: Vec<UiRect>,
     pub ui_text: Vec<TextDraw>,
 }
 
@@ -54,6 +55,7 @@ impl RenderFrame {
             camera,
             world_sprites: Vec::new(),
             ui_sprites: Vec::new(),
+            ui_rects: Vec::new(),
             ui_text: Vec::new(),
         }
     }

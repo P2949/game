@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow};
@@ -87,6 +87,7 @@ impl PendingMap {
                 mut objects,
                 legends,
             } => {
+                validate_map_row_widths(&self.name, &rows)?;
                 let rows = expand_symbolic_tiles(&self.name, rows, &mut objects, legends)?;
                 let row_refs: Vec<&str> = rows.iter().map(String::as_str).collect();
                 let mut builder = MapBuilder::new(self.name.clone(), tile_size)
@@ -123,6 +124,7 @@ impl PendingMap {
                     .lines()
                     .map(|line| line.trim_end_matches('\r').to_owned())
                     .collect::<Vec<_>>();
+                validate_map_row_widths(&self.name, &rows)?;
                 let rows = expand_symbolic_tiles(&self.name, rows, &mut objects, legends)?;
                 let row_refs = rows.iter().map(String::as_str).collect::<Vec<_>>();
                 let mut builder = MapBuilder::new(self.name.clone(), tile_size)
@@ -160,7 +162,13 @@ impl PendingMap {
 }
 
 fn beginner_asset_path(path: &str) -> PathBuf {
-    let relative = Path::new("assets").join(path);
+    let root = std::env::var_os("GAME_ASSET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("assets"));
+    if root.is_absolute() {
+        return root.join(path);
+    }
+    let relative = root.join(path);
     let Ok(current_dir) = std::env::current_dir() else {
         return relative;
     };
@@ -396,7 +404,9 @@ fn expand_symbolic_tiles(
                 symbol => {
                     let prefab = legend_lookup.get(&symbol).ok_or_else(|| {
                         anyhow!(
-                            "map '{map_name}' uses symbol {symbol:?} at row {row}, col {col}, but no legend was declared.\n\nAdd:\n    .legend({symbol:?}, \"prefab_name\")"
+                            "Unknown symbol {symbol:?} in map '{map_name}' at row {}, col {}.\n\nAdd:\n    .legend({symbol:?}, \"prefab_name\")\n\nor replace the symbol with `.` or `#`.",
+                            row + 1,
+                            col + 1,
                         )
                     })?;
                     collision_row.push('.');
@@ -425,6 +435,23 @@ fn expand_symbolic_tiles(
     }
 
     Ok(collision_rows)
+}
+
+fn validate_map_row_widths(map_name: &str, rows: &[String]) -> Result<()> {
+    let Some(first) = rows.first() else {
+        anyhow::bail!("Map '{map_name}' has no rows. Add at least one tile row.");
+    };
+    let expected_width = first.chars().count();
+    for (index, row) in rows.iter().enumerate().skip(1) {
+        let width = row.chars().count();
+        if width != expected_width {
+            anyhow::bail!(
+                "Map rows have inconsistent widths in map '{map_name}'.\n\nRow 1 has width {expected_width}; row {} has width {width}.\n\nMake every row the same width.",
+                index + 1,
+            );
+        }
+    }
+    Ok(())
 }
 
 fn generated_object_id(prefab: &str, count: usize) -> String {
@@ -558,4 +585,45 @@ pub(crate) fn restart_start_map_world(world: &mut World) -> Result<MapId> {
 /// and reset, so the behavior is generic and identical.
 pub(crate) fn reset_to_start_map_world(world: &mut World) -> Result<()> {
     restart_start_map_world(world).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expand_symbolic_tiles, validate_map_row_widths};
+
+    #[test]
+    fn text_map_diagnostics_name_unknown_symbols_and_their_fix() {
+        let error =
+            expand_symbolic_tiles("level_1", vec!["#X#".to_owned()], &mut Vec::new(), vec![])
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("Unknown symbol 'X' in map 'level_1'"));
+        assert!(error.contains(".legend('X', \"prefab_name\")"));
+    }
+
+    #[test]
+    fn text_map_diagnostics_report_ragged_row_widths() {
+        let error = validate_map_row_widths(
+            "level_1",
+            &["############".to_owned(), "##########".to_owned()],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Map rows have inconsistent widths"));
+        assert!(error.contains("Row 1 has width 12; row 2 has width 10"));
+    }
+
+    #[test]
+    fn text_map_diagnostics_require_a_player_symbol_when_legend_declares_player() {
+        let error = expand_symbolic_tiles(
+            "level_1",
+            vec!["...".to_owned()],
+            &mut Vec::new(),
+            vec![('P', "player".to_owned())],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Map 'level_1' has no player spawn"));
+        assert!(error.contains("Add 'P'"));
+    }
 }

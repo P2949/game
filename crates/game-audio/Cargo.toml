@@ -9,9 +9,11 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 crossbeam-queue.workspace = true
+lewton = { version = "0.10.2", optional = true }
 log.workspace = true
 sdl3.workspace = true
 game-core = { version = "0.1.0", path = "../game-core" }
 
 [features]
 ci-build-sdl3 = ["sdl3/build-from-source"]
+ogg = ["dep:lewton"]

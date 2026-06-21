@@ -4,6 +4,7 @@
 //! the engine's `AssetRegistry`. Reached through [`GameApp::assets`].
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use anyhow::{Result, anyhow};
 use game_core::assets::AssetRegistry;
@@ -250,7 +251,8 @@ pub struct AssetBagAuthor<'a> {
 
 /// Registers common beginner asset folders using the asset key as the filename.
 /// `textures(["player"])` maps to `assets/textures/player.png`, while
-/// `sounds(["hit"])` maps to `assets/sounds/hit.wav`.
+/// `sounds(["hit"])` maps to `assets/sounds/hit.wav`. Explicit `.sound(...)`
+/// and `.music(...)` paths may use WAV or optional OGG Vorbis files.
 pub struct AssetFolderAuthor<'a> {
     bag: AssetBagAuthor<'a>,
 }
@@ -260,23 +262,43 @@ impl<'a> AssetFolderAuthor<'a> {
         Self { bag }
     }
 
+    /// Registers `assets/textures/<key>.png` under `key`.
+    pub fn texture(mut self, key: impl Into<String>) -> Result<Self> {
+        self.bag = self.bag.texture_auto(key)?;
+        Ok(self)
+    }
+
+    /// Registers `assets/sounds/<key>.wav` or `<key>.ogg`, preferring WAV when
+    /// both exist. OGG playback still requires the runtime's `ogg` feature.
+    pub fn sound(mut self, key: impl Into<String>) -> Result<Self> {
+        self.bag = self.bag.sound_auto(key)?;
+        Ok(self)
+    }
+
+    /// Registers `assets/music/<key>.wav` or `<key>.ogg`, preferring WAV when
+    /// both exist. OGG playback still requires the runtime's `ogg` feature.
+    pub fn music(mut self, key: impl Into<String>) -> Result<Self> {
+        self.bag = self.bag.music_auto(key)?;
+        Ok(self)
+    }
+
     pub fn textures<const N: usize>(mut self, keys: [&str; N]) -> Result<Self> {
         for key in keys {
-            self.bag = self.bag.texture_auto(key)?;
+            self = self.texture(key)?;
         }
         Ok(self)
     }
 
     pub fn sounds<const N: usize>(mut self, keys: [&str; N]) -> Result<Self> {
         for key in keys {
-            self.bag = self.bag.sound_auto(key)?;
+            self = self.sound(key)?;
         }
         Ok(self)
     }
 
-    pub fn music<const N: usize>(mut self, keys: [&str; N]) -> Result<Self> {
+    pub fn music_tracks<const N: usize>(mut self, keys: [&str; N]) -> Result<Self> {
         for key in keys {
-            self.bag = self.bag.music_auto(key)?;
+            self = self.music(key)?;
         }
         Ok(self)
     }
@@ -301,10 +323,14 @@ impl<'a> AssetBagAuthor<'a> {
         Ok(self)
     }
 
-    /// Registers `assets/textures/<key>.png` under `key`.
+    /// Registers the first conventional texture found for `key`. PNG is the
+    /// current beginner convention and fallback.
     pub fn texture_auto(self, key: impl Into<String>) -> Result<Self> {
         let key = key.into();
-        self.texture(key.clone(), format!("textures/{key}.png"))
+        self.texture(
+            key.clone(),
+            conventional_asset_path("textures", &key, &["png"]),
+        )
     }
 
     pub fn sound(mut self, key: impl Into<String>, path: impl Into<String>) -> Result<Self> {
@@ -314,10 +340,15 @@ impl<'a> AssetBagAuthor<'a> {
         Ok(self)
     }
 
-    /// Registers `assets/sounds/<key>.wav` under `key`.
+    /// Registers the first conventional sound found for `key`: WAV first, then
+    /// OGG. An OGG asset reports a clear startup error until the runtime enables
+    /// its `ogg` feature.
     pub fn sound_auto(self, key: impl Into<String>) -> Result<Self> {
         let key = key.into();
-        self.sound(key.clone(), format!("sounds/{key}.wav"))
+        self.sound(
+            key.clone(),
+            conventional_asset_path("sounds", &key, &["wav", "ogg"]),
+        )
     }
 
     pub fn music(mut self, key: impl Into<String>, path: impl Into<String>) -> Result<Self> {
@@ -327,10 +358,14 @@ impl<'a> AssetBagAuthor<'a> {
         Ok(self)
     }
 
-    /// Registers `assets/music/<key>.wav` under `key`.
+    /// Registers the first conventional music file found for `key`: WAV first,
+    /// then OGG. An OGG asset requires the runtime's `ogg` feature.
     pub fn music_auto(self, key: impl Into<String>) -> Result<Self> {
         let key = key.into();
-        self.music(key.clone(), format!("music/{key}.wav"))
+        self.music(
+            key.clone(),
+            conventional_asset_path("music", &key, &["wav", "ogg"]),
+        )
     }
 
     pub fn generated_sound(mut self, key: impl Into<String>) -> Result<Self> {
@@ -363,6 +398,38 @@ impl<'a> AssetBagAuthor<'a> {
     pub fn build(self) -> AssetBag {
         self.bag
     }
+}
+
+fn conventional_asset_path(folder: &str, key: &str, extensions: &[&str]) -> String {
+    let candidates = extensions
+        .iter()
+        .map(|extension| format!("{folder}/{key}.{extension}"))
+        .collect::<Vec<_>>();
+    select_conventional_path(&candidates, asset_path_exists)
+}
+
+fn select_conventional_path(candidates: &[String], mut exists: impl FnMut(&str) -> bool) -> String {
+    candidates
+        .iter()
+        .find(|candidate| exists(candidate))
+        .cloned()
+        .or_else(|| candidates.first().cloned())
+        .unwrap_or_default()
+}
+
+fn asset_path_exists(relative: &str) -> bool {
+    let root = std::env::var_os("GAME_ASSET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "assets".into());
+    if root.is_absolute() {
+        return root.join(relative).is_file();
+    }
+    let Ok(current_dir) = std::env::current_dir() else {
+        return Path::new(&root).join(relative).is_file();
+    };
+    current_dir
+        .ancestors()
+        .any(|directory| directory.join(&root).join(relative).is_file())
 }
 
 impl<'a> AssetAuthor<'a> {
@@ -431,7 +498,7 @@ impl<'a> AssetAuthor<'a> {
 mod tests {
     use game_core::assets::AssetRegistry;
 
-    use super::{AssetAuthor, AssetBagAuthor, AssetFolderAuthor};
+    use super::{AssetAuthor, AssetBagAuthor, AssetFolderAuthor, select_conventional_path};
 
     #[test]
     fn asset_bag_collects_declared_handles_by_key() {
@@ -487,7 +554,7 @@ mod tests {
             .unwrap()
             .sounds(["hit"])
             .unwrap()
-            .music(["theme"])
+            .music_tracks(["theme"])
             .unwrap()
             .build();
 
@@ -503,5 +570,34 @@ mod tests {
             registry.sound_request("hit"),
             Some(game_core::backend::SoundLoadRequest::File { path }) if path == "sounds/hit.wav"
         ));
+    }
+
+    #[test]
+    fn conventional_folder_lookup_prefers_existing_wav_then_ogg_and_has_a_stable_fallback() {
+        let candidates = vec!["sounds/hit.wav".to_owned(), "sounds/hit.ogg".to_owned()];
+        assert_eq!(
+            select_conventional_path(&candidates, |path| path.ends_with(".ogg")),
+            "sounds/hit.ogg"
+        );
+        assert_eq!(
+            select_conventional_path(&candidates, |_| false),
+            "sounds/hit.wav"
+        );
+    }
+
+    #[test]
+    fn singular_folder_helpers_register_named_texture_sound_and_music() {
+        let mut registry = AssetRegistry::new();
+        let bag = AssetFolderAuthor::new(AssetBagAuthor::new(AssetAuthor::new(&mut registry)))
+            .texture("player")
+            .unwrap()
+            .sound("hit")
+            .unwrap()
+            .music("theme")
+            .unwrap()
+            .build();
+        assert!(bag.try_texture("player").is_some());
+        assert!(bag.try_sound("hit").is_some());
+        assert!(bag.try_sound("theme").is_some());
     }
 }

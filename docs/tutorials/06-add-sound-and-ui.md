@@ -28,12 +28,12 @@ let assets = game
     .build();
 ```
 
-Use it in the beginner top-down preset:
+Use the registered name in the beginner top-down preset:
 
 ```rust
 game.use_top_down_game()
     .controls(controls)
-    .hit_sound(assets.sound("hit"))
+    .hit_sound_named("hit")
     .with_melee_combat()
     .with_enemy_chase()
     .with_collision()
@@ -44,8 +44,8 @@ game.use_top_down_game()
 
 ## Explanation
 
-The asset handle comes from the `asset_bag` and is copied into the preset. The
-runtime loads the actual sound file from `assets/sounds/hit.wav`.
+The preset resolves the name registered by `asset_bag`. The runtime loads the
+actual sound file from `assets/sounds/hit.wav`.
 
 `with_pause_death_ui` draws simple text when the game is paused or the player is
 dead. `debug_toggle` lets the preset toggle `DebugOverlay`; by default the

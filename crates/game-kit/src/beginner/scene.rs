@@ -50,7 +50,9 @@ pub struct SimpleSceneFlowAuthor<'a, 'app> {
     game_over: Option<String>,
     win: Option<String>,
     menu_text: Option<String>,
+    menu_button: Option<(String, String)>,
     game_over_text: Option<String>,
+    game_over_button: Option<String>,
     win_text: Option<String>,
     start_on: Option<ActionId>,
     restart_on: Option<ActionId>,
@@ -67,7 +69,9 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
             game_over: None,
             win: None,
             menu_text: None,
+            menu_button: None,
             game_over_text: None,
+            game_over_button: None,
             win_text: None,
             start_on: None,
             restart_on: None,
@@ -105,8 +109,21 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
         self
     }
 
+    /// Adds a mouse-clickable menu button that opens `map` in the configured
+    /// game scene. Keyboard/controller `start_on` remains available too.
+    pub fn menu_button(mut self, label: impl Into<String>, map: impl Into<String>) -> Self {
+        self.menu_button = Some((label.into(), map.into()));
+        self
+    }
+
     pub fn game_over_text(mut self, text: impl Into<String>) -> Self {
         self.game_over_text = Some(text.into());
+        self
+    }
+
+    /// Adds a mouse-clickable restart button to the game-over scene.
+    pub fn game_over_button(mut self, label: impl Into<String>) -> Self {
+        self.game_over_button = Some(label.into());
         self
     }
 
@@ -141,9 +158,11 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
         let game_over = self.game_over.unwrap_or_else(|| "game_over".to_owned());
         let win = self.win;
         let menu_text = self.menu_text.unwrap_or_else(|| "Press start".to_owned());
+        let menu_button = self.menu_button;
         let game_over_text = self
             .game_over_text
             .unwrap_or_else(|| "Game Over".to_owned());
+        let game_over_button = self.game_over_button;
         let win_text = self.win_text.unwrap_or_else(|| "You win!".to_owned());
         let app = self.app;
 
@@ -224,14 +243,61 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
         app.draw_ui(move |game: &mut GameCtx<'_, '_>, _dt| {
             let current = game.current_scene_name();
             if current.as_deref() == Some(menu.as_str()) {
-                game.ui().center_text(&menu_text).build();
+                let panel_position = scene_panel_position(game);
+                game.ui().panel("Menu").line(&menu_text).at(panel_position);
+                if let Some((label, map)) = &menu_button {
+                    let target_scene = game_scene.clone();
+                    let target_map = map.clone();
+                    let button_position = scene_button_position(game);
+                    game.ui()
+                        .button(label)
+                        .at_screen(button_position)
+                        .on_click(move |game| {
+                            start_scene_map(game, &target_scene, &target_map);
+                        });
+                }
             } else if current.as_deref() == Some(game_over.as_str()) {
-                game.ui().center_text(&game_over_text).build();
+                let panel_position = scene_panel_position(game);
+                game.ui()
+                    .panel("Game Over")
+                    .line(&game_over_text)
+                    .at(panel_position);
+                if let Some(label) = &game_over_button {
+                    let target_scene = game_scene.clone();
+                    let target_map = game_scene.clone();
+                    let button_position = scene_button_position(game);
+                    game.ui()
+                        .button(label)
+                        .at_screen(button_position)
+                        .on_click(move |game| {
+                            start_scene_map(game, &target_scene, &target_map);
+                        });
+                }
             } else if current.as_deref() == win.as_deref() {
-                game.ui().center_text(&win_text).build();
+                game.ui().panel("You Win!").line(&win_text).center();
             }
         });
     }
+}
+
+fn scene_button_position(game: &GameCtx<'_, '_>) -> glam::Vec2 {
+    let viewport = game.input().viewport_size();
+    let center = if viewport.x > 0.0 && viewport.y > 0.0 {
+        viewport * 0.5
+    } else {
+        glam::vec2(400.0, 300.0)
+    };
+    center + glam::vec2(0.0, 56.0)
+}
+
+fn scene_panel_position(game: &GameCtx<'_, '_>) -> glam::Vec2 {
+    let viewport = game.input().viewport_size();
+    let center = if viewport.x > 0.0 && viewport.y > 0.0 {
+        viewport * 0.5
+    } else {
+        glam::vec2(400.0, 300.0)
+    };
+    center - glam::vec2(0.0, 48.0)
 }
 
 fn start_scene_map(game: &mut GameCtx<'_, '_>, scene: &str, map: &str) {

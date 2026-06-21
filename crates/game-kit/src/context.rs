@@ -12,7 +12,7 @@ use game_core::backend::SoundHandle;
 use game_core::builder::{PrefabId, PropertyBag};
 use game_core::camera::Camera2D;
 use game_core::commands::CommandQueue;
-use game_core::input::{ActionId, Axis2dId, Input};
+use game_core::input::{ActionId, Axis2dId, Input, MouseButton};
 use game_core::world::{Component, EntityId, Transform, Velocity};
 use game_map::MapCell;
 use glam::{Vec2, Vec4};
@@ -70,6 +70,13 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         self.input().mouse_position()
     }
 
+    /// True on the current frame when a physical mouse button was pressed.
+    /// Beginner gameplay should normally bind actions instead; this is exposed
+    /// for immediate-mode UI buttons.
+    pub fn mouse_pressed(&self, button: MouseButton) -> bool {
+        self.input().mouse_pressed(button)
+    }
+
     /// Current mouse position in world coordinates, using the active 2D camera.
     pub fn mouse_world_position(&self) -> Vec2 {
         let viewport = self.input().viewport_size();
@@ -83,6 +90,18 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     /// Queues UI text for this frame.
     pub fn text(&mut self, text: &str, pos: Vec2, color: Vec4) {
         self.inner.gfx.text(text, pos, color);
+    }
+
+    /// Queues a screen-space UI rectangle. High-level panels and buttons use
+    /// this internally; ordinary beginner content can keep using `game.ui()`.
+    pub fn ui_rect(&mut self, pos: Vec2, size: Vec2, color: Vec4) {
+        self.ui_rect_at_layer(pos, size, color, 9_900);
+    }
+
+    /// Internal layering hook for the high-level immediate-mode UI helpers.
+    /// Content should use [`Self::ui`] rather than selecting renderer layers.
+    pub(crate) fn ui_rect_at_layer(&mut self, pos: Vec2, size: Vec2, color: Vec4, layer: i16) {
+        self.inner.gfx.ui_rect(pos, size, color, layer);
     }
 
     /// Plays a sound effect immediately (bypassing the command queue).
@@ -233,6 +252,12 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     /// Mutates component `T` on `id`.
     pub fn component_mut<T: Component>(&mut self, id: EntityId) -> Option<&mut T> {
         self.inner.world.get_mut::<T>(id)
+    }
+
+    /// Inserts or replaces an internal beginner component for a state change
+    /// such as a projectile entering an impact animation.
+    pub(crate) fn insert_component<T: Component>(&mut self, id: EntityId, component: T) {
+        self.inner.world.insert(id, component);
     }
 
     /// True when `id` has component `T`.

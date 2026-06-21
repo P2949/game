@@ -7,15 +7,16 @@ use game_core::backend::TextureHandle;
 use game_core::builder::PropertyBag;
 use game_core::input::Axis2dId;
 use game_core::world::{Sprite, Transform, Velocity};
-use game_physics::Collider;
+use game_physics::{Collider, Trigger};
 use glam::{Vec2, Vec4, vec2};
 
 use crate::app::GameApp;
 use crate::assets::{SoundRef, TextureRef};
 use crate::beginner::actors::{
-    CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect, DespawnOnHit, Door,
-    DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Pickup, Player, PlayerMovement,
-    PlayerProjectile, Projectile, ProjectileDamage, ScoreValue, SpawnPlacement, Spawner, Speed,
+    Area, AreaName, CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect,
+    DespawnOnHit, Door, DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Pickup, Player,
+    PlayerMovement, PlayerProjectile, Projectile, ProjectileDamage, ScoreValue, SpawnPlacement,
+    Spawner, Speed, TriggerArea,
 };
 use crate::beginner::animation::{
     Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, idle_frames,
@@ -28,6 +29,7 @@ const ENEMY_SIZE: f32 = 22.0;
 const PICKUP_SIZE: f32 = 16.0;
 const DOOR_SIZE: f32 = 24.0;
 const PROJECTILE_SIZE: f32 = 10.0;
+const AREA_SIZE: f32 = 32.0;
 const PLAYER_HEALTH: i32 = 100;
 const ENEMY_HEALTH: i32 = 40;
 const PLAYER_SPEED: f32 = 130.0;
@@ -250,9 +252,13 @@ impl ObjectPrefabSpec {
     }
 
     fn sprite(&self, source: SpriteSource) -> Sprite {
+        self.sprite_at(source, 0)
+    }
+
+    fn sprite_at(&self, source: SpriteSource, frame: usize) -> Sprite {
         let sprite = match source {
             SpriteSource::Texture(texture) => Sprite::new(texture, self.size),
-            SpriteSource::Sheet(sheet) => sheet.sprite(0, self.size),
+            SpriteSource::Sheet(sheet) => sheet.sprite(frame, self.size),
         };
         sprite.layer(self.layer).tint(self.tint)
     }
@@ -547,6 +553,22 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
 
     pub fn walk(self, frames: impl IntoIterator<Item = usize>) -> Self {
         self.animation("walk", walk_frames(frames))
+    }
+
+    pub fn walk_up(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("walk_up", walk_frames(frames))
+    }
+
+    pub fn walk_down(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("walk_down", walk_frames(frames))
+    }
+
+    pub fn walk_left(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("walk_left", walk_frames(frames))
+    }
+
+    pub fn walk_right(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("walk_right", walk_frames(frames))
     }
 
     pub fn attack(self, frames: impl IntoIterator<Item = usize>) -> Self {
@@ -1156,6 +1178,152 @@ pub struct DoorPrefabAuthor<'a, 'app> {
     requires_all_enemies_dead: bool,
 }
 
+/// Builder for a collider-only trigger zone. Areas intentionally do not need a
+/// sprite; add `.visible_debug("debug_trigger")` when a temporary visual is
+/// useful while authoring a level.
+pub struct AreaPrefabAuthor<'a, 'app> {
+    app: &'a mut GameApp<'app>,
+    name: String,
+    display_name: Option<String>,
+    size: Vec2,
+    collider: Option<Vec2>,
+    debug_sprite: Option<SpriteSourceRef>,
+    tint: Vec4,
+    layer: i16,
+}
+
+impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
+    pub(crate) fn new(app: &'a mut GameApp<'app>, name: String) -> Self {
+        Self {
+            app,
+            name,
+            display_name: None,
+            size: vec2s(AREA_SIZE),
+            collider: None,
+            debug_sprite: None,
+            tint: Vec4::new(1.0, 0.2, 0.2, 0.35),
+            layer: DEFAULT_LAYER,
+        }
+    }
+
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.display_name = Some(name.into());
+        self
+    }
+
+    /// Sets the visible and collision size of this area.
+    pub fn size(mut self, size: Vec2) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Alias for [`Self::size`], matching other prefab builders.
+    pub fn size2(self, size: Vec2) -> Self {
+        self.size(size)
+    }
+
+    pub fn collider(mut self, size: Vec2) -> Self {
+        self.collider = Some(size);
+        self
+    }
+
+    /// Areas are trigger-only by default. This reads naturally in examples
+    /// that want to make the non-solid behavior explicit.
+    pub fn trigger_only(self) -> Self {
+        self
+    }
+
+    /// Adds an optional, non-gameplay debug sprite to this area.
+    pub fn visible_debug(mut self, texture: impl Into<TextureRef>) -> Self {
+        self.debug_sprite = Some(SpriteSourceRef::Texture(texture.into()));
+        self
+    }
+
+    pub fn tint(mut self, tint: Vec4) -> Self {
+        self.tint = tint;
+        self
+    }
+
+    pub fn layer(mut self, layer: i16) -> Self {
+        self.layer = layer;
+        self
+    }
+
+    pub fn build(self) -> Result<()> {
+        let debug_sprite = self
+            .debug_sprite
+            .map(|source| match source {
+                SpriteSourceRef::Texture(texture) => self
+                    .app
+                    .resolve_texture_ref(texture)
+                    .map(SpriteSource::Texture),
+                SpriteSourceRef::Sheet(sheet) => Ok(SpriteSource::Sheet(sheet)),
+            })
+            .transpose()?;
+        let prefab_name = self.name.clone();
+        let display_name = self.display_name.unwrap_or_else(|| prefab_name.clone());
+        let area_name = prefab_name.clone();
+        let size = self.size;
+        let collider = self.collider.unwrap_or(size);
+        let tint = self.tint;
+        let layer = self.layer;
+
+        if let Some(source) = debug_sprite {
+            self.app.prefab(self.name, move |prefab| {
+                prefab
+                    .spawn(move |at| {
+                        let sprite = match source {
+                            SpriteSource::Texture(texture) => Sprite::new(texture, size),
+                            SpriteSource::Sheet(sheet) => sheet.sprite(0, size),
+                        }
+                        .layer(layer)
+                        .tint(tint);
+                        (
+                            Name::new(display_name.clone()),
+                            Transform::at(at),
+                            Area,
+                            TriggerArea,
+                            AreaName(area_name.clone()),
+                            Trigger,
+                            Collider::box_of(collider),
+                            sprite,
+                        )
+                    })?
+                    .require::<Transform>()
+                    .require::<Area>()
+                    .require::<TriggerArea>()
+                    .require::<AreaName>()
+                    .require::<Trigger>()
+                    .require::<Collider>()
+                    .require::<Sprite>();
+                Ok(())
+            })
+        } else {
+            self.app.prefab(self.name, move |prefab| {
+                prefab
+                    .spawn(move |at| {
+                        (
+                            Name::new(display_name.clone()),
+                            Transform::at(at),
+                            Area,
+                            TriggerArea,
+                            AreaName(area_name.clone()),
+                            Trigger,
+                            Collider::box_of(collider),
+                        )
+                    })?
+                    .require::<Transform>()
+                    .require::<Area>()
+                    .require::<TriggerArea>()
+                    .require::<AreaName>()
+                    .require::<Trigger>()
+                    .require::<Collider>();
+                Ok(())
+            })
+        }
+    }
+}
+
 impl<'a, 'app> DoorPrefabAuthor<'a, 'app> {
     pub(crate) fn new(app: &'a mut GameApp<'app>, name: String) -> Self {
         Self {
@@ -1276,6 +1444,8 @@ pub struct ProjectilePrefabAuthor<'a, 'app> {
     damage: i32,
     lifetime: f32,
     despawn_on_hit: bool,
+    flight: Option<AnimationClip>,
+    impact: Option<AnimationClip>,
 }
 
 impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
@@ -1288,6 +1458,8 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
             damage: 0,
             lifetime: 1.0,
             despawn_on_hit: false,
+            flight: None,
+            impact: None,
         }
     }
 
@@ -1351,6 +1523,19 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
         self
     }
 
+    /// Registers a looping `flight` clip for a spritesheet projectile.
+    pub fn flight(mut self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.flight = Some(walk_frames(frames));
+        self
+    }
+
+    /// Registers a one-shot `impact` clip for use with
+    /// `game.rules().projectile_impact_animation_before_despawn()`.
+    pub fn impact(mut self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.impact = Some(attack_frames(frames));
+        self
+    }
+
     pub fn build(self) -> Result<()> {
         let sprite_source = self
             .spec
@@ -1362,6 +1547,8 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
         let speed = self.speed;
         let damage = self.damage;
         let lifetime = self.lifetime;
+        let (animation, animation_set, first_frame) =
+            projectile_animation_components(sprite_source, self.flight, self.impact, &prefab_name)?;
 
         if self.despawn_on_hit {
             self.app.prefab(self.name, move |prefab| {
@@ -1380,7 +1567,9 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
                                 seconds_left: lifetime,
                             },
                             DespawnOnHit,
-                            spec.sprite(sprite_source),
+                            spec.sprite_at(sprite_source, first_frame),
+                            animation.clone(),
+                            animation_set.clone(),
                             Collider::box_of(collider),
                         )
                     })?
@@ -1393,6 +1582,8 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
                     .require::<Lifetime>()
                     .require::<DespawnOnHit>()
                     .require::<Sprite>()
+                    .require::<Animation>()
+                    .require::<AnimationSet>()
                     .require::<Collider>();
                 Ok(())
             })
@@ -1412,7 +1603,9 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
                             Lifetime {
                                 seconds_left: lifetime,
                             },
-                            spec.sprite(sprite_source),
+                            spec.sprite_at(sprite_source, first_frame),
+                            animation.clone(),
+                            animation_set.clone(),
                             Collider::box_of(collider),
                         )
                     })?
@@ -1424,11 +1617,49 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
                     .require::<ProjectileDamage>()
                     .require::<Lifetime>()
                     .require::<Sprite>()
+                    .require::<Animation>()
+                    .require::<AnimationSet>()
                     .require::<Collider>();
                 Ok(())
             })
         }
     }
+}
+
+fn projectile_animation_components(
+    source: SpriteSource,
+    flight: Option<AnimationClip>,
+    impact: Option<AnimationClip>,
+    prefab_name: &str,
+) -> Result<(Animation, AnimationSet, usize)> {
+    let custom_animation = flight.is_some() || impact.is_some();
+    let sheet = match source {
+        SpriteSource::Sheet(sheet) => sheet,
+        SpriteSource::Texture(texture) if !custom_animation => SpriteSheet::new(texture, 1, 1),
+        SpriteSource::Texture(_) => anyhow::bail!(
+            "projectile prefab '{prefab_name}' has flight/impact animations but uses a static sprite.\n\nUse:\n    .spritesheet(assets.projectile_sheet)"
+        ),
+    };
+
+    let mut set = AnimationSet::new(sheet);
+    let initial = if let Some(flight) = flight {
+        set = set.animation("flight", flight);
+        "flight"
+    } else if impact.is_some() {
+        "impact"
+    } else {
+        set = set.animation("flight", AnimationClip::frames([0]));
+        "flight"
+    };
+    if let Some(impact) = impact {
+        set = set.animation("impact", impact);
+    }
+    let first_frame = set
+        .get(initial)
+        .and_then(|clip| clip.frames.first())
+        .copied()
+        .unwrap_or(0);
+    Ok((Animation::play(initial), set, first_frame))
 }
 
 pub struct SpawnerPrefabAuthor<'a, 'app> {

@@ -36,6 +36,21 @@ pub struct Player;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Enemy;
 
+/// Marks a non-solid overlap zone authored through `game.area_prefab(...)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TriggerArea;
+
+/// A semantic alias for an authored trigger area. Keeping this separate from
+/// [`TriggerArea`] lets future area rules add behavior without changing the
+/// lightweight trigger marker.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Area;
+
+/// The authored name of an area. Event callbacks use prefab names for matching,
+/// while this component keeps that intent available to future area features.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AreaName(pub String);
+
 /// Enemy prefab policy for playing a configured `die` clip before removal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DeathAnimationPolicy {
@@ -100,6 +115,11 @@ pub struct Lifetime {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DespawnOnHit;
+
+/// Marks a projectile that has hit and is playing its optional `impact` clip.
+/// Projectile rules freeze it until that one-shot clip finishes, then remove it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProjectileImpact;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SpawnPlacement {

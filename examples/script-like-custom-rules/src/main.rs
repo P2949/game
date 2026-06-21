@@ -86,6 +86,8 @@ fn main() -> Result<()> {
             .pause_and_reset()
             .show_score()
             .show_player_health()
+            .show_pause_menu()
+            .show_game_over_panel()
             .build();
 
         game.on_action_cooldown(controls.attack, 0.2, |game| {

@@ -30,7 +30,8 @@ This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 - 2D sprite rendering with layered, texture-batched draws
 - fixed-timestep gameplay
 - axis-separated AABB collision with wall sliding
-- file-backed WAV sound effects and looping music handles through `game-kit`
+- file-backed WAV sound effects and looping music handles through `game-kit`,
+  plus optional OGG Vorbis decoding
 - generated placeholder sounds through a lock-free mixer
 
 It is **not** yet:
@@ -38,8 +39,8 @@ It is **not** yet:
 - a full engine
 - a finished game
 - a general asset pipeline
-- OGG/MP3 playback or streaming audio; WAV files are loaded into memory and
-  converted to the mixer rate/channels at startup
+- MP3 playback or streaming audio; WAV and optional OGG files are loaded into
+  memory and converted to the mixer rate/channels at startup
 
 ## Features
 

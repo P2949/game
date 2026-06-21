@@ -41,8 +41,7 @@ pub struct DemoPlugin;
 
 impl GamePlugin for DemoPlugin {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        let assets = game
-            .asset_bag()
+        game.asset_bag()
             .texture("player", "textures/test.png")?
             .texture("slime", "textures/test.png")?
             .texture("floor", "textures/test.png")?
@@ -53,18 +52,18 @@ impl GamePlugin for DemoPlugin {
         let controls = game.input(|input| input.top_down_controls())?;
 
         game.player_prefab("player")
-            .sprite(assets.texture("player"))
+            .sprite("player")
             .moves_with(controls.movement, 130.0)
             .build()?;
 
         game.enemy_prefab("slime")
-            .sprite(assets.texture("slime"))
+            .sprite("slime")
             .chases_player()
             .build()?;
 
         game.map("level_1")
             .tiles(["#####", "#P.E#", "#####"])
-            .simple_theme(assets.texture("floor"), assets.texture("wall"))
+            .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('E', "slime")
             .start();
@@ -80,8 +79,8 @@ impl GamePlugin for DemoPlugin {
 }
 ```
 
-Use `game.asset_bag()` for first projects. It registers assets and returns
-handles by friendly names:
+Use `game.asset_bag()` for first projects. It registers assets under friendly
+names, which the beginner builders use directly:
 
 ```rust
 let assets = game
@@ -93,12 +92,38 @@ let assets = game
     .build();
 ```
 
-Audio assets support file-backed WAV sound effects and WAV music handles through
-`.sound(...)` and `.music(...)`. WAV files are loaded into memory at startup and
-converted to the mixer sample rate and channel count; mono and stereo PCM16 or
-float32 WAV files are the intended path. `generated_sound(...)` is still
-available for tests and quick placeholders. OGG/MP3 playback and streaming audio
-are not implemented yet.
+### Conventional asset folders
+
+When filenames match their gameplay names, avoid repeating paths entirely:
+
+```rust
+game.assets_from_folders()
+    .texture("player")?
+    .texture("slime")?
+    .texture("floor")?
+    .texture("wall")?
+    .sound("coin")?
+    .music("theme")?
+    .build();
+```
+
+This looks for `assets/textures/player.png`, `assets/sounds/coin.wav` (then
+`coin.ogg`), and `assets/music/theme.wav` (then `theme.ogg`). PNG is the current
+beginner texture convention. OGG still needs the runtime's optional `ogg`
+feature; a WAV file is always supported.
+
+Audio assets support file-backed WAV sound effects and music through `.sound(...)`
+and `.music(...)`. WAV is always available; OGG Vorbis is available when the
+optional `ogg` feature is enabled on your runtime package. WAV and OGG are loaded
+into memory at startup and normalized to the mixer sample rate and channel count.
+For a standalone game, enable it in `Cargo.toml`:
+
+```toml
+game-starter = { path = "../game/crates/game-starter", features = ["ogg"] }
+```
+
+`generated_sound(...)` remains useful for tests and quick placeholders. MP3 and
+streaming music are not implemented yet.
 
 Play named assets through the beginner audio surface—no handles need to travel
 into gameplay callbacks:
@@ -125,13 +150,13 @@ Use prefab builders for common actors:
 
 ```rust
 game.player_prefab("player")
-    .sprite(assets.texture("player"))
+    .sprite("player")
     .health(100)
     .moves_with(controls.movement, 130.0)
     .build()?;
 
 game.enemy_prefab("slime")
-    .sprite(assets.texture("slime"))
+    .sprite("slime")
     .chases_player()
     .melee(26.0, 6)
     .build()?;
@@ -148,7 +173,7 @@ game.map("level_1")
         "#P...E.#",
         "########",
     ])
-    .simple_theme(assets.texture("floor"), assets.texture("wall"))
+    .simple_theme("floor", "wall")
     .legend('P', "player")
     .legend('E', "slime")
     .spawn("extra_slime", "slime", cell(5, 1))
@@ -179,7 +204,7 @@ specific top-down option, use the beginner top-down preset directly:
 ```rust
 game.use_top_down_game()
     .controls(controls)
-    .hit_sound(assets.sound("hit"))
+    .hit_sound_named("hit")
     .with_melee_combat()
     .with_enemy_chase()
     .with_collision()
@@ -188,6 +213,33 @@ game.use_top_down_game()
     .with_player_animation_by_movement()
     .build();
 ```
+
+## Typed assets for larger content crates
+
+The name-based path above is the right default for a first game. For a larger
+Rust content crate, a typed asset struct can make dependencies explicit:
+
+```rust
+struct ArenaAssets {
+    player: TextureHandle,
+    slime: TextureHandle,
+}
+```
+
+Use `game.assets(..)` and `AssetAuthor` when you deliberately choose that
+shape:
+
+```rust
+let assets = game.assets(|assets| {
+    Ok(DemoAssets {
+        player: assets.texture("demo/player", "textures/test.png")?,
+        hit: assets.sound("demo/hit", "sounds/hit.wav")?,
+    })
+})?;
+```
+
+This is an intermediate Rust-content pattern. It is not required for beginner
+prefabs, maps, rules, or named audio playback.
 
 ## Advanced Path
 
@@ -201,18 +253,6 @@ Use this path for custom tuple prefabs, manual schedules, explicit queries, RON
 map experiments, or specialized content tests. Advanced content still depends on
 `game-kit`; it does not wire SDL, Vulkan, audio devices, schedules, validators,
 registries, command queues, or raw runtime contexts.
-
-Typed asset structs are useful in larger content crates. Use `game.assets(..)`
-and `AssetAuthor` when you want that shape:
-
-```rust
-let assets = game.assets(|assets| {
-    Ok(DemoAssets {
-        player: assets.texture("demo/player", "textures/test.png")?,
-        hit: assets.sound("demo/hit", "sounds/hit.wav")?,
-    })
-})?;
-```
 
 Raw tuple prefabs belong in the advanced path:
 

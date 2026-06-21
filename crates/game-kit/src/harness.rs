@@ -16,7 +16,7 @@ use game_core::builder::{GameBuilder, MapId, MapRegistry, PrefabRegistry, Runtim
 use game_core::camera::Camera2D;
 use game_core::commands::{Command, CommandQueue};
 use game_core::gfx::Gfx;
-use game_core::input::{ActionId, Axis2dId, Input, InputRegistry};
+use game_core::input::{ActionId, Axis2dId, Input, InputRegistry, MouseButton};
 use game_core::plugin::GamePlugin as CoreGamePlugin;
 use game_core::schedule::Schedule;
 use game_core::world::{Component, EntityId, Transform, World};
@@ -116,6 +116,17 @@ impl GameTestHarness {
             .axis2d_id(name)
             .unwrap_or_else(|| panic!("unknown axis '{name}'"));
         self.input = self.input.with_axis2d(axis, value);
+        self
+    }
+
+    /// Positions the mouse and sends one left-click edge through the same
+    /// screen-space input used by beginner UI buttons.
+    pub fn click_mouse_left_at(mut self, position: Vec2, viewport_size: Vec2) -> Self {
+        self.input = self
+            .input
+            .clone()
+            .with_mouse_position(position, viewport_size)
+            .with_mouse_pressed(MouseButton::Left);
         self
     }
 

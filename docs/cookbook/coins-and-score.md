@@ -8,7 +8,7 @@ The recipe uses:
 ```rust
 game.pickup_prefab("coin")
     .score(1)
-    .play_sound(assets.sound("coin"))
+    .play_sound("coin")
     .despawn_on_collect()
     .build()?;
 

@@ -17,8 +17,8 @@ use crate::sprite_batch::{SpriteBatch, SpriteBatchRange};
 use crate::texture_registry::{TextureRegistry, TextureRegistryGuard};
 use crate::vertex::SpriteVertex;
 use crate::{
-    DrawCommands, SpriteDraw, TextureId, assets, buffer, device, frame, instance, pipeline,
-    swapchain, text, texture,
+    DrawCommands, SpriteDraw, TextureId, UI_WHITE_TEXTURE_HANDLE, assets, buffer, device, frame,
+    instance, pipeline, swapchain, text, texture,
 };
 
 // Rate-limit soft swapchain recreations as defense against noisy request
@@ -693,6 +693,18 @@ impl VulkanContext {
 
         for sprite in frame.ui_sprites {
             self.ui_sprite_batch.push(sprite);
+        }
+
+        for rect in frame.ui_rects {
+            self.ui_sprite_batch.push(SpriteDraw {
+                texture: UI_WHITE_TEXTURE_HANDLE,
+                layer: rect.layer,
+                position: rect.position,
+                size: rect.size,
+                uv_min: glam::Vec2::ZERO,
+                uv_max: glam::Vec2::ONE,
+                color: rect.color,
+            });
         }
 
         for text in frame.ui_text {

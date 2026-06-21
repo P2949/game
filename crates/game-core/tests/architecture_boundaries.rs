@@ -170,9 +170,58 @@ fn beginner_demo_and_template_hide_runtime_boot_code() {
             );
         }
         assert!(
-            source.contains(".asset_bag()"),
-            "{relative} should use the beginner asset bag"
+            source.contains(".asset_bag()") || source.contains(".assets_from_folders()"),
+            "{relative} should use a beginner asset registration helper"
         );
+    }
+}
+
+#[test]
+fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
+    let root = workspace_root();
+    let paths = [
+        "examples/one-file-demo/src",
+        "examples/beginner-mini-game/src",
+        "examples/coin-collector/src",
+        "examples/projectile-demo/src",
+        "examples/script-like-custom-rules/src",
+        "examples/two-level-demo/src",
+        "examples/waves-demo/src",
+        "examples/menu-game-over/src",
+        "examples/animation-demo/src",
+        "examples/audio-demo/src",
+        "examples/trigger-area-demo/src",
+        "templates/simple-demo/src",
+    ];
+
+    for relative in paths {
+        let mut files = Vec::new();
+        collect_rust_files(&root.join(relative), &mut files);
+        assert!(
+            !files.is_empty(),
+            "{relative} should contain a beginner source file"
+        );
+
+        for path in files {
+            let source = read_code_without_comments(&path);
+            assert!(
+                source.contains("use game_starter::prelude::*;"),
+                "{} should use the standalone beginner entry point",
+                path.display()
+            );
+            assert!(
+                source.contains(".asset_bag()") || source.contains(".assets_from_folders()"),
+                "{} should use a beginner asset helper",
+                path.display()
+            );
+            for forbidden in BEGINNER_DEMO_FORBIDDEN {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must not expose beginner implementation detail {forbidden:?}",
+                    path.display()
+                );
+            }
+        }
     }
 }
 
@@ -425,6 +474,198 @@ fn readme_first_authoring_example_is_beginner_first() {
 }
 
 #[test]
+fn beginner_docs_use_named_assets_before_typed_or_advanced_sections() {
+    let root = workspace_root();
+    let beginner_docs = [
+        "README.md",
+        "docs/content-authoring.md",
+        "docs/beginner-authoring.md",
+        "docs/tutorials/01-run-the-demo.md",
+        "docs/tutorials/02-your-first-player.md",
+        "docs/tutorials/03-add-a-map.md",
+        "docs/tutorials/04-add-an-enemy.md",
+        "docs/tutorials/05-add-combat.md",
+        "docs/tutorials/06-add-sound-and-ui.md",
+        "docs/tutorials/common-errors.md",
+        "docs/cookbook/coins-and-score.md",
+        "docs/cookbook/projectiles.md",
+        "docs/cookbook/two-levels.md",
+        "docs/cookbook/enemy-waves.md",
+        "docs/cookbook/menu-and-game-over.md",
+        "templates/simple-demo/README.md",
+        "examples/one-file-demo/README.md",
+    ];
+
+    for relative in beginner_docs {
+        let path = root.join(relative);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        let beginner = beginner_doc_section(&source);
+
+        for forbidden in [
+            "assets.texture(",
+            "assets.sound(",
+            "TextureHandle",
+            "SoundHandle",
+            "GameCtx",
+            "Transform::",
+            "Sprite::new",
+        ] {
+            assert!(
+                !beginner.contains(forbidden),
+                "{relative} beginner section must use named beginner APIs, not {forbidden:?}"
+            );
+        }
+    }
+
+    let content = fs::read_to_string(root.join("docs/content-authoring.md"))
+        .expect("failed to read content-authoring guide");
+    let beginner = beginner_doc_section(&content);
+    for required in [
+        ".sprite(\"player\")",
+        ".simple_theme(\"floor\", \"wall\")",
+        "game.audio().play_sound(\"hit\")",
+    ] {
+        assert!(
+            beginner.contains(required),
+            "content-authoring beginner section should demonstrate {required:?}"
+        );
+    }
+}
+
+#[test]
+fn all_beginner_docs_keep_advanced_details_after_their_boundary() {
+    let root = workspace_root();
+    let mut paths = vec![
+        root.join("README.md"),
+        root.join("docs/content-authoring.md"),
+        root.join("docs/beginner-authoring.md"),
+        root.join("templates/simple-demo/README.md"),
+        root.join("examples/one-file-demo/README.md"),
+    ];
+    collect_markdown_files(&root.join("docs/tutorials"), &mut paths);
+    collect_markdown_files(&root.join("docs/cookbook"), &mut paths);
+
+    let mut beginner_content = String::new();
+    for path in paths {
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        let beginner = beginner_doc_section(&source);
+        beginner_content.push_str(beginner);
+        for forbidden in BEGINNER_DOC_FORBIDDEN {
+            assert!(
+                !beginner.contains(forbidden),
+                "{} must keep {forbidden:?} out of its beginner section",
+                path.display()
+            );
+        }
+    }
+
+    for required in [
+        "game_starter::prelude",
+        "asset_bag",
+        ".sprite(\"",
+        ".simple_theme(\"",
+        "player_prefab",
+        "enemy_prefab",
+        "game.rules()",
+    ] {
+        assert!(
+            beginner_content.contains(required),
+            "the beginner documentation set should demonstrate {required:?}"
+        );
+    }
+}
+
+#[test]
+fn no_rust_experience_tutorial_course_stays_complete_and_beginner_first() {
+    let root = workspace_root();
+    let chapters = [
+        "00-start-here.md",
+        "01-run-the-demo.md",
+        "02-your-first-player.md",
+        "03-add-a-map.md",
+        "04-add-an-enemy.md",
+        "05-add-pickups-and-score.md",
+        "06-add-projectiles.md",
+        "07-add-doors-and-levels.md",
+        "08-add-sound-and-music.md",
+        "09-add-ui-and-menu.md",
+        "10-package-your-demo.md",
+    ];
+
+    for chapter in chapters {
+        let source = fs::read_to_string(root.join("docs/tutorials").join(chapter))
+            .unwrap_or_else(|err| panic!("failed to read tutorial {chapter}: {err}"));
+        for heading in [
+            "## Goal",
+            "## Files to edit",
+            "## Full code",
+            "## What changed",
+            "## Common errors",
+            "## Next step",
+        ] {
+            assert!(
+                source.contains(heading),
+                "{chapter} should contain the {heading:?} section"
+            );
+        }
+        assert!(
+            source.contains("game_starter::prelude::*"),
+            "{chapter} should keep the one-file game-starter path visible"
+        );
+    }
+
+    let index = fs::read_to_string(root.join("docs/tutorials/README.md"))
+        .expect("failed to read tutorial index");
+    for chapter in chapters {
+        assert!(
+            index.contains(chapter),
+            "tutorial index should link to {chapter}"
+        );
+    }
+    assert!(
+        index.contains("content crate"),
+        "tutorial index should explain the later content-crate graduation path"
+    );
+}
+
+#[test]
+fn beginner_facing_docs_examples_and_templates_do_not_use_compatibility_prelude() {
+    let root = workspace_root();
+    let paths = [
+        "README.md",
+        "docs/content-authoring.md",
+        "docs/beginner-authoring.md",
+        "docs/tutorials",
+        "docs/cookbook",
+        "templates/simple-demo",
+        "examples/one-file-demo",
+        "examples/beginner-mini-game",
+    ];
+
+    for relative in paths {
+        let path = root.join(relative);
+        let mut files = Vec::new();
+        if path.is_dir() {
+            collect_beginner_surface_files(&path, &mut files);
+        } else {
+            files.push(path);
+        }
+
+        for file in files {
+            let source = fs::read_to_string(&file)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", file.display()));
+            assert!(
+                !source.contains("game_kit::prelude::*"),
+                "{} must use an explicit beginner or advanced prelude, never the compatibility prelude",
+                file.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn game_kit_rustdoc_is_beginner_first() {
     let source = fs::read_to_string(workspace_root().join("crates/game-kit/src/lib.rs"))
         .expect("failed to read game-kit lib");
@@ -522,6 +763,41 @@ const SIMPLE_CONTENT_FORBIDDEN: &[&str] = &[
     "game.assets(",
     "struct SimpleAssets",
     "register_assets(",
+];
+
+const BEGINNER_DEMO_FORBIDDEN: &[&str] = &[
+    "Game<'_",
+    "GameCtx<'_",
+    "StartupGameCtx<'_",
+    "EntityId",
+    "Component",
+    "Transform",
+    "Velocity",
+    "Sprite::new",
+    "Collider::box_of",
+    "Health::new",
+    "MeleeAttack",
+    "Faction",
+    "PrefabAuthor",
+    "game.prefab(",
+    "game.commands()",
+    "RuntimeConfig",
+    "game_runtime::run",
+    "plugin_fn",
+    "for<'app>",
+    "game_kit::prelude::*",
+    "game_kit::advanced::prelude::*",
+];
+
+const BEGINNER_DOC_FORBIDDEN: &[&str] = &[
+    "game_kit::prelude::*",
+    "game_kit::advanced::prelude::*",
+    "Transform::",
+    "Velocity::",
+    "Sprite::new",
+    "GameCtx",
+    "assets.texture(\"player\")",
+    "assets.sound(\"hit\")",
 ];
 
 fn forbidden_source_uses(crate_name: &str, patterns: &[&str]) -> Vec<String> {
@@ -665,6 +941,50 @@ fn content_source_uses_authoring_facade_not_engine_internals() {
 }
 
 #[test]
+fn testbed_content_remains_an_explicit_advanced_lab() {
+    let source_dir = workspace_root().join("crates/testbed-content/src");
+    let mut files = Vec::new();
+    collect_rust_files(&source_dir, &mut files);
+    assert!(
+        !files.is_empty(),
+        "testbed-content should contain source files"
+    );
+    for path in files {
+        let source = read_code_without_comments(&path);
+        assert!(
+            source.contains("use game_kit::advanced::prelude::*;"),
+            "{} must keep its explicit advanced prelude",
+            path.display()
+        );
+        for forbidden in [
+            "game_core::",
+            "game_runtime::",
+            "game_renderer_vulkan::",
+            "sdl3::",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} advanced content still must not bypass game-kit with {forbidden:?}",
+                path.display()
+            );
+        }
+    }
+
+    for relative in [
+        "README.md",
+        "docs/content-authoring.md",
+        "docs/tutorials/README.md",
+    ] {
+        let source = fs::read_to_string(workspace_root().join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains("testbed-content") && source.contains("advanced"),
+            "{relative} should direct beginners away from the advanced testbed"
+        );
+    }
+}
+
+#[test]
 fn content_does_not_import_game_core_internal_prelude() {
     for crate_name in ["arena-content", "testbed-content"] {
         let src_dir = workspace_root().join(format!("crates/{crate_name}/src"));
@@ -775,6 +1095,19 @@ fn workspace_root() -> &'static Path {
         .expect("game-core lives under crates/")
 }
 
+fn beginner_doc_section(source: &str) -> &str {
+    let boundary = [
+        "## Typed assets for larger content crates",
+        "## Advanced Path",
+        "### Advanced API",
+    ]
+    .into_iter()
+    .filter_map(|marker| source.find(marker))
+    .min()
+    .unwrap_or(source.len());
+    &source[..boundary]
+}
+
 fn collect_rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in fs::read_dir(dir).unwrap_or_else(|err| {
         panic!("failed to read directory {}: {err}", dir.display());
@@ -801,6 +1134,20 @@ fn collect_beginner_surface_files(dir: &Path, out: &mut Vec<std::path::PathBuf>)
             path.extension().and_then(|extension| extension.to_str()),
             Some("rs" | "md")
         ) {
+            out.push(path);
+        }
+    }
+}
+
+fn collect_markdown_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap_or_else(|err| {
+        panic!("failed to read directory {}: {err}", dir.display());
+    }) {
+        let entry = entry.expect("failed to read directory entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_markdown_files(&path, out);
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("md") {
             out.push(path);
         }
     }

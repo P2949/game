@@ -24,13 +24,14 @@ pub struct TextureLoadRequest {
 
 /// How a logical sound is produced.
 ///
-/// File-backed WAV sounds are loaded by the current audio runtime. WAV channel
-/// count and sample rate are normalized to the mixer output format at load time.
+/// File-backed WAV sounds are always loaded by the current audio runtime. OGG
+/// Vorbis files are also supported when the runtime's optional `ogg` feature is
+/// enabled. Both formats are normalized to the mixer output format at load time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SoundLoadRequest {
     /// A runtime-synthesized sound effect, identified by a content-chosen name.
     Generated { name: String },
-    /// A sound loaded from a WAV file under the asset root.
+    /// A sound loaded from a supported audio file under the asset root.
     File { path: String },
 }
 

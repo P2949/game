@@ -1,5 +1,7 @@
 //! Beginner event helpers.
 
+use std::collections::HashSet;
+
 use game_combat::Health;
 use game_core::world::EntityId;
 use glam::Vec2;
@@ -9,6 +11,14 @@ use crate::beginner::spawn::SpawnAuthor;
 use crate::context::GameCtx;
 
 pub const DEFAULT_PICKUP_COLLECT_RANGE: f32 = 24.0;
+
+/// Tracks the currently active overlaps for one or more authored area events.
+/// The string keeps independently registered event pairs from interfering with
+/// one another when an actor overlaps several areas at once.
+#[derive(Default)]
+pub(crate) struct OverlapTracker {
+    pub(crate) active: HashSet<(EntityId, EntityId, String)>,
+}
 
 /// An internal identity for an actor involved in a beginner event. Its entity id
 /// never reaches beginner content; [`EventActor`] is the safe, object-shaped
@@ -174,8 +184,8 @@ impl<'g, 'a, 'w> EnemyDeathEvent<'g, 'a, 'w> {
 /// Information and safe actor handles for a player touching another actor.
 pub struct CollisionEvent<'g, 'a, 'w> {
     game: &'g mut GameCtx<'a, 'w>,
-    player: ActorToken,
-    other: ActorToken,
+    a: ActorToken,
+    b: ActorToken,
 }
 
 /// Information for a one-shot animation that reached its final frame.
@@ -208,32 +218,56 @@ impl<'g, 'a, 'w> AnimationFinishedEvent<'g, 'a, 'w> {
 }
 
 impl<'g, 'a, 'w> CollisionEvent<'g, 'a, 'w> {
-    pub(crate) fn new(
-        game: &'g mut GameCtx<'a, 'w>,
-        player: ActorToken,
-        other: ActorToken,
-    ) -> Self {
-        Self {
-            game,
-            player,
-            other,
-        }
+    pub(crate) fn new(game: &'g mut GameCtx<'a, 'w>, a: ActorToken, b: ActorToken) -> Self {
+        Self { game, a, b }
     }
 
+    /// The first prefab supplied to an overlap callback.
+    pub fn a(&mut self) -> EventActor<'_, 'a, 'w> {
+        EventActor::new(self.game, self.a)
+    }
+
+    /// The second prefab supplied to an overlap callback.
+    pub fn b(&mut self) -> EventActor<'_, 'a, 'w> {
+        EventActor::new(self.game, self.b)
+    }
+
+    /// Alias for [`Self::a`] in actor/area callbacks.
+    pub fn actor(&mut self) -> EventActor<'_, 'a, 'w> {
+        self.a()
+    }
+
+    /// Alias for [`Self::b`] in actor/area callbacks.
+    pub fn area(&mut self) -> EventActor<'_, 'a, 'w> {
+        self.b()
+    }
+
+    /// Backwards-compatible alias for [`Self::a`].
     pub fn player(&mut self) -> EventActor<'_, 'a, 'w> {
-        EventActor::new(self.game, self.player)
+        self.a()
     }
 
+    /// Backwards-compatible alias for [`Self::b`].
     pub fn other(&mut self) -> EventActor<'_, 'a, 'w> {
-        EventActor::new(self.game, self.other)
+        self.b()
     }
 
+    pub fn a_position(&self) -> Option<Vec2> {
+        self.game.position(self.a.id)
+    }
+
+    pub fn b_position(&self) -> Option<Vec2> {
+        self.game.position(self.b.id)
+    }
+
+    /// Backwards-compatible alias for [`Self::a_position`].
     pub fn player_position(&self) -> Option<Vec2> {
-        self.game.position(self.player.id)
+        self.a_position()
     }
 
+    /// Backwards-compatible alias for [`Self::b_position`].
     pub fn other_position(&self) -> Option<Vec2> {
-        self.game.position(self.other.id)
+        self.b_position()
     }
 
     pub fn score(&mut self) -> ScoreOps<'_, 'a, 'w> {
@@ -247,7 +281,12 @@ impl<'g, 'a, 'w> CollisionEvent<'g, 'a, 'w> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use game_core::backend::{SoundHandle, TextureHandle};
+    use game_core::world::Sprite;
+    use game_map::cell;
 
     use crate::app::{GameApp, GamePlugin};
     use crate::beginner::camera::CameraShake;
@@ -421,5 +460,93 @@ mod tests {
         game.step();
         assert_eq!(game.world().get_resource::<Score>().unwrap().value, 13);
         assert_eq!(game.count::<crate::beginner::actors::Door>(), 0);
+    }
+
+    struct AreaEventPlugin {
+        collisions: Rc<Cell<u32>>,
+        enters: Rc<Cell<u32>>,
+        exits: Rc<Cell<u32>>,
+    }
+
+    impl GamePlugin for AreaEventPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            game.asset_bag()
+                .texture("player", "textures/player.png")?
+                .texture("floor", "textures/floor.png")?
+                .texture("wall", "textures/wall.png")?
+                .build();
+            let controls = game.input(|input| input.top_down_controls())?;
+
+            game.player_prefab("player")
+                .sprite("player")
+                .moves_with(controls.movement, 120.0)
+                .build()?;
+            game.trigger_prefab("danger_zone")
+                .size(glam::vec2(64.0, 64.0))
+                .trigger_only()
+                .build()?;
+            game.map("areas")
+                .tile_size(32.0)
+                .tiles(["#####", "#P..#", "#####"])
+                .simple_theme("floor", "wall")
+                .legend('P', "player")
+                .spawn("danger", "danger_zone", cell(1, 1))
+                .start();
+            game.on_start(|game| game.spawn_start_map());
+
+            let collisions = Rc::clone(&self.collisions);
+            game.on_collision("player", "danger_zone", move |event| {
+                let _ = event.a().position();
+                let _ = event.b().position();
+                let _ = event.actor().position();
+                let _ = event.area().position();
+                let _ = event.other().position();
+                collisions.set(collisions.get() + 1);
+            });
+            let enters = Rc::clone(&self.enters);
+            game.on_enter_area("player", "danger_zone", move |event| {
+                event.actor().damage(0);
+                enters.set(enters.get() + 1);
+            });
+            let exits = Rc::clone(&self.exits);
+            game.on_exit_area("player", "danger_zone", move |event| {
+                let _ = event.area().position();
+                exits.set(exits.get() + 1);
+            });
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn general_collision_and_area_events_track_overlap_lifecycle() {
+        let collisions = Rc::new(Cell::new(0));
+        let enters = Rc::new(Cell::new(0));
+        let exits = Rc::new(Cell::new(0));
+        let mut game = GameTestHarness::from_plugin(AreaEventPlugin {
+            collisions: Rc::clone(&collisions),
+            enters: Rc::clone(&enters),
+            exits: Rc::clone(&exits),
+        })
+        .unwrap();
+
+        assert_eq!(game.count::<crate::beginner::actors::TriggerArea>(), 1);
+        assert_eq!(game.count::<crate::beginner::actors::Area>(), 1);
+        assert_eq!(game.count::<crate::beginner::actors::AreaName>(), 1);
+        assert_eq!(game.count::<Sprite>(), 1, "areas need no sprite by default");
+
+        game.step();
+        assert_eq!(collisions.get(), 1, "collision fires while overlapping");
+        assert_eq!(enters.get(), 1, "area enter fires once");
+        assert_eq!(exits.get(), 0);
+
+        game.step();
+        assert_eq!(collisions.get(), 2, "collision continues each tick");
+        assert_eq!(enters.get(), 1, "area enter does not repeat");
+
+        game.move_entity_to(game.player(), glam::vec2(200.0, 200.0));
+        game.step();
+        assert_eq!(collisions.get(), 2);
+        assert_eq!(enters.get(), 1);
+        assert_eq!(exits.get(), 1, "area exit fires once when overlap ends");
     }
 }

@@ -8,6 +8,9 @@ use crossbeam_queue::ArrayQueue;
 use game_core::backend::{SoundHandle, SoundLoadRequest};
 use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback};
 
+#[cfg(feature = "ogg")]
+use std::io::Cursor;
+
 const AUDIO_SCRATCH_SAMPLES: usize = 4096;
 const AUDIO_COMMAND_QUEUE_CAPACITY: usize = 128;
 const MAX_VOICES: usize = 32;
@@ -454,7 +457,7 @@ impl AudioSystem {
             let sound_id = match request {
                 SoundLoadRequest::Generated { .. } => blip_sound,
                 SoundLoadRequest::File { path } => {
-                    let sound = load_wav_sound(
+                    let sound = load_file_sound(
                         &asset_root.join(&path),
                         channels as u16,
                         sample_rate as u32,
@@ -835,18 +838,95 @@ fn loop_sine_sound(
     Ok(Sound::new(samples, channels, sample_rate))
 }
 
-fn load_wav_sound(
+fn load_file_sound(
     path: &Path,
     target_channels: u16,
     target_sample_rate: u32,
 ) -> anyhow::Result<Sound> {
     let bytes = fs::read(path)
         .map_err(anyhow::Error::from)
-        .map_err(|err| anyhow::anyhow!("failed to read WAV '{}': {err}", path.display()))?;
-    let sound = decode_wav_sound(&bytes)
-        .map_err(|err| unsupported_wav_error(path, target_sample_rate, err))?;
-    normalize_sound(sound, target_channels, target_sample_rate)
-        .map_err(|err| unsupported_wav_error(path, target_sample_rate, err))
+        .map_err(|err| anyhow::anyhow!("failed to read sound '{}': {err}", path.display()))?;
+    decode_file_sound(path, &bytes, target_channels, target_sample_rate)
+}
+
+fn decode_file_sound(
+    path: &Path,
+    bytes: &[u8],
+    target_channels: u16,
+    target_sample_rate: u32,
+) -> anyhow::Result<Sound> {
+    match detect_sound_format(path, bytes) {
+        SoundFormat::Wav => {
+            let sound = decode_wav_sound(bytes)
+                .map_err(|err| unsupported_wav_error(path, target_sample_rate, err))?;
+            normalize_sound(sound, target_channels, target_sample_rate)
+                .map_err(|err| unsupported_wav_error(path, target_sample_rate, err))
+        }
+        SoundFormat::Ogg => {
+            #[cfg(feature = "ogg")]
+            {
+                let sound = decode_ogg_sound(bytes)
+                    .map_err(|err| unsupported_ogg_error(path, target_sample_rate, err))?;
+                normalize_sound(sound, target_channels, target_sample_rate)
+                    .map_err(|err| unsupported_ogg_error(path, target_sample_rate, err))
+            }
+            #[cfg(not(feature = "ogg"))]
+            {
+                let _ = (bytes, target_channels, target_sample_rate);
+                Err(ogg_feature_required_error(path))
+            }
+        }
+        SoundFormat::Unknown => Err(unsupported_sound_format_error(path)),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SoundFormat {
+    Wav,
+    Ogg,
+    Unknown,
+}
+
+fn detect_sound_format(path: &Path, bytes: &[u8]) -> SoundFormat {
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        return SoundFormat::Wav;
+    }
+    if bytes.starts_with(b"OggS") {
+        return SoundFormat::Ogg;
+    }
+
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("wav") => SoundFormat::Wav,
+        Some("ogg") => SoundFormat::Ogg,
+        _ => SoundFormat::Unknown,
+    }
+}
+
+fn unsupported_sound_format_error(path: &Path) -> anyhow::Error {
+    #[cfg(feature = "ogg")]
+    let supported = "WAV or OGG Vorbis";
+    #[cfg(not(feature = "ogg"))]
+    let supported = "WAV (or OGG Vorbis with the `ogg` feature enabled)";
+
+    anyhow::anyhow!(
+        "Sound file '{}' uses an unsupported format.\n\nSupported here: {supported}.\n\nTry converting with:\n    ffmpeg -i input.ext -ac 2 -ar 48000 {}",
+        path.display(),
+        path.display(),
+    )
+}
+
+#[cfg(not(feature = "ogg"))]
+fn ogg_feature_required_error(path: &Path) -> anyhow::Error {
+    anyhow::anyhow!(
+        "OGG audio requires the `ogg` feature.\n\nEither enable the feature or convert to WAV:\n    ffmpeg -i {} -ac 2 -ar 48000 {}",
+        path.display(),
+        path.with_extension("wav").display(),
+    )
 }
 
 fn unsupported_wav_error(
@@ -856,6 +936,19 @@ fn unsupported_wav_error(
 ) -> anyhow::Error {
     anyhow::anyhow!(
         "Sound file '{}' uses unsupported format.\n\nSupported today:\n- WAV\n- mono or stereo\n- PCM16 or float32 samples\n- any sample rate will be converted to {target_sample_rate} Hz\n\nTry converting with:\n    ffmpeg -i input.wav -ac 2 -ar {target_sample_rate} {}\n\nDetails: {err}",
+        path.display(),
+        path.display(),
+    )
+}
+
+#[cfg(feature = "ogg")]
+fn unsupported_ogg_error(
+    path: &Path,
+    target_sample_rate: u32,
+    err: anyhow::Error,
+) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Sound file '{}' could not be decoded as OGG Vorbis.\n\nSupported OGG input:\n- mono or stereo Vorbis\n- any sample rate will be converted to {target_sample_rate} Hz\n\nTry converting with:\n    ffmpeg -i input.ogg -ac 2 -ar {target_sample_rate} {}\n\nDetails: {err}",
         path.display(),
         path.display(),
     )
@@ -1024,6 +1117,34 @@ fn decode_wav_sound(bytes: &[u8]) -> anyhow::Result<Sound> {
     Ok(Sound::new(samples, fmt.channels, fmt.sample_rate))
 }
 
+#[cfg(feature = "ogg")]
+fn decode_ogg_sound(bytes: &[u8]) -> anyhow::Result<Sound> {
+    use lewton::inside_ogg::OggStreamReader;
+
+    let mut reader = OggStreamReader::new(Cursor::new(bytes))
+        .map_err(|err| anyhow::anyhow!("invalid OGG stream: {err}"))?;
+    let channels = u16::from(reader.ident_hdr.audio_channels);
+    let sample_rate = reader.ident_hdr.audio_sample_rate;
+    if channels == 0 {
+        anyhow::bail!("OGG stream reports zero channels");
+    }
+    if sample_rate == 0 {
+        anyhow::bail!("OGG stream reports a zero sample rate");
+    }
+
+    let mut samples = Vec::new();
+    while let Some(packet) = reader
+        .read_dec_packet_itl()
+        .map_err(|err| anyhow::anyhow!("failed to decode OGG packet: {err}"))?
+    {
+        samples.extend(packet.into_iter().map(|sample| sample as f32 / 32768.0));
+    }
+    if samples.is_empty() {
+        anyhow::bail!("OGG stream contains no decoded audio samples");
+    }
+    Ok(Sound::new(samples, channels, sample_rate))
+}
+
 #[derive(Clone, Copy)]
 struct WavFormat {
     audio_format: u16,
@@ -1054,9 +1175,13 @@ mod tests {
     use crossbeam_queue::ArrayQueue;
 
     use super::{
-        AudioCommand, Mixer, MixerCallback, PlayResult, Sound, convert_channels,
-        crossed_power_of_two, decode_wav_sound, normalize_sound, resample_linear, sanitize_volume,
+        AudioCommand, Mixer, MixerCallback, PlayResult, Sound, SoundFormat, convert_channels,
+        crossed_power_of_two, decode_wav_sound, detect_sound_format, normalize_sound,
+        resample_linear, sanitize_volume,
     };
+
+    #[cfg(not(feature = "ogg"))]
+    use super::decode_file_sound;
 
     #[test]
     fn crossed_power_of_two_reports_each_boundary_once() {
@@ -1256,6 +1381,42 @@ mod tests {
         assert_eq!(sound.samples[0], 0.0);
         assert!(sound.samples[1] > 0.99);
         assert_eq!(sound.samples[2], -1.0);
+    }
+
+    #[test]
+    fn sound_format_detection_uses_magic_bytes_then_extension() {
+        assert_eq!(
+            detect_sound_format(std::path::Path::new("sound.bin"), b"RIFFxxxxWAVE"),
+            SoundFormat::Wav
+        );
+        assert_eq!(
+            detect_sound_format(std::path::Path::new("sound.bin"), b"OggS\0\x02"),
+            SoundFormat::Ogg
+        );
+        assert_eq!(
+            detect_sound_format(std::path::Path::new("theme.ogg"), b"not a header"),
+            SoundFormat::Ogg
+        );
+        assert_eq!(
+            detect_sound_format(std::path::Path::new("sound.data"), b"not a header"),
+            SoundFormat::Unknown
+        );
+    }
+
+    #[cfg(not(feature = "ogg"))]
+    #[test]
+    fn ogg_files_explain_how_to_enable_or_convert_when_feature_is_disabled() {
+        let error = decode_file_sound(
+            std::path::Path::new("music/theme.ogg"),
+            b"OggS\0\x02",
+            2,
+            48_000,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("OGG audio requires the `ogg` feature"));
+        assert!(error.contains("ffmpeg -i music/theme.ogg"));
+        assert!(error.contains("music/theme.wav"));
     }
 
     fn test_wav_pcm16(samples: &[i16]) -> Vec<u8> {

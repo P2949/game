@@ -27,7 +27,7 @@ game.asset_bag()
 
 game.on_action_cooldown(controls.attack, 0.2, |game| {
     game.player().shoot("bolt").towards_mouse();
-    game.play_sound_named("shoot");
+    game.audio().play_sound("shoot");
 });
 ```
 

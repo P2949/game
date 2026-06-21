@@ -4,6 +4,8 @@ use crate::context::GameCtx;
 
 /// Audio controls reached through [`GameCtx::audio`]. Sound and music names are
 /// declared through `game.asset_bag()` so gameplay never needs a raw handle.
+/// WAV is always available; OGG Vorbis assets require the runtime's optional
+/// `ogg` feature. Both play through the same named methods.
 pub struct AudioOps<'game, 'ctx, 'world> {
     game: &'game mut GameCtx<'ctx, 'world>,
 }
