@@ -3,11 +3,8 @@ use game_starter::prelude::*;
 fn main() -> Result<()> {
     run_game("{{title}}", |game| {
         game.assets_from_folders()
-            .texture("player")?
-            .texture("slime")?
-            .texture("floor")?
-            .texture("wall")?
-            .sound("hit")?
+            .required_textures(["player", "slime", "floor", "wall"])?
+            .required_sounds(["hit"])?
             .build();
 
         let controls = game.input(|input| input.top_down_controls())?;
@@ -26,8 +23,7 @@ fn main() -> Result<()> {
             .melee(26.0, 6)
             .build()?;
 
-        game.map("level_1")
-            .tiles(["########", "#......#", "#..P.E.#", "#......#", "########"])
+        game.map_from_text_auto("level_1")
             .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('E', "slime")

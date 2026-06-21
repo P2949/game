@@ -54,6 +54,7 @@ pub struct SimpleSceneFlowAuthor<'a, 'app> {
     game_over_text: Option<String>,
     game_over_button: Option<String>,
     win_text: Option<String>,
+    win_button: Option<String>,
     start_on: Option<ActionId>,
     restart_on: Option<ActionId>,
     win_when_all_pickups_collected: bool,
@@ -73,6 +74,7 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
             game_over_text: None,
             game_over_button: None,
             win_text: None,
+            win_button: None,
             start_on: None,
             restart_on: None,
             win_when_all_pickups_collected: false,
@@ -109,6 +111,11 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
         self
     }
 
+    /// Alias for [`Self::menu_text`] that reads naturally for a title screen.
+    pub fn menu_title(self, title: impl Into<String>) -> Self {
+        self.menu_text(title)
+    }
+
     /// Adds a mouse-clickable menu button that opens `map` in the configured
     /// game scene. Keyboard/controller `start_on` remains available too.
     pub fn menu_button(mut self, label: impl Into<String>, map: impl Into<String>) -> Self {
@@ -129,6 +136,14 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
 
     pub fn win_text(mut self, text: impl Into<String>) -> Self {
         self.win_text = Some(text.into());
+        self
+    }
+
+    /// Adds a mouse-clickable button that returns from the win scene to the
+    /// configured game scene. Keyboard restart remains available through
+    /// [`Self::restart_on`].
+    pub fn win_button(mut self, label: impl Into<String>) -> Self {
+        self.win_button = Some(label.into());
         self
     }
 
@@ -164,6 +179,7 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
             .unwrap_or_else(|| "Game Over".to_owned());
         let game_over_button = self.game_over_button;
         let win_text = self.win_text.unwrap_or_else(|| "You win!".to_owned());
+        let win_button = self.win_button;
         let app = self.app;
 
         app.menu_scene(menu.clone())
@@ -275,6 +291,17 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
                 }
             } else if current.as_deref() == win.as_deref() {
                 game.ui().panel("You Win!").line(&win_text).center();
+                if let Some(label) = &win_button {
+                    let target_scene = game_scene.clone();
+                    let target_map = game_scene.clone();
+                    let button_position = scene_button_position(game);
+                    game.ui()
+                        .button(label)
+                        .at_screen(button_position)
+                        .on_click(move |game| {
+                            start_scene_map(game, &target_scene, &target_map);
+                        });
+                }
             }
         });
     }

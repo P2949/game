@@ -1,8 +1,17 @@
 use glam::Vec2;
 
+use crate::app::MapData;
 use crate::backend::SoundHandle;
 use crate::builder::{MapId, PrefabId, PropertyBag};
 use crate::world::EntityId;
+
+/// Replacement data for one map after content reparses a reloadable source.
+/// The command itself only carries the stable map ID; the runtime consumes this
+/// resource while handling that command.
+pub struct MapReload {
+    pub map: MapId,
+    pub data: MapData,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -14,6 +23,8 @@ pub enum Command {
         properties: PropertyBag,
     },
     ChangeMap(MapId),
+    Quit,
+    ReloadMap(MapId),
     RestartMap,
     RestartStartMap,
 }
@@ -50,6 +61,14 @@ impl CommandQueue {
 
     pub fn change_map(&mut self, map: MapId) {
         self.push(Command::ChangeMap(map));
+    }
+
+    pub fn quit(&mut self) {
+        self.push(Command::Quit);
+    }
+
+    pub fn reload_map(&mut self, map: MapId) {
+        self.push(Command::ReloadMap(map));
     }
 
     pub fn restart_map(&mut self) {
@@ -114,6 +133,8 @@ mod tests {
     fn command_queue_records_map_flow_commands() {
         let mut commands = CommandQueue::new();
         commands.change_map(MapId(2));
+        commands.quit();
+        commands.reload_map(MapId(2));
         commands.restart_map();
         commands.restart_start_map();
 
@@ -121,6 +142,8 @@ mod tests {
             commands.drain().collect::<Vec<_>>(),
             vec![
                 Command::ChangeMap(MapId(2)),
+                Command::Quit,
+                Command::ReloadMap(MapId(2)),
                 Command::RestartMap,
                 Command::RestartStartMap,
             ]

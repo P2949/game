@@ -14,3 +14,4 @@ game-runtime = { version = "0.1.0", path = "../game-runtime" }
 
 [features]
 ogg = ["game-runtime/ogg"]
+mp3 = ["game-runtime/mp3"]

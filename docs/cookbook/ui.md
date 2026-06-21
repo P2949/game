@@ -29,6 +29,39 @@ game.draw_ui(|game, _dt| {
 });
 ```
 
+For a complete title menu without coordinates or manual click checks, use a
+focused menu. Up/Down or the controller D-pad changes selection; Space, Enter,
+or controller South activates it:
+
+```rust
+game.draw_ui(|game, _dt| {
+    game.ui()
+        .menu("Main Menu")
+        .button("Start").go_to_scene("game")
+        .button("Quit").quit()
+        .build();
+});
+```
+
+Dialogs and a standard status panel are equally small:
+
+```rust
+game.draw_ui(|game, _dt| {
+    game.ui()
+        .dialog("Old Man")
+        .line("Welcome to the arena.")
+        .line("Collect all coins!")
+        .build();
+
+    game.ui()
+        .status_panel()
+        .score()
+        .player_health()
+        .enemy_count()
+        .build();
+});
+```
+
 Use the immediate form when the button should choose between several actions:
 
 ```rust

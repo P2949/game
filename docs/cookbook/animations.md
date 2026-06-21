@@ -4,16 +4,31 @@ Copy [examples/animation-demo/src/main.rs](../../examples/animation-demo/src/mai
 when you want idle, directional walk, flight, impact, attack, or death clips
 from a sprite sheet.
 
-The recipe uses:
+Put clip names in `assets/animations/player.ron` so the Rust game setup stays
+about game behavior instead of frame numbers:
+
+```ron
+(
+    texture: "textures/player.png",
+    columns: 4,
+    rows: 1,
+    clips: {
+        "idle": (frames: [0], fps: 6.0),
+        "walk_right": (frames: [3], fps: 10.0),
+        "attack_right": (frames: [0, 1], fps: 12.0, looping: false),
+    },
+)
+```
+
+Load and use that sheet with no frame ranges in Rust:
 
 ```rust
+let assets = game.asset_bag()
+    .spritesheet_from_meta("player", "animations/player.ron")?
+    .build();
+
 game.player_prefab("player")
-    .spritesheet(assets.spritesheet("player"))
-    .idle(0..1)
-    .walk_up(0..1)
-    .walk_down(1..2)
-    .walk_left(2..3)
-    .walk_right(3..4)
+    .animation_sheet(assets.animation_sheet("player"))
     .moves_with(controls.movement, 130.0)
     .build()?;
 ```
@@ -26,8 +41,15 @@ game.rules()
     .top_down_controls(controls)
     .animate_player_directionally()
     .animate_enemies_directionally()
+    .animate_attacks_directionally()
     .build();
 ```
+
+`.animate_attacks_directionally()` plays `attack_up`, `attack_down`,
+`attack_left`, or `attack_right` when the player attacks. It remembers the last
+movement direction for a stationary attack and falls back to a normal
+`.attack(...)` clip if a directional clip is absent. One-shot attack clips take
+priority over walk/idle until they finish.
 
 For a player-fired projectile, `flight` loops until it hits and `impact` plays
 once before it is removed:
@@ -46,7 +68,9 @@ game.rules()
     .build();
 ```
 
-Use `.attack(...)` for a one-shot player attack, `.die(...)` with
+If you prefer to keep clips in Rust, use `.attack(...)`, `.attack_up(...)`,
+`.attack_down(...)`, `.attack_left(...)`, and `.attack_right(...)` for one-shot
+player attacks. Use `.die(...)` with
 `.dead_enemies_play_death_animation()` and
 `.dead_enemies_despawn_after_animation()` for enemy death, and
 `game.on_animation_finished("impact", |event| { ... })` for a custom action

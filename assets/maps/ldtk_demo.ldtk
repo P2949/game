@@ -1,0 +1,31 @@
+{
+  "levels": [
+    {
+      "identifier": "Level_1",
+      "layerInstances": [
+        {
+          "__identifier": "Collision",
+          "__type": "IntGrid",
+          "__gridSize": 32,
+          "__cWid": 8,
+          "__cHei": 4,
+          "intGridCsv": [
+            1, 1, 1, 1, 1, 1, 1, 1,
+            1, 0, 0, 0, 0, 0, 0, 1,
+            1, 0, 0, 0, 0, 0, 0, 1,
+            1, 1, 1, 1, 1, 1, 1, 1
+          ]
+        },
+        {
+          "__identifier": "Entities",
+          "__type": "Entities",
+          "__gridSize": 32,
+          "entityInstances": [
+            { "__identifier": "PlayerStart", "px": [32, 32] },
+            { "__identifier": "Slime", "px": [160, 32] }
+          ]
+        }
+      ]
+    }
+  ]
+}

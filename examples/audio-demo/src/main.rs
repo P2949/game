@@ -7,6 +7,7 @@ fn main() -> Result<()> {
             .texture("wall", "textures/test.png")?
             .generated_sound("coin")?
             .generated_sound("theme")?
+            .generated_sound("battle")?
             .build();
         let controls = game.input(|input| input.top_down_controls())?;
 
@@ -14,10 +15,12 @@ fn main() -> Result<()> {
             .tiles([".....", "....."])
             .simple_theme("floor", "wall")
             .start();
-        game.on_start(|game| game.spawn_start_map());
+
+        game.rules().top_down_controls(controls).build();
 
         game.on_action(controls.attack, |game| {
-            game.audio().play_sound("coin");
+            game.audio().bus("ambience").volume(0.5);
+            game.audio().play_sound("coin").bus("ambience");
             game.audio().play_music("theme").volume(0.4).fade_in(1.0);
         });
         game.on_action(controls.reset, |game| {
@@ -27,14 +30,14 @@ fn main() -> Result<()> {
             game.audio().pause_music();
         });
         game.on_action(controls.debug_overlay, |game| {
-            game.audio().resume_music();
+            game.audio().crossfade_music("battle", 1.0);
         });
 
         game.draw_ui(|game, _dt| {
             game.ui()
                 .panel("Audio Demo")
                 .line("Space: sound + music")
-                .line("R: fade out | P: pause | F1: resume")
+                .line("R: fade out | P: pause | F1: crossfade")
                 .center();
         });
         Ok(())

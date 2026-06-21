@@ -21,6 +21,11 @@ Run it with:
 cargo run
 ```
 
+This template is deliberately the standalone path. If the game later becomes a
+workspace content crate, import `game_kit::beginner::prelude::*` and wrap the
+same setup in `content_plugin!(MyContent, plugin, |game| { ... });` instead of
+writing plugin glue by hand.
+
 Controls:
 
 - Move: WASD or arrow keys
@@ -36,22 +41,19 @@ feature) in `assets/sounds/`. The template loads these conventional names with:
 
 ```rust
 game.assets_from_folders()
-    .texture("player")?
-    .texture("slime")?
-    .texture("floor")?
-    .texture("wall")?
-    .sound("hit")?
+    .required_textures(["player", "slime", "floor", "wall"])?
+    .required_sounds(["hit"])?
     .build();
 ```
 
 Music follows the same pattern: `assets/music/theme.wav` or `theme.ogg` can be
 registered with `.music("theme")?`.
 
-When the in-code level is ready to become a file, create
-`assets/maps/level_1.txt` and replace the map builder with:
+The generated `assets/maps/level_1.txt` is ready to edit immediately. Its map
+builder is:
 
 ```rust
-game.map_from_text("level_1", "maps/level_1.txt")
+game.map_from_text_auto("level_1")
     .simple_theme("floor", "wall")
     .legend('P', "player")
     .legend('E', "slime")

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crossbeam_queue::ArrayQueue;
 use game_core::backend::{SoundHandle, SoundLoadRequest};
@@ -10,10 +10,17 @@ use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStrea
 
 #[cfg(feature = "ogg")]
 use std::io::Cursor;
+#[cfg(feature = "mp3")]
+use std::io::Write;
+#[cfg(feature = "mp3")]
+use std::process::{Command, Stdio};
 
 const AUDIO_SCRATCH_SAMPLES: usize = 4096;
 const AUDIO_COMMAND_QUEUE_CAPACITY: usize = 128;
 const MAX_VOICES: usize = 32;
+/// Maximum number of custom sound-effect buses. Master, music, and the default
+/// SFX group are separate and do not count toward this limit.
+const MAX_NAMED_BUSES: usize = 32;
 // Upper bound on the per-channel frame count a generated tone may allocate.
 // 48 kHz * 60 s = 2.88M frames, so a one-minute tone fits comfortably while an
 // absurd `seconds`/`sample_rate` request is rejected before allocating.
@@ -42,11 +49,17 @@ enum AudioCommand {
         sound_id: SoundId,
         volume: f32,
         looping: bool,
+        bus: Option<u8>,
     },
     PlayMusic {
         sound_id: SoundId,
         volume: f32,
         fade_in_seconds: Option<f32>,
+    },
+    CrossfadeMusic {
+        sound_id: SoundId,
+        volume: f32,
+        duration_seconds: f32,
     },
     StopMusic,
     PauseMusic,
@@ -54,6 +67,10 @@ enum AudioCommand {
     SetMasterVolume(f32),
     SetSfxVolume(f32),
     SetMusicVolume(f32),
+    SetBusVolume {
+        bus: u8,
+        volume: f32,
+    },
     FadeMusicTo {
         volume: f32,
         duration_seconds: f32,
@@ -62,6 +79,14 @@ enum AudioCommand {
 
 #[derive(Debug, Clone, Copy)]
 struct MusicFade {
+    from: f32,
+    to: f32,
+    elapsed_seconds: f32,
+    duration_seconds: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VoiceFade {
     from: f32,
     to: f32,
     elapsed_seconds: f32,
@@ -93,6 +118,10 @@ pub struct Voice {
     volume: f32,
     looping: bool,
     music: bool,
+    bus: Option<u8>,
+    fade_volume: f32,
+    fade: Option<VoiceFade>,
+    remove_when_faded: bool,
 }
 
 pub struct Mixer {
@@ -104,6 +133,7 @@ pub struct Mixer {
     music_fade_volume: f32,
     music_fade: Option<MusicFade>,
     music_paused: bool,
+    bus_volumes: [f32; MAX_NAMED_BUSES],
     // Expected playback-stream output format (0 means "unspecified / don't
     // check"). File-backed WAVs are normalized to this format before insertion;
     // `add_sound` still rejects mismatches to catch generated/internal misuse.
@@ -127,6 +157,7 @@ impl Mixer {
             music_fade_volume: 1.0,
             music_fade: None,
             music_paused: false,
+            bus_volumes: [1.0; MAX_NAMED_BUSES],
             output_channels: 0,
             output_sample_rate: 0,
             dropped_voices: Arc::new(AtomicU64::new(0)),
@@ -194,6 +225,12 @@ impl Mixer {
         self.music_volume = sanitize_volume(volume);
     }
 
+    pub fn set_bus_volume(&mut self, bus: u8, volume: f32) {
+        if let Some(bus_volume) = self.bus_volumes.get_mut(bus as usize) {
+            *bus_volume = sanitize_volume(volume);
+        }
+    }
+
     /// Declares the output stream's channel count and sample rate so `add_sound`
     /// can flag sounds that don't match. Rejects a zero channel count or sample
     /// rate, which are never valid output formats. The default (0/0, set in
@@ -258,7 +295,17 @@ impl Mixer {
     }
 
     pub fn play(&mut self, sound_id: SoundId, volume: f32, looping: bool) -> PlayResult {
-        self.push_voice(sound_id, volume, looping, false)
+        self.play_on_bus(sound_id, volume, looping, None)
+    }
+
+    pub fn play_on_bus(
+        &mut self,
+        sound_id: SoundId,
+        volume: f32,
+        looping: bool,
+        bus: Option<u8>,
+    ) -> PlayResult {
+        self.push_voice(sound_id, volume, looping, false, bus)
     }
 
     pub fn play_music(
@@ -279,7 +326,50 @@ impl Mixer {
                 self.music_fade = None;
             }
         }
-        self.push_voice(sound_id, volume, true, true)
+        self.push_voice(sound_id, volume, true, true, None)
+    }
+
+    /// Blends every active music voice out while fading a new looping track in.
+    /// Unlike `play_music`, this deliberately keeps the old voices alive until
+    /// their per-voice fade completes.
+    pub fn crossfade_music(
+        &mut self,
+        sound_id: SoundId,
+        volume: f32,
+        duration_seconds: f32,
+    ) -> PlayResult {
+        if !duration_seconds.is_finite() || duration_seconds <= 0.0 {
+            return self.play_music(sound_id, volume, None);
+        }
+
+        self.music_paused = false;
+        self.music_fade = None;
+        self.music_fade_volume = 1.0;
+        for voice in self.voices.iter_mut().filter(|voice| voice.music) {
+            voice.fade = Some(VoiceFade {
+                from: voice.fade_volume,
+                to: 0.0,
+                elapsed_seconds: 0.0,
+                duration_seconds,
+            });
+            voice.remove_when_faded = true;
+        }
+
+        let result = self.push_voice(sound_id, volume, true, true, None);
+        if matches!(result, PlayResult::Started) {
+            let voice = self
+                .voices
+                .last_mut()
+                .expect("a started voice is appended to the mixer");
+            voice.fade_volume = 0.0;
+            voice.fade = Some(VoiceFade {
+                from: 0.0,
+                to: 1.0,
+                elapsed_seconds: 0.0,
+                duration_seconds,
+            });
+        }
+        result
     }
 
     pub fn stop_music(&mut self) {
@@ -318,6 +408,7 @@ impl Mixer {
         volume: f32,
         looping: bool,
         music: bool,
+        bus: Option<u8>,
     ) -> PlayResult {
         let Some(sound) = self.sounds.get(sound_id) else {
             return PlayResult::InvalidSoundId;
@@ -338,6 +429,10 @@ impl Mixer {
             volume: sanitize_volume(volume),
             looping,
             music,
+            bus,
+            fade_volume: 1.0,
+            fade: None,
+            remove_when_faded: false,
         });
         PlayResult::Started
     }
@@ -346,6 +441,7 @@ impl Mixer {
         out.fill(0.0);
 
         self.advance_music_fade(out.len());
+        self.advance_voice_fades(out.len());
 
         // Sanitize once per mix as a final defense against internal misuse or
         // tests that bypass set_*_volume.
@@ -362,6 +458,10 @@ impl Mixer {
                 music_volume
             } else {
                 sfx_volume
+                    * voice
+                        .bus
+                        .and_then(|bus| self.bus_volumes.get(bus as usize).copied())
+                        .unwrap_or(1.0)
             };
             for sample in out.iter_mut() {
                 if voice.cursor >= sound.samples.len() {
@@ -372,8 +472,11 @@ impl Mixer {
                     }
                 }
 
-                *sample +=
-                    sound.samples[voice.cursor] * voice.volume * group_volume * master_volume;
+                *sample += sound.samples[voice.cursor]
+                    * voice.volume
+                    * voice.fade_volume
+                    * group_volume
+                    * master_volume;
                 voice.cursor += 1;
             }
         }
@@ -383,7 +486,10 @@ impl Mixer {
         }
 
         self.voices.retain(|voice| {
-            voice.looping || voice.cursor < self.sounds[voice.sound_id].samples.len()
+            (voice.looping || voice.cursor < self.sounds[voice.sound_id].samples.len())
+                && !(voice.remove_when_faded
+                    && voice.fade.is_none()
+                    && voice.fade_volume <= f32::EPSILON)
         });
     }
 
@@ -402,6 +508,24 @@ impl Mixer {
         self.music_fade_volume = fade.from + (fade.to - fade.from) * progress;
         self.music_fade = (progress < 1.0).then_some(fade);
     }
+
+    fn advance_voice_fades(&mut self, samples: usize) {
+        let frames = if self.output_channels == 0 {
+            samples as f32
+        } else {
+            samples as f32 / self.output_channels as f32
+        };
+        let elapsed_seconds = frames / self.output_sample_rate.max(1) as f32;
+        for voice in &mut self.voices {
+            let Some(mut fade) = voice.fade else {
+                continue;
+            };
+            fade.elapsed_seconds += elapsed_seconds;
+            let progress = (fade.elapsed_seconds / fade.duration_seconds).clamp(0.0, 1.0);
+            voice.fade_volume = fade.from + (fade.to - fade.from) * progress;
+            voice.fade = (progress < 1.0).then_some(fade);
+        }
+    }
 }
 
 impl Default for Mixer {
@@ -414,6 +538,10 @@ pub struct AudioSystem {
     commands: Arc<ArrayQueue<AudioCommand>>,
     blip_sound: SoundId,
     sound_ids: HashMap<SoundHandle, SoundId>,
+    /// Maps friendly bus names to compact identifiers on the main thread. The
+    /// callback only receives those identifiers, so it does not allocate or
+    /// hash strings while mixing audio.
+    bus_ids: Mutex<HashMap<String, u8>>,
     // Shared with the audio callback, which only increments it. The main thread
     // reads it via `poll_dropped_frames` so we never log from the callback.
     put_failures: Arc<AtomicU64>,
@@ -492,6 +620,7 @@ impl AudioSystem {
             commands,
             blip_sound,
             sound_ids,
+            bus_ids: Mutex::new(HashMap::new()),
             put_failures,
             reported_failures: AtomicU64::new(0),
             command_push_failures: AtomicU64::new(0),
@@ -502,15 +631,24 @@ impl AudioSystem {
     }
 
     pub fn play_blip(&self) {
-        self.enqueue_play(self.blip_sound, 0.8, false);
+        self.enqueue_play(self.blip_sound, 0.8, false, None);
     }
 
     pub fn play(&self, sound: SoundHandle, volume: f32, looping: bool) {
+        self.play_on_bus(sound, volume, looping, None);
+    }
+
+    pub fn play_on_bus(&self, sound: SoundHandle, volume: f32, looping: bool, bus: Option<&str>) {
         let Some(sound_id) = self.sound_ids.get(&sound).copied() else {
             log::warn!("ignoring play request for unknown sound handle {:?}", sound);
             return;
         };
-        self.enqueue_play(sound_id, volume, looping);
+        self.enqueue_play(
+            sound_id,
+            volume,
+            looping,
+            bus.and_then(|bus| self.bus_id(bus)),
+        );
     }
 
     pub fn play_music(&self, sound: SoundHandle, volume: f32) {
@@ -519,6 +657,21 @@ impl AudioSystem {
 
     pub fn play_music_fade_in(&self, sound: SoundHandle, volume: f32, duration_seconds: f32) {
         self.play_music_with_fade(sound, volume, Some(duration_seconds));
+    }
+
+    pub fn crossfade_music(&self, sound: SoundHandle, volume: f32, duration_seconds: f32) {
+        let Some(sound_id) = self.sound_ids.get(&sound).copied() else {
+            log::warn!(
+                "ignoring crossfade_music request for unknown sound handle {:?}",
+                sound
+            );
+            return;
+        };
+        self.enqueue_audio_command(AudioCommand::CrossfadeMusic {
+            sound_id,
+            volume,
+            duration_seconds,
+        });
     }
 
     fn play_music_with_fade(&self, sound: SoundHandle, volume: f32, fade_in_seconds: Option<f32>) {
@@ -560,6 +713,13 @@ impl AudioSystem {
         self.enqueue_audio_command(AudioCommand::SetMusicVolume(volume));
     }
 
+    pub fn set_bus_volume(&self, bus: &str, volume: f32) {
+        let Some(bus) = self.bus_id(bus) else {
+            return;
+        };
+        self.enqueue_audio_command(AudioCommand::SetBusVolume { bus, volume });
+    }
+
     pub fn fade_music_to(&self, volume: f32, duration_seconds: f32) {
         self.enqueue_audio_command(AudioCommand::FadeMusicTo {
             volume,
@@ -567,12 +727,38 @@ impl AudioSystem {
         });
     }
 
-    fn enqueue_play(&self, sound_id: SoundId, volume: f32, looping: bool) {
+    fn enqueue_play(&self, sound_id: SoundId, volume: f32, looping: bool, bus: Option<u8>) {
         self.enqueue_audio_command(AudioCommand::Play {
             sound_id,
             volume,
             looping,
+            bus,
         });
+    }
+
+    fn bus_id(&self, name: &str) -> Option<u8> {
+        let name = name.trim();
+        if name.is_empty() {
+            log::warn!("ignoring audio bus with an empty name");
+            return None;
+        }
+
+        let mut buses = self
+            .bus_ids
+            .lock()
+            .expect("audio bus registry lock poisoned");
+        if let Some(id) = buses.get(name) {
+            return Some(*id);
+        }
+        if buses.len() >= MAX_NAMED_BUSES {
+            log::warn!(
+                "ignoring audio bus '{name}': at most {MAX_NAMED_BUSES} named buses are supported"
+            );
+            return None;
+        }
+        let id = buses.len() as u8;
+        buses.insert(name.to_owned(), id);
+        Some(id)
     }
 
     fn enqueue_audio_command(&self, command: AudioCommand) {
@@ -667,8 +853,9 @@ impl MixerCallback {
                     sound_id,
                     volume,
                     looping,
+                    bus,
                 } => {
-                    self.mixer.play(sound_id, volume, looping);
+                    self.mixer.play_on_bus(sound_id, volume, looping, bus);
                 }
                 AudioCommand::PlayMusic {
                     sound_id,
@@ -677,12 +864,23 @@ impl MixerCallback {
                 } => {
                     self.mixer.play_music(sound_id, volume, fade_in_seconds);
                 }
+                AudioCommand::CrossfadeMusic {
+                    sound_id,
+                    volume,
+                    duration_seconds,
+                } => {
+                    self.mixer
+                        .crossfade_music(sound_id, volume, duration_seconds);
+                }
                 AudioCommand::StopMusic => self.mixer.stop_music(),
                 AudioCommand::PauseMusic => self.mixer.pause_music(),
                 AudioCommand::ResumeMusic => self.mixer.resume_music(),
                 AudioCommand::SetMasterVolume(volume) => self.mixer.set_master_volume(volume),
                 AudioCommand::SetSfxVolume(volume) => self.mixer.set_sfx_volume(volume),
                 AudioCommand::SetMusicVolume(volume) => self.mixer.set_music_volume(volume),
+                AudioCommand::SetBusVolume { bus, volume } => {
+                    self.mixer.set_bus_volume(bus, volume)
+                }
                 AudioCommand::FadeMusicTo {
                     volume,
                     duration_seconds,
@@ -876,6 +1074,20 @@ fn decode_file_sound(
                 Err(ogg_feature_required_error(path))
             }
         }
+        SoundFormat::Mp3 => {
+            #[cfg(feature = "mp3")]
+            {
+                let sound = decode_mp3_sound(bytes)
+                    .map_err(|err| unsupported_mp3_error(path, target_sample_rate, err))?;
+                normalize_sound(sound, target_channels, target_sample_rate)
+                    .map_err(|err| unsupported_mp3_error(path, target_sample_rate, err))
+            }
+            #[cfg(not(feature = "mp3"))]
+            {
+                let _ = (bytes, target_channels, target_sample_rate);
+                Err(mp3_feature_required_error(path))
+            }
+        }
         SoundFormat::Unknown => Err(unsupported_sound_format_error(path)),
     }
 }
@@ -884,6 +1096,7 @@ fn decode_file_sound(
 enum SoundFormat {
     Wav,
     Ogg,
+    Mp3,
     Unknown,
 }
 
@@ -894,6 +1107,13 @@ fn detect_sound_format(path: &Path, bytes: &[u8]) -> SoundFormat {
     if bytes.starts_with(b"OggS") {
         return SoundFormat::Ogg;
     }
+    if bytes.starts_with(b"ID3")
+        || bytes
+            .get(0..2)
+            .is_some_and(|header| header[0] == 0xff && header[1] & 0xe0 == 0xe0)
+    {
+        return SoundFormat::Mp3;
+    }
 
     match path
         .extension()
@@ -903,15 +1123,20 @@ fn detect_sound_format(path: &Path, bytes: &[u8]) -> SoundFormat {
     {
         Some("wav") => SoundFormat::Wav,
         Some("ogg") => SoundFormat::Ogg,
+        Some("mp3") => SoundFormat::Mp3,
         _ => SoundFormat::Unknown,
     }
 }
 
 fn unsupported_sound_format_error(path: &Path) -> anyhow::Error {
-    #[cfg(feature = "ogg")]
-    let supported = "WAV or OGG Vorbis";
-    #[cfg(not(feature = "ogg"))]
-    let supported = "WAV (or OGG Vorbis with the `ogg` feature enabled)";
+    #[cfg(all(feature = "ogg", feature = "mp3"))]
+    let supported = "WAV, OGG Vorbis, or MP3";
+    #[cfg(all(feature = "ogg", not(feature = "mp3")))]
+    let supported = "WAV or OGG Vorbis (MP3 requires the `mp3` feature)";
+    #[cfg(all(not(feature = "ogg"), feature = "mp3"))]
+    let supported = "WAV or MP3 (OGG Vorbis requires the `ogg` feature)";
+    #[cfg(all(not(feature = "ogg"), not(feature = "mp3")))]
+    let supported = "WAV (or OGG Vorbis / MP3 with their optional features enabled)";
 
     anyhow::anyhow!(
         "Sound file '{}' uses an unsupported format.\n\nSupported here: {supported}.\n\nTry converting with:\n    ffmpeg -i input.ext -ac 2 -ar 48000 {}",
@@ -924,6 +1149,15 @@ fn unsupported_sound_format_error(path: &Path) -> anyhow::Error {
 fn ogg_feature_required_error(path: &Path) -> anyhow::Error {
     anyhow::anyhow!(
         "OGG audio requires the `ogg` feature.\n\nEither enable the feature or convert to WAV:\n    ffmpeg -i {} -ac 2 -ar 48000 {}",
+        path.display(),
+        path.with_extension("wav").display(),
+    )
+}
+
+#[cfg(not(feature = "mp3"))]
+fn mp3_feature_required_error(path: &Path) -> anyhow::Error {
+    anyhow::anyhow!(
+        "MP3 audio requires the optional `mp3` feature.\n\nEither enable it (with ffmpeg available on PATH) or convert to WAV:\n    ffmpeg -i {} -ac 2 -ar 48000 {}",
         path.display(),
         path.with_extension("wav").display(),
     )
@@ -951,6 +1185,55 @@ fn unsupported_ogg_error(
         "Sound file '{}' could not be decoded as OGG Vorbis.\n\nSupported OGG input:\n- mono or stereo Vorbis\n- any sample rate will be converted to {target_sample_rate} Hz\n\nTry converting with:\n    ffmpeg -i input.ogg -ac 2 -ar {target_sample_rate} {}\n\nDetails: {err}",
         path.display(),
         path.display(),
+    )
+}
+
+#[cfg(feature = "mp3")]
+fn decode_mp3_sound(bytes: &[u8]) -> anyhow::Result<Sound> {
+    let mut child = Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-i",
+            "pipe:0",
+            "-f",
+            "wav",
+            "-acodec",
+            "pcm_f32le",
+            "pipe:1",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| anyhow::anyhow!("could not start ffmpeg: {err}"))?;
+    child
+        .stdin
+        .take()
+        .expect("piped ffmpeg stdin is available")
+        .write_all(bytes)
+        .map_err(|err| anyhow::anyhow!("could not send MP3 data to ffmpeg: {err}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|err| anyhow::anyhow!("could not read ffmpeg output: {err}"))?;
+    if !output.status.success() {
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("ffmpeg could not decode the MP3: {}", diagnostic.trim());
+    }
+    decode_wav_sound(&output.stdout)
+}
+
+#[cfg(feature = "mp3")]
+fn unsupported_mp3_error(
+    path: &Path,
+    target_sample_rate: u32,
+    err: anyhow::Error,
+) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Sound file '{}' could not be decoded as MP3.\n\nThe optional `mp3` feature uses ffmpeg at asset-load time; install ffmpeg or convert the file:\n    ffmpeg -i {} -ac 2 -ar {target_sample_rate} {}\n\nDetails: {err}",
+        path.display(),
+        path.display(),
+        path.with_extension("ogg").display(),
     )
 }
 
@@ -1398,6 +1681,10 @@ mod tests {
             SoundFormat::Ogg
         );
         assert_eq!(
+            detect_sound_format(std::path::Path::new("theme.mp3"), b"not a header"),
+            SoundFormat::Mp3
+        );
+        assert_eq!(
             detect_sound_format(std::path::Path::new("sound.data"), b"not a header"),
             SoundFormat::Unknown
         );
@@ -1417,6 +1704,21 @@ mod tests {
         assert!(error.contains("OGG audio requires the `ogg` feature"));
         assert!(error.contains("ffmpeg -i music/theme.ogg"));
         assert!(error.contains("music/theme.wav"));
+    }
+
+    #[cfg(not(feature = "mp3"))]
+    #[test]
+    fn mp3_files_explain_how_to_enable_or_convert_when_feature_is_disabled() {
+        let error = decode_file_sound(
+            std::path::Path::new("music/theme.mp3"),
+            b"ID3\x04\0\0",
+            2,
+            48_000,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("MP3 audio requires the optional `mp3` feature"));
+        assert!(error.contains("ffmpeg -i music/theme.mp3"));
     }
 
     fn test_wav_pcm16(samples: &[i16]) -> Vec<u8> {
@@ -1548,6 +1850,39 @@ mod tests {
         let mut out = [0.0; 1];
         mixer.mix_into(&mut out);
         assert_eq!(out, [0.2]);
+    }
+
+    #[test]
+    fn named_bus_multiplies_the_standard_sfx_group() {
+        let mut mixer = Mixer::new();
+        let sound = mixer.add_sound(Sound::new(vec![1.0], 1, 48_000)).unwrap();
+        mixer.set_sfx_volume(0.8);
+        mixer.set_bus_volume(3, 0.5);
+        mixer.play_on_bus(sound, 1.0, true, Some(3));
+
+        let mut out = [0.0; 1];
+        mixer.mix_into(&mut out);
+
+        assert_eq!(out, [0.4]);
+    }
+
+    #[test]
+    fn crossfade_keeps_old_music_until_the_new_track_has_faded_in() {
+        let mut mixer = Mixer::new();
+        mixer.set_output_format(1, 10).unwrap();
+        let first = mixer.add_sound(Sound::new(vec![1.0], 1, 10)).unwrap();
+        let second = mixer.add_sound(Sound::new(vec![0.5], 1, 10)).unwrap();
+        mixer.play_music(first, 1.0, None);
+
+        assert_eq!(mixer.crossfade_music(second, 1.0, 1.0), PlayResult::Started);
+        assert_eq!(mixer.voices.iter().filter(|voice| voice.music).count(), 2);
+
+        let mut out = [0.0; 10];
+        mixer.mix_into(&mut out);
+
+        assert_eq!(out, [0.5; 10]);
+        assert_eq!(mixer.voices.iter().filter(|voice| voice.music).count(), 1);
+        assert_eq!(mixer.voices[0].sound_id, second);
     }
 
     #[test]
@@ -1759,6 +2094,7 @@ mod tests {
                 sound_id,
                 volume: 0.5,
                 looping: false,
+                bus: None,
             })
             .unwrap();
         let mut callback = MixerCallback {
@@ -1788,6 +2124,7 @@ mod tests {
                     sound_id,
                     volume: 0.5,
                     looping: true,
+                    bus: None,
                 })
                 .unwrap();
         }

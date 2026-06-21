@@ -14,6 +14,23 @@ pub struct DebugOverlay {
     pub show_fps: bool,
 }
 
+/// Small, stable diagnostics for the text-map iteration loop. The information
+/// is installed with the debug overlay and updated by map reloads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DebugIterationInfo {
+    pub(crate) asset_count: usize,
+    pub(crate) last_reload: String,
+}
+
+impl DebugIterationInfo {
+    pub(crate) fn new(asset_count: usize) -> Self {
+        Self {
+            asset_count,
+            last_reload: "not reloaded yet".to_owned(),
+        }
+    }
+}
+
 impl DebugOverlay {
     pub fn enabled() -> Self {
         Self {
@@ -46,10 +63,15 @@ pub fn draw_debug_overlay(game: &mut GameCtx<'_, '_>, dt: f32) {
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "map: {}",
+        "current map: {}",
         game.current_map_name()
             .unwrap_or_else(|| "<none>".to_owned())
     ));
+    lines.push("F5: reload current text map (development)".to_owned());
+    if let Some(iteration) = game.resource::<DebugIterationInfo>() {
+        lines.push(format!("assets: {} loaded", iteration.asset_count));
+        lines.push(format!("last reload: {}", iteration.last_reload));
+    }
     lines.push(format!(
         "entities: {}",
         game.entities_with::<game_core::world::Transform>().len()
@@ -96,5 +118,40 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         let mut overlay = self.resource::<DebugOverlay>().copied().unwrap_or_default();
         overlay.enabled = !overlay.enabled;
         self.insert_resource(overlay);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::{GameApp, GamePlugin};
+    use crate::harness::GameTestHarness;
+
+    struct DebugPlugin;
+
+    impl GamePlugin for DebugPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            game.asset_bag()
+                .texture("floor", "textures/floor.png")?
+                .texture("wall", "textures/wall.png")?
+                .build();
+            game.enable_debug_overlay();
+            game.map("debug")
+                .tiles(["..."])
+                .simple_theme("floor", "wall")
+                .start();
+            game.on_start(|game| game.spawn_start_map());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn overlay_reports_the_fast_iteration_hints() {
+        let mut game = GameTestHarness::from_plugin(DebugPlugin).unwrap();
+        game.frame(1.0 / 60.0);
+
+        game.assert_ui_contains("current map: debug");
+        game.assert_ui_contains("F5: reload current text map");
+        game.assert_ui_contains("assets: 2 loaded");
+        game.assert_ui_contains("last reload: not reloaded yet");
     }
 }

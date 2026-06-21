@@ -13,12 +13,15 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow};
+use game_core::app::MapData;
 use game_core::builder::{MapId, PrefabId, PrefabRegistry};
 use game_core::commands::CommandQueue;
+use game_core::nav::NavGrid;
 use game_core::world::Sprite;
 use game_core::world::World;
 use game_map::{
-    GameMap, MapBuilder, MapCell, MapValidator, cell, load_game_map_ron, validate_map_prefabs,
+    GameMap, MapBuilder, MapCell, MapValidator, cell, load_game_map_ron, load_ldtk_level_file,
+    validate_map_prefabs,
 };
 
 use crate::app::GameApp;
@@ -46,6 +49,11 @@ enum MapSource {
     Ron {
         text: String,
     },
+    Ldtk {
+        path: String,
+        level: Option<String>,
+        entities: Vec<(String, String)>,
+    },
 }
 
 /// A map declared through [`MapAuthor`] but not yet resolved/validated; finalized
@@ -59,10 +67,25 @@ pub(crate) struct PendingMap {
     misuse_errors: Vec<String>,
 }
 
+/// The information needed to rebuild one text map without re-running Rust
+/// content setup. Stored only for maps created with `map_from_text*`.
+#[derive(Clone)]
+pub(crate) struct TextMapReloadSource {
+    path: String,
+    tile_size: f32,
+    objects: Vec<(String, String, MapCell)>,
+    legends: Vec<(char, String)>,
+    required_objects: Vec<String>,
+    theme: TileTheme,
+}
+
 impl PendingMap {
     /// Resolves prefab names, builds and validates the [`GameMap`], and returns it
     /// alongside its theme and start flag for registration.
-    pub(crate) fn resolve(self, prefabs: &PrefabRegistry) -> Result<(GameMap, TileTheme, bool)> {
+    pub(crate) fn resolve(
+        self,
+        prefabs: &PrefabRegistry,
+    ) -> Result<(GameMap, TileTheme, bool, Option<TextMapReloadSource>)> {
         if !self.misuse_errors.is_empty() {
             anyhow::bail!(
                 "map '{}' has invalid authoring calls:\n{}",
@@ -79,6 +102,22 @@ impl PendingMap {
                     self.name
                 )
             })?;
+        let reload_source = match &self.source {
+            MapSource::Text {
+                path,
+                tile_size,
+                objects,
+                legends,
+            } => Some(TextMapReloadSource {
+                path: path.clone(),
+                tile_size: *tile_size,
+                objects: objects.clone(),
+                legends: legends.clone(),
+                required_objects: self.required_objects.clone(),
+                theme,
+            }),
+            MapSource::InCode { .. } | MapSource::Ron { .. } | MapSource::Ldtk { .. } => None,
+        };
 
         let game_map = match self.source {
             MapSource::InCode {
@@ -109,66 +148,141 @@ impl PendingMap {
             MapSource::Text {
                 path,
                 tile_size,
-                mut objects,
+                objects,
                 legends,
-            } => {
-                let full_path = beginner_asset_path(&path);
-                let text = fs::read_to_string(&full_path).with_context(|| {
-                    format!(
-                        "map '{}' could not read text map '{}'. Place it under assets/",
-                        self.name,
-                        full_path.display()
-                    )
-                })?;
-                let rows = text
-                    .lines()
-                    .map(|line| line.trim_end_matches('\r').to_owned())
-                    .collect::<Vec<_>>();
-                validate_map_row_widths(&self.name, &rows)?;
-                let rows = expand_symbolic_tiles(&self.name, rows, &mut objects, legends)?;
-                let row_refs = rows.iter().map(String::as_str).collect::<Vec<_>>();
-                let mut builder = MapBuilder::new(self.name.clone(), tile_size)
-                    .try_tile_layer("collision", &row_refs)
-                    .with_context(|| format!("map '{}' has invalid text-map tiles", self.name))?;
-                for (id, prefab_name, cell) in objects {
-                    let prefab = prefabs.id(&prefab_name).ok_or_else(|| {
-                        anyhow!(
-                            "map '{}' object '{}' references unknown prefab '{}'",
-                            self.name,
-                            id,
-                            prefab_name
-                        )
-                    })?;
-                    builder = builder.object(id, prefab, cell);
-                }
-                builder.finish()
-            }
+            } => load_text_game_map(&self.name, &path, tile_size, objects, legends, prefabs)?,
             MapSource::Ron { text } => load_game_map_ron(&text, |name| prefabs.id(name))
                 .with_context(|| format!("map '{}' failed to load from RON", self.name))?,
+            MapSource::Ldtk {
+                path,
+                level,
+                entities,
+            } => load_ldtk_game_map(&self.name, &path, level, entities, prefabs)?,
         };
 
-        let mut validator = MapValidator::new();
-        for required in &self.required_objects {
-            validator = validator.require_object(required);
-        }
-        validator
-            .validate(&game_map)
-            .with_context(|| format!("map '{}' validation failed", game_map.name))?;
-        validate_map_prefabs(&game_map, prefabs)
-            .with_context(|| format!("map '{}' references unknown prefab", game_map.name))?;
+        validate_game_map(&game_map, &self.required_objects, prefabs)?;
 
-        Ok((game_map, theme, self.start))
+        Ok((game_map, theme, self.start, reload_source))
     }
 }
 
+fn load_ldtk_game_map(
+    map_name: &str,
+    path: &str,
+    level: Option<String>,
+    entities: Vec<(String, String)>,
+    prefabs: &PrefabRegistry,
+) -> Result<GameMap> {
+    let level = level.ok_or_else(|| {
+        anyhow!("LDtk map '{map_name}' needs a level. Add:\n    .level(\"Level_1\")")
+    })?;
+    let full_path = beginner_asset_path(path);
+    let imported = load_ldtk_level_file(&full_path, &level)
+        .with_context(|| format!("map '{map_name}' failed to load LDtk level '{level}'"))?;
+    let mut entity_lookup = HashMap::new();
+    for (identifier, prefab) in entities {
+        if entity_lookup.insert(identifier.clone(), prefab).is_some() {
+            anyhow::bail!("LDtk map '{map_name}' has duplicate mapping for entity '{identifier}'");
+        }
+    }
+
+    let row_refs = imported
+        .collision_rows
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut builder = MapBuilder::new(map_name, imported.tile_size)
+        .try_tile_layer("collision", &row_refs)
+        .with_context(|| format!("LDtk map '{map_name}' has invalid collision cells"))?;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for entity in imported.entities {
+        let prefab_name = entity_lookup.get(&entity.identifier).ok_or_else(|| {
+            anyhow!(
+                "LDtk map '{map_name}' has entity '{}' with no prefab mapping.\n\nAdd:\n    .entity(\"{}\", \"some_prefab\")",
+                entity.identifier,
+                entity.identifier
+            )
+        })?;
+        let prefab = prefabs.id(prefab_name).ok_or_else(|| {
+            anyhow!(
+                "LDtk entity '{}' in map '{map_name}' maps to unknown prefab '{prefab_name}'",
+                entity.identifier
+            )
+        })?;
+        let count = counts.entry(prefab_name.clone()).or_default();
+        *count += 1;
+        builder = builder.object(
+            generated_object_id(prefab_name, *count),
+            prefab,
+            entity.cell,
+        );
+    }
+    Ok(builder.finish())
+}
+
+fn load_text_game_map(
+    map_name: &str,
+    path: &str,
+    tile_size: f32,
+    mut objects: Vec<(String, String, MapCell)>,
+    legends: Vec<(char, String)>,
+    prefabs: &PrefabRegistry,
+) -> Result<GameMap> {
+    let full_path = beginner_asset_path(path);
+    let text = fs::read_to_string(&full_path).with_context(|| {
+        format!(
+            "map '{map_name}' could not read text map '{}'. Place it under assets/",
+            full_path.display()
+        )
+    })?;
+    let rows = text
+        .lines()
+        .map(|line| line.trim_end_matches('\r').to_owned())
+        .collect::<Vec<_>>();
+    validate_map_row_widths(map_name, &rows)?;
+    let rows = expand_symbolic_tiles(map_name, rows, &mut objects, legends)?;
+    let row_refs = rows.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut builder = MapBuilder::new(map_name, tile_size)
+        .try_tile_layer("collision", &row_refs)
+        .with_context(|| format!("map '{map_name}' has invalid text-map tiles"))?;
+    for (id, prefab_name, cell) in objects {
+        let prefab = prefabs.id(&prefab_name).ok_or_else(|| {
+            anyhow!("map '{map_name}' object '{id}' references unknown prefab '{prefab_name}'")
+        })?;
+        builder = builder.object(id, prefab, cell);
+    }
+    Ok(builder.finish())
+}
+
+fn validate_game_map(
+    game_map: &GameMap,
+    required_objects: &[String],
+    prefabs: &PrefabRegistry,
+) -> Result<()> {
+    let mut validator = MapValidator::new();
+    for required in required_objects {
+        validator = validator.require_object(required);
+    }
+    validator
+        .validate(game_map)
+        .with_context(|| format!("map '{}' validation failed", game_map.name))?;
+    validate_map_prefabs(game_map, prefabs)
+        .with_context(|| format!("map '{}' references unknown prefab", game_map.name))?;
+    Ok(())
+}
+
 fn beginner_asset_path(path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        return path;
+    }
     let root = std::env::var_os("GAME_ASSET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("assets"));
     if root.is_absolute() {
-        return root.join(path);
+        return root.join(&path);
     }
-    let relative = root.join(path);
+    let relative = root.join(&path);
     let Ok(current_dir) = std::env::current_dir() else {
         return relative;
     };
@@ -242,6 +356,24 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         }
     }
 
+    pub(crate) fn from_ldtk(app: &'a mut GameApp<'app>, name: String, path: String) -> Self {
+        Self {
+            app,
+            pending: PendingMap {
+                name,
+                source: MapSource::Ldtk {
+                    path,
+                    level: None,
+                    entities: Vec::new(),
+                },
+                required_objects: Vec::new(),
+                theme: None,
+                start: false,
+                misuse_errors: Vec::new(),
+            },
+        }
+    }
+
     /// Sets the tile size in world units (in-code maps only; RON maps carry it).
     pub fn tile_size(mut self, tile_size: f32) -> Self {
         match &mut self.pending.source {
@@ -252,6 +384,11 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                 self.pending
                     .misuse_errors
                     .push("tile_size() is only valid on in-code maps, not RON maps".to_owned());
+            }
+            MapSource::Ldtk { .. } => {
+                self.pending
+                    .misuse_errors
+                    .push("tile_size() is only valid on in-code or text maps".to_owned());
             }
         }
         self
@@ -264,7 +401,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
             MapSource::InCode { rows: r, .. } => {
                 *r = rows.iter().map(|row| (*row).to_owned()).collect();
             }
-            MapSource::Text { .. } | MapSource::Ron { .. } => {
+            MapSource::Text { .. } | MapSource::Ron { .. } | MapSource::Ldtk { .. } => {
                 self.pending
                     .misuse_errors
                     .push("tiles() is only valid on in-code maps; text maps read their rows from the file".to_owned());
@@ -290,6 +427,11 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                     .misuse_errors
                     .push("spawn() is only valid on in-code maps, not RON maps".to_owned());
             }
+            MapSource::Ldtk { .. } => {
+                self.pending
+                    .misuse_errors
+                    .push("spawn() is only valid on in-code or text maps".to_owned());
+            }
         }
         self
     }
@@ -306,6 +448,11 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                 self.pending
                     .misuse_errors
                     .push("legend() is only valid on in-code maps, not RON maps".to_owned());
+            }
+            MapSource::Ldtk { .. } => {
+                self.pending
+                    .misuse_errors
+                    .push("legend() is only valid on in-code or text maps".to_owned());
             }
         }
         self
@@ -338,7 +485,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         let wall = self.app.resolve_texture_ref(wall.into());
         let tile_size = match &self.pending.source {
             MapSource::InCode { tile_size, .. } | MapSource::Text { tile_size, .. } => *tile_size,
-            MapSource::Ron { .. } => 32.0,
+            MapSource::Ron { .. } | MapSource::Ldtk { .. } => 32.0,
         };
         match (floor, wall) {
             (Ok(floor), Ok(wall)) => {
@@ -357,6 +504,34 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                         .map(|error| error.to_string()),
                 );
             }
+        }
+        self
+    }
+
+    /// Selects the level inside an LDtk project. Only valid after
+    /// [`GameApp::map_from_ldtk`].
+    pub fn level(mut self, level: impl Into<String>) -> Self {
+        match &mut self.pending.source {
+            MapSource::Ldtk {
+                level: selected, ..
+            } => *selected = Some(level.into()),
+            _ => self
+                .pending
+                .misuse_errors
+                .push("level() is only valid on LDtk maps".to_owned()),
+        }
+        self
+    }
+
+    /// Maps an LDtk entity identifier, such as `"PlayerStart"`, to a prefab
+    /// name such as `"player"`.
+    pub fn entity(mut self, identifier: impl Into<String>, prefab: impl Into<String>) -> Self {
+        match &mut self.pending.source {
+            MapSource::Ldtk { entities, .. } => entities.push((identifier.into(), prefab.into())),
+            _ => self
+                .pending
+                .misuse_errors
+                .push("entity() is only valid on LDtk maps".to_owned()),
         }
         self
     }
@@ -404,7 +579,7 @@ fn expand_symbolic_tiles(
                 symbol => {
                     let prefab = legend_lookup.get(&symbol).ok_or_else(|| {
                         anyhow!(
-                            "Unknown symbol {symbol:?} in map '{map_name}' at row {}, col {}.\n\nAdd:\n    .legend({symbol:?}, \"prefab_name\")\n\nor replace the symbol with `.` or `#`.",
+                            "Map '{map_name}' uses symbol {symbol:?} but no legend maps it to a prefab.\n\nAt row {}, col {} add:\n    .legend({symbol:?}, \"some_prefab\")\n\nor replace the symbol with `.` or `#`.",
                             row + 1,
                             col + 1,
                         )
@@ -477,6 +652,7 @@ pub struct ContentRuntime {
     prefabs: Rc<PrefabRegistry>,
     maps: HashMap<String, GameMap>,
     map_ids: HashMap<String, MapId>,
+    text_maps: HashMap<String, TextMapReloadSource>,
     start_map: String,
     current_map: String,
 }
@@ -486,11 +662,13 @@ impl ContentRuntime {
         prefabs: Rc<PrefabRegistry>,
         maps: HashMap<String, GameMap>,
         map_ids: HashMap<String, MapId>,
+        text_maps: HashMap<String, TextMapReloadSource>,
         start_map: String,
     ) -> Self {
         Self {
             prefabs,
             map_ids,
+            text_maps,
             current_map: start_map.clone(),
             start_map,
             maps,
@@ -516,6 +694,37 @@ impl ContentRuntime {
 
     pub fn start_map_id(&self) -> Option<MapId> {
         self.map_id(&self.start_map)
+    }
+
+    /// Rebuilds the active text map from its original source path. Maps declared
+    /// in code or loaded from RON deliberately remain non-reloadable.
+    pub(crate) fn reload_current_text_map(&mut self) -> Result<(MapId, MapData)> {
+        let name = self.current_map.clone();
+        let source = self.text_maps.get(&name).cloned().ok_or_else(|| {
+            anyhow!("map '{name}' was not loaded from a text file and cannot be reloaded")
+        })?;
+        let map = load_text_game_map(
+            &name,
+            &source.path,
+            source.tile_size,
+            source.objects,
+            source.legends,
+            &self.prefabs,
+        )?;
+        validate_game_map(&map, &source.required_objects, &self.prefabs)?;
+        let tilemap = map.collision_tilemap();
+        let map_id = self
+            .map_id(&name)
+            .ok_or_else(|| anyhow!("map '{name}' is not registered"))?;
+        self.maps.insert(name, map);
+        Ok((
+            map_id,
+            MapData {
+                nav: NavGrid::from_tilemap(&tilemap),
+                tilemap,
+                theme: source.theme,
+            },
+        ))
     }
 
     fn spawn_current(&self, world: &mut World) -> Result<()> {
@@ -597,8 +806,8 @@ mod tests {
             expand_symbolic_tiles("level_1", vec!["#X#".to_owned()], &mut Vec::new(), vec![])
                 .unwrap_err()
                 .to_string();
-        assert!(error.contains("Unknown symbol 'X' in map 'level_1'"));
-        assert!(error.contains(".legend('X', \"prefab_name\")"));
+        assert!(error.contains("Map 'level_1' uses symbol 'X'"));
+        assert!(error.contains(".legend('X', \"some_prefab\")"));
     }
 
     #[test]

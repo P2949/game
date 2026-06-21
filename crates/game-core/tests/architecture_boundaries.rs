@@ -188,6 +188,17 @@ fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
         "examples/two-level-demo/src",
         "examples/waves-demo/src",
         "examples/menu-game-over/src",
+        "examples/no-rust-shapes-demo/src",
+        "examples/win-condition-demo/src",
+        "examples/enemy-drops-demo/src",
+        "examples/health-pickup-demo/src",
+        "examples/checkpoint-demo/src",
+        "examples/boss-demo/src",
+        "examples/dialog-demo/src",
+        "examples/inventory-demo/src",
+        "examples/title-menu-demo/src",
+        "examples/damage-zone-demo/src",
+        "examples/ldtk-demo/src",
         "examples/animation-demo/src",
         "examples/audio-demo/src",
         "examples/trigger-area-demo/src",
@@ -237,6 +248,7 @@ fn beginner_facing_sources_hide_context_lifetime_annotations() {
         "examples/two-level-demo",
         "examples/waves-demo",
         "examples/menu-game-over",
+        "examples/no-rust-shapes-demo",
         "examples/animation-demo",
         "templates/simple-demo",
         "crates/simple-content/src",
@@ -265,6 +277,65 @@ fn beginner_facing_sources_hide_context_lifetime_annotations() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn simple_content_uses_the_beginner_content_plugin_macro() {
+    let path = workspace_root().join("crates/simple-content/src/lib.rs");
+    let source = read_code_without_comments(&path);
+
+    assert!(
+        source.contains("content_plugin!(SimplePlugin, plugin"),
+        "simple-content should define its plugin with content_plugin!"
+    );
+    for forbidden in ["impl GamePlugin", "GameApp<'_", "pub struct SimplePlugin;"] {
+        assert!(
+            !source.contains(forbidden),
+            "simple-content should hide plugin boilerplate {forbidden:?}"
+        );
+    }
+}
+
+#[test]
+fn final_no_rust_shapes_demo_stays_a_complete_high_level_acceptance_example() {
+    let path = workspace_root().join("examples/no-rust-shapes-demo/src/main.rs");
+    let source = read_code_without_comments(&path);
+
+    for required in [
+        "use game_starter::prelude::*;",
+        "assets_from_folders()",
+        "map_from_text_auto",
+        "player_prefab",
+        "enemy_prefab",
+        "pickup_prefab",
+        "projectile_prefab",
+        "trigger_prefab",
+        "door_prefab",
+        "use_simple_scene_flow",
+        "play_music",
+        "play_sound",
+        "enemy_drops",
+        "heal_player",
+        "checkpoint_prefab",
+    ] {
+        assert!(
+            source.contains(required),
+            "final acceptance demo should demonstrate {required:?}"
+        );
+    }
+
+    for forbidden in BEGINNER_DEMO_FORBIDDEN.iter().copied().chain([
+        "GameApp<'_",
+        "impl GamePlugin",
+        "Health::new",
+        "MeleeAttack",
+        "Patrol",
+    ]) {
+        assert!(
+            !source.contains(forbidden),
+            "final acceptance demo must not expose {forbidden:?}"
+        );
     }
 }
 
@@ -434,33 +505,18 @@ fn readme_first_authoring_example_is_beginner_first() {
     let section = readme
         .split("## Content Authoring Model")
         .nth(1)
-        .and_then(|rest| rest.split("### Advanced API").next())
+        .and_then(|rest| rest.split("## Authoring levels").next())
         .expect("failed to find README content-authoring beginner section");
 
-    assert!(
-        section.contains("use game_kit::beginner::prelude::*")
-            || section.contains("use game_starter::prelude::*"),
-        "README first authoring example should import a beginner prelude"
-    );
-    assert!(
-        section.contains(".asset_bag()"),
-        "README first authoring example should use asset_bag"
-    );
-    assert!(
-        section.contains("game.rules()"),
-        "README first authoring example should use game.rules()"
-    );
-    assert!(
-        section.contains("player_prefab"),
-        "README first authoring example should show player_prefab"
-    );
-    assert!(
-        section.contains("enemy_prefab"),
-        "README first authoring example should show enemy_prefab"
-    );
+    assert!(section.contains("use game_starter::prelude::*"));
+    assert!(section.contains("content_plugin!(MyContent, plugin"));
+    assert!(section.contains(".asset_bag()"));
+    assert!(section.contains("player_prefab"));
 
     for forbidden in [
         "game_kit::advanced::prelude",
+        "GamePlugin",
+        "GameApp<'_",
         "game.prefab(",
         "Transform::",
         "Velocity::",
@@ -520,15 +576,21 @@ fn beginner_docs_use_named_assets_before_typed_or_advanced_sections() {
 
     let content = fs::read_to_string(root.join("docs/content-authoring.md"))
         .expect("failed to read content-authoring guide");
-    let beginner = beginner_doc_section(&content);
     for required in [
-        ".sprite(\"player\")",
-        ".simple_theme(\"floor\", \"wall\")",
-        "game.audio().play_sound(\"hit\")",
+        "beginner-authoring.md",
+        "tutorials/README.md",
+        "cookbook/README.md",
+        "advanced-content-authoring.md",
     ] {
         assert!(
-            beginner.contains(required),
-            "content-authoring beginner section should demonstrate {required:?}"
+            content.contains(required),
+            "content-authoring index should link to {required:?}"
+        );
+    }
+    for forbidden in BEGINNER_DOC_FORBIDDEN {
+        assert!(
+            !content.contains(forbidden),
+            "content-authoring index should not expose advanced detail {forbidden:?}"
         );
     }
 }
@@ -785,6 +847,8 @@ const BEGINNER_DEMO_FORBIDDEN: &[&str] = &[
     "game_runtime::run",
     "plugin_fn",
     "for<'app>",
+    "spawn_start_map",
+    "reset_to_start_map_or_log",
     "game_kit::prelude::*",
     "game_kit::advanced::prelude::*",
 ];

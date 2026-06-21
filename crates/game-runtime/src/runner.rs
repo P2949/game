@@ -9,7 +9,7 @@ use game_core::audio::{Audio, AudioCommands};
 use game_core::backend::AudioCommand;
 use game_core::builder::{GameBuilder, MapId, MapRegistry, PrefabRegistry, RuntimeContent};
 use game_core::camera::Camera2D;
-use game_core::commands::{Command, CommandQueue};
+use game_core::commands::{Command, CommandQueue, MapReload};
 use game_core::gfx::Gfx;
 use game_core::input::{ActionId, Input};
 use game_core::plugin::GamePlugin;
@@ -97,7 +97,7 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
     let RuntimeContent {
         assets,
         input: input_registry,
-        maps,
+        mut maps,
         prefabs,
         start_map,
         mut schedule,
@@ -199,14 +199,16 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
                 };
                 schedule.run_fixed(&mut ctx, dt);
             }
-            process_core_commands(
+            if process_core_commands(
                 &mut world,
                 &prefabs,
-                &maps,
+                &mut maps,
                 start_map,
                 &mut active_map,
                 &mut audio_commands,
-            );
+            ) {
+                platform.should_quit = true;
+            }
 
             steps += 1;
         }
@@ -229,14 +231,16 @@ fn run_game_inner(config: RuntimeConfig, builder: GameBuilder) -> Result<()> {
             schedule.run_render_extract(&mut ctx, frame_dt);
             schedule.run_ui(&mut ctx, frame_dt);
         }
-        process_core_commands(
+        if process_core_commands(
             &mut world,
             &prefabs,
-            &maps,
+            &mut maps,
             start_map,
             &mut active_map,
             &mut audio_commands,
-        );
+        ) {
+            platform.should_quit = true;
+        }
 
         if timestep.step_ready() {
             let now = Instant::now();
@@ -299,16 +303,17 @@ impl ActiveMap {
 fn process_core_commands(
     world: &mut World,
     prefabs: &PrefabRegistry,
-    maps: &MapRegistry,
+    maps: &mut MapRegistry,
     start_map: MapId,
     active_map: &mut ActiveMap,
     audio_commands: &mut AudioCommands,
-) {
+) -> bool {
     let commands = world
         .get_resource_mut::<CommandQueue>()
         .map(|queue| queue.drain().collect::<Vec<_>>())
         .unwrap_or_default();
 
+    let mut quit = false;
     for command in commands {
         match command {
             Command::Despawn(entity) => world.despawn(entity),
@@ -316,6 +321,7 @@ fn process_core_commands(
                 sound,
                 volume: 0.8,
                 looping: false,
+                bus: None,
             }),
             Command::SpawnPrefab {
                 prefab,
@@ -331,6 +337,26 @@ fn process_core_commands(
                     log::error!("failed to change active map to {:?}: {err:?}", map);
                 }
             }
+            Command::Quit => quit = true,
+            Command::ReloadMap(map) => {
+                let reload = world.remove_resource::<MapReload>();
+                match reload {
+                    Some(reload) if reload.map == map => {
+                        if let Err(err) = maps.replace(map, reload.data.tilemap, reload.data.theme)
+                        {
+                            log::error!("failed to replace reloaded map {:?}: {err:?}", map);
+                        } else if let Err(err) = active_map.switch_to(maps, map) {
+                            log::error!("failed to activate reloaded map {:?}: {err:?}", map);
+                        }
+                    }
+                    Some(reload) => log::error!(
+                        "discarding reload data for {:?}; command requested {:?}",
+                        reload.map,
+                        map
+                    ),
+                    None => log::error!("map reload for {:?} had no replacement data", map),
+                }
+            }
             Command::RestartMap => {
                 let map = active_map.id;
                 if let Err(err) = active_map.switch_to(maps, map) {
@@ -344,6 +370,7 @@ fn process_core_commands(
             }
         }
     }
+    quit
 }
 
 fn submit_audio_command(audio: &AudioSystem, command: AudioCommand) {
@@ -352,7 +379,8 @@ fn submit_audio_command(audio: &AudioSystem, command: AudioCommand) {
             sound,
             volume,
             looping,
-        } => audio.play(sound, volume, looping),
+            bus,
+        } => audio.play_on_bus(sound, volume, looping, bus.as_deref()),
         AudioCommand::PlayMusic {
             sound,
             volume,
@@ -361,12 +389,18 @@ fn submit_audio_command(audio: &AudioSystem, command: AudioCommand) {
             Some(duration_seconds) => audio.play_music_fade_in(sound, volume, duration_seconds),
             None => audio.play_music(sound, volume),
         },
+        AudioCommand::CrossfadeMusic {
+            sound,
+            volume,
+            duration_seconds,
+        } => audio.crossfade_music(sound, volume, duration_seconds),
         AudioCommand::StopMusic => audio.stop_music(),
         AudioCommand::PauseMusic => audio.pause_music(),
         AudioCommand::ResumeMusic => audio.resume_music(),
         AudioCommand::SetMasterVolume { volume } => audio.set_master_volume(volume),
         AudioCommand::SetSfxVolume { volume } => audio.set_sfx_volume(volume),
         AudioCommand::SetMusicVolume { volume } => audio.set_music_volume(volume),
+        AudioCommand::SetBusVolume { bus, volume } => audio.set_bus_volume(&bus, volume),
         AudioCommand::FadeMusicTo {
             volume,
             duration_seconds,

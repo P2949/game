@@ -35,7 +35,6 @@ fn main() -> Result<()> {
             .camera_follows_player()
             .show_player_health()
             .build();
-        game.on_start(|game| game.spawn_start_map());
 
         game.on_enter_area("player", "danger_zone", |event| {
             event.actor().damage(10);

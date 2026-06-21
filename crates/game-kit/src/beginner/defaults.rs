@@ -6,10 +6,11 @@ use game_core::world::{EntityId, Velocity};
 use glam::{vec2, vec4};
 
 use crate::app::GameApp;
-use crate::beginner::actors::{Enemy, Player, PlayerMovement, Speed};
+use crate::beginner::actors::{Enemy, FacingDirection, Player, PlayerMovement, Speed};
 use crate::beginner::animation::{Animation, AnimationSet};
 use crate::beginner::combat::MeleeCombatConfig;
 use crate::beginner::state::SimpleGameState;
+use crate::beginner::ui::{UiFocus, UiNavigation};
 use crate::context::{GameCtx, StartupGameCtx};
 use crate::input::TopDownControls;
 
@@ -21,6 +22,8 @@ pub struct TopDownGameAuthor<'a, 'app> {
     attack: Option<ActionId>,
     pause: Option<ActionId>,
     reset: Option<ActionId>,
+    reload: Option<ActionId>,
+    menu_navigation: Option<(ActionId, ActionId, ActionId)>,
     debug_kill: Option<ActionId>,
     debug_overlay: Option<ActionId>,
     debug_restart: Option<ActionId>,
@@ -37,6 +40,7 @@ pub struct TopDownGameAuthor<'a, 'app> {
     player_directional_animation: bool,
     enemy_directional_animation: bool,
     attack_animation: Option<&'static str>,
+    directional_attack_animation: bool,
 }
 
 impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
@@ -47,6 +51,8 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             attack: None,
             pause: None,
             reset: None,
+            reload: None,
+            menu_navigation: None,
             debug_kill: None,
             debug_overlay: None,
             debug_restart: None,
@@ -63,6 +69,7 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             player_directional_animation: false,
             enemy_directional_animation: false,
             attack_animation: None,
+            directional_attack_animation: false,
         }
     }
 
@@ -76,6 +83,8 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             .attack(controls.attack)
             .pause(controls.pause)
             .reset(controls.reset)
+            .reload(controls.reload)
+            .menu_navigation(controls.menu_up, controls.menu_down, controls.menu_accept)
             .debug_kill(controls.debug_die)
             .debug_toggle(controls.debug_overlay)
             .debug_restart(controls.reset)
@@ -94,6 +103,18 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
 
     pub fn reset(mut self, reset: ActionId) -> Self {
         self.reset = Some(reset);
+        self
+    }
+
+    /// Sets the action that reloads the active text map during development.
+    pub fn reload(mut self, reload: ActionId) -> Self {
+        self.reload = Some(reload);
+        self
+    }
+
+    /// Sets the standard up/down/accept actions for focused beginner menus.
+    pub fn menu_navigation(mut self, up: ActionId, down: ActionId, accept: ActionId) -> Self {
+        self.menu_navigation = Some((up, down, accept));
         self
     }
 
@@ -196,9 +217,25 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
         self
     }
 
+    /// Plays `attack_up`, `attack_down`, `attack_left`, or `attack_right` on
+    /// the player when the configured attack action is pressed. If a directional
+    /// clip is absent, the ordinary `attack` clip remains a safe fallback.
+    pub fn with_directional_attack_animation(mut self) -> Self {
+        self.directional_attack_animation = true;
+        self
+    }
+
     pub fn build(self) {
         let app = self.app;
         app.on_start(startup_simple_game);
+        let menu_navigation = self.menu_navigation;
+        app.on_start(move |game| {
+            game.init_resource::<UiFocus>();
+            if let Some((up, down, accept)) = menu_navigation {
+                game.insert_resource(UiNavigation::new(up, down, accept));
+            }
+            Ok(())
+        });
 
         if self.debug_overlay.is_some() {
             app.configure_debug_overlay(|overlay| overlay.enabled = false);
@@ -207,6 +244,7 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
         let state_actions = StateActions {
             pause: self.pause,
             reset: self.reset,
+            reload: self.reload,
             debug_kill: self.debug_kill,
             debug_overlay: self.debug_overlay,
             debug_restart: self.debug_restart,
@@ -220,6 +258,10 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
             app.every_active_tick::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, _dt| {
                 game.drive_input::<PlayerMovement, Speed>();
             });
+        }
+
+        if self.player_directional_animation || self.directional_attack_animation {
+            app.every_active_tick::<SimpleGameState>(update_player_facing_direction_system);
         }
 
         if self.enemy_chase {
@@ -247,12 +289,28 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
                     hit_sound: self.hit_sound,
                     despawn_dead_enemies: true,
                     player_attack_animation: self.attack_animation,
+                    directional_player_attack_animation: self.directional_attack_animation,
                 };
                 app.every_active_tick::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
                     game.run_melee_combat(config, dt);
                 });
             } else {
                 log::warn!("with_melee_combat() was enabled but no attack action was configured");
+            }
+        }
+
+        if self.directional_attack_animation && !self.melee_combat {
+            if let Some(attack) = self.attack {
+                let fallback = self.attack_animation;
+                app.every_active_tick::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, _dt| {
+                    if game.pressed(attack) {
+                        game.play_player_attack_animation(true, fallback);
+                    }
+                });
+            } else {
+                log::warn!(
+                    "with_directional_attack_animation() was enabled but no attack action was configured"
+                );
             }
         }
 
@@ -307,6 +365,7 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
 struct StateActions {
     pause: Option<ActionId>,
     reset: Option<ActionId>,
+    reload: Option<ActionId>,
     debug_kill: Option<ActionId>,
     debug_overlay: Option<ActionId>,
     debug_restart: Option<ActionId>,
@@ -337,6 +396,11 @@ fn state_input_system(game: &mut GameCtx<'_, '_>, actions: StateActions) {
         state = SimpleGameState::default();
     }
 
+    if development_reload_enabled() && pressed(game, actions.reload) {
+        game.reload_current_map_or_log();
+        state = SimpleGameState::default();
+    }
+
     if pressed(game, actions.debug_kill) {
         game.kill_player();
     }
@@ -363,6 +427,17 @@ fn state_input_system(game: &mut GameCtx<'_, '_>, actions: StateActions) {
     game.insert_resource(state);
 }
 
+fn development_reload_enabled() -> bool {
+    cfg!(debug_assertions)
+        || matches!(
+            std::env::var("GAME_DEV_RELOAD")
+                .ok()
+                .as_deref()
+                .map(str::trim),
+            Some("1" | "true" | "yes" | "on")
+        )
+}
+
 fn death_state_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
     let mut state = game
         .resource::<SimpleGameState>()
@@ -382,6 +457,19 @@ fn player_animation_by_movement_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
         });
         let animation = if moving { "walk" } else { "idle" };
         game.play_animation(id, animation);
+    }
+}
+
+fn update_player_facing_direction_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    for id in game.entities_with::<Player>() {
+        let direction = game
+            .component::<Velocity>(id)
+            .and_then(|velocity| FacingDirection::from_motion(velocity.0));
+        if let Some(direction) = direction {
+            if let Some(facing) = game.component_mut::<FacingDirection>(id) {
+                *facing = direction;
+            }
+        }
     }
 }
 

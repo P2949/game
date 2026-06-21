@@ -23,6 +23,7 @@ using it as a beginner starting point.
 8. [Add sound and music](08-add-sound-and-music.md)
 9. [Add UI and menu](09-add-ui-and-menu.md)
 10. [Package your demo](10-package-your-demo.md)
+11. [Fast iteration](11-fast-iteration.md)
 
 Keep [common errors](common-errors.md) nearby while editing. The messages are
 written to point back to the builder call that fixes the problem.

@@ -33,7 +33,7 @@ fn main() -> Result<()> {
             .moves_with(controls.movement, 130.0)
             .build()?;
 
-        game.map_from_text("level_1", "maps/level_1.txt")
+        game.map_from_text_auto("level_1")
             .simple_theme("floor", "wall")
             .legend('P', "player")
             .start();
@@ -61,8 +61,9 @@ Create `assets/maps/level_1.txt` with:
 ## What changed
 
 Tiles use `#` for walls and `.` for floor. `P` is a player spawn because the
-builder connects it with `.legend('P', "player")`. Keeping the layout in a text
-file means you can edit it without touching Rust code.
+builder connects it with `.legend('P', "player")`. `map_from_text_auto("level_1")`
+loads `assets/maps/level_1.txt`, so you can edit the layout without touching
+Rust code.
 
 `simple_theme` gives the map floor and wall sprites without making you build a
 full `TileTheme`. `.start()` marks this as the map loaded when the demo starts.

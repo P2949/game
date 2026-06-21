@@ -1,8 +1,16 @@
 # Beginner authoring
 
 Start here when you want to make a small game rather than study engine internals.
-Import `game_starter::prelude::*` for a standalone demo, or
-`game_kit::beginner::prelude::*` in a content crate.
+Use one of these two beginner paths:
+
+1. **Standalone game (start here):** `use game_starter::prelude::*;` and
+   `run_game("My Game", |game| { ... })` in one `main.rs` file.
+2. **Workspace content crate:** `use game_kit::beginner::prelude::*;` and
+   `content_plugin!(MyContent, plugin, |game| { ... });`. The macro gives the
+   workspace a plugin without making you write the crate glue yourself.
+
+Keep the standalone path until your game actually benefits from separate
+content-crate files.
 
 The usual order is:
 
@@ -31,5 +39,25 @@ game.on_action_cooldown(controls.attack, 0.2, |game| {
 });
 ```
 
-There is no need to name scheduling, command queues, entity ids, components, or
-backend types on this path.
+For a conventional folder layout, validate all of a starter game's files in one
+place:
+
+```rust
+game.assets_from_folders()
+    .required_textures(["player", "slime", "floor", "wall"])?
+    .required_sounds(["hit"])?
+    .build();
+```
+
+Put those files in `assets/textures/` and `assets/sounds/`. If a required file
+is missing, setup tells you the exact path to add and how to use a custom path
+instead.
+
+The beginner helpers keep engine details out of your game code.
+
+## Fast map iteration
+
+Use `map_from_text_auto("level_1")` for `assets/maps/level_1.txt`. In a debug
+build, press F5 after editing that file to reload the current map without
+recompiling Rust. Release builds keep this development action disabled unless
+you deliberately set `GAME_DEV_RELOAD=1`.

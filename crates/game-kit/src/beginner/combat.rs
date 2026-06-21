@@ -6,7 +6,7 @@ use game_core::input::ActionId;
 use game_core::world::{EntityId, Transform, Velocity};
 use glam::Vec2;
 
-use crate::beginner::actors::{Enemy, Player};
+use crate::beginner::actors::{Enemy, FacingDirection, Player};
 use crate::context::GameCtx;
 
 #[derive(Clone, Copy, Debug)]
@@ -15,6 +15,7 @@ pub struct MeleeCombatConfig {
     pub hit_sound: Option<SoundHandle>,
     pub despawn_dead_enemies: bool,
     pub player_attack_animation: Option<&'static str>,
+    pub directional_player_attack_animation: bool,
 }
 
 impl<'a, 'w> GameCtx<'a, 'w> {
@@ -156,16 +157,37 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub fn run_melee_combat(&mut self, config: MeleeCombatConfig, dt: f32) {
         if self.pressed(config.attack) {
-            if let Some(animation) = config.player_attack_animation {
-                if let Some(player) = self.player_id() {
-                    self.play_animation(player, animation);
-                }
-            }
+            self.play_player_attack_animation(
+                config.directional_player_attack_animation,
+                config.player_attack_animation,
+            );
             self.player_melee_attack_nearest_enemy(config.hit_sound);
         }
         self.enemies_melee_attack_player(dt, config.hit_sound);
         if config.despawn_dead_enemies {
             self.despawn_dead_enemies();
+        }
+    }
+
+    pub(crate) fn play_player_attack_animation(
+        &mut self,
+        directional: bool,
+        fallback: Option<&str>,
+    ) {
+        let Some(player) = self.player_id() else {
+            return;
+        };
+        if directional {
+            let direction = self
+                .component::<FacingDirection>(player)
+                .copied()
+                .unwrap_or_default();
+            if self.play_animation(player, direction.attack_clip()) {
+                return;
+            }
+        }
+        if let Some(animation) = fallback.or_else(|| directional.then_some("attack")) {
+            self.play_animation(player, animation);
         }
     }
 

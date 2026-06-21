@@ -30,6 +30,16 @@ impl<'a> Audio<'a> {
             sound,
             volume,
             looping: false,
+            bus: None,
+        });
+    }
+
+    pub fn play_on_bus(&mut self, sound: SoundHandle, volume: f32, bus: impl Into<String>) {
+        self.commands.push(AudioCommand::Play {
+            sound,
+            volume,
+            looping: false,
+            bus: Some(bus.into()),
         });
     }
 
@@ -53,6 +63,14 @@ impl<'a> Audio<'a> {
         self.commands.push(AudioCommand::StopMusic);
     }
 
+    pub fn crossfade_music(&mut self, sound: SoundHandle, volume: f32, duration_seconds: f32) {
+        self.commands.push(AudioCommand::CrossfadeMusic {
+            sound,
+            volume,
+            duration_seconds,
+        });
+    }
+
     pub fn pause_music(&mut self) {
         self.commands.push(AudioCommand::PauseMusic);
     }
@@ -71,6 +89,13 @@ impl<'a> Audio<'a> {
 
     pub fn set_music_volume(&mut self, volume: f32) {
         self.commands.push(AudioCommand::SetMusicVolume { volume });
+    }
+
+    pub fn set_bus_volume(&mut self, bus: impl Into<String>, volume: f32) {
+        self.commands.push(AudioCommand::SetBusVolume {
+            bus: bus.into(),
+            volume,
+        });
     }
 
     pub fn fade_music_to(&mut self, volume: f32, duration_seconds: f32) {

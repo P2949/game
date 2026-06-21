@@ -46,7 +46,7 @@ fn main() -> Result<()> {
 
         game.use_simple_scene_flow()
             .menu("menu")
-            .menu_text("Press Space to Start")
+            .menu_title("Arena - Press Space to Start")
             .menu_button("Start", "game")
             .game("game")
             .game_over("game_over")
@@ -54,6 +54,7 @@ fn main() -> Result<()> {
             .game_over_button("Restart")
             .win("win")
             .win_text("You cleared the level!")
+            .win_button("Play Again")
             .win_when_all_enemies_dead()
             .start_on(controls.attack)
             .restart_on(controls.reset)

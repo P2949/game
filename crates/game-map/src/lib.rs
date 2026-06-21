@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod external;
+pub mod ldtk;
 pub mod nav;
 pub mod object;
 pub mod region;
@@ -44,6 +45,7 @@ pub struct TileLayer {
 
 pub use builder::{MapBuilder, MapCell, cell};
 pub use external::{GameMapFile, MapObjectFile, TileLayerFile, load_game_map_ron};
+pub use ldtk::{ImportedLdtkEntity, ImportedLdtkLevel, load_ldtk_level, load_ldtk_level_file};
 pub use object::MapObject;
 pub use region::{MapRegion, RegionShape, Tags};
 pub use validation::{MapValidator, validate_map, validate_map_prefabs};

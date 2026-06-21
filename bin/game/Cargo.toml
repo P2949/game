@@ -22,3 +22,4 @@ ci-build-sdl3 = [
     "game-audio/ci-build-sdl3",
 ]
 ogg = ["game-audio/ogg", "game-runtime/ogg"]
+mp3 = ["game-audio/mp3", "game-runtime/mp3"]

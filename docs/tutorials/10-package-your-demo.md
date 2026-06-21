@@ -99,9 +99,10 @@ should keep `game` and `assets/` side by side. Set `GAME_ASSET_DIR=assets` if
 you choose a different layout.
 
 When your single file grows uncomfortable, graduate to a content crate: copy
-the structure of `arena-content`, move your setup into its `GamePlugin`, and
-continue using the same beginner prefabs, maps, and rules. Do not begin with
-`testbed-content`; it is the deliberately advanced reference lab.
+the structure of `simple-content` or `arena-content`, put your setup inside
+`content_plugin!(MyContent, plugin, |game| { ... });`, and continue using the
+same beginner prefabs, maps, and rules. Do not begin with `testbed-content`; it
+is the deliberately advanced reference lab.
 
 ## Common errors
 

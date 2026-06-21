@@ -11,4 +11,5 @@ anyhow.workspace = true
 glam.workspace = true
 ron.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 game-core = { version = "0.1.0", path = "../game-core" }

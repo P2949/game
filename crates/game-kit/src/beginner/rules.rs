@@ -6,8 +6,9 @@ use glam::Vec2;
 
 use crate::app::GameApp;
 use crate::beginner::actors::{
-    DeathAnimationPolicy, DespawnOnHit, Door, DoorAction, DoorTarget, Lifetime, PlayerProjectile,
-    PrefabName, Projectile, ProjectileDamage, ProjectileImpact, SpawnPlacement, Spawner,
+    Checkpoint, CheckpointState, DeathAnimationPolicy, DespawnOnHit, Door, DoorAction, DoorTarget,
+    DropSpawned, DropsPrefab, Enemy, Lifetime, PlayerProjectile, PrefabName, Projectile,
+    ProjectileDamage, ProjectileImpact, SpawnPlacement, Spawner,
 };
 use crate::beginner::defaults::{
     enemy_directional_animation_system, player_directional_animation_system,
@@ -44,8 +45,14 @@ pub struct RulesAuthor<'a, 'app> {
     enemies_animate_by_movement: bool,
     player_directional_animation: bool,
     enemies_directional_animation: bool,
+    directional_attack_animation: bool,
     dead_enemies_play_death_animation: bool,
     dead_enemies_despawn_after_animation: bool,
+    enemy_drops: bool,
+    win_when_all_pickups_collected: bool,
+    win_when_all_enemies_dead: bool,
+    player_activates_checkpoints: bool,
+    respawn_at_checkpoint: bool,
 }
 
 impl<'a, 'app> RulesAuthor<'a, 'app> {
@@ -75,8 +82,14 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             enemies_animate_by_movement: false,
             player_directional_animation: false,
             enemies_directional_animation: false,
+            directional_attack_animation: false,
             dead_enemies_play_death_animation: false,
             dead_enemies_despawn_after_animation: false,
+            enemy_drops: false,
+            win_when_all_pickups_collected: false,
+            win_when_all_enemies_dead: false,
+            player_activates_checkpoints: false,
+            respawn_at_checkpoint: false,
         }
     }
 
@@ -231,6 +244,13 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
         self
     }
 
+    /// Chooses `attack_up`, `attack_down`, `attack_left`, or `attack_right`
+    /// when the player attacks, falling back to the ordinary `attack` clip.
+    pub fn animate_attacks_directionally(mut self) -> Self {
+        self.directional_attack_animation = true;
+        self
+    }
+
     pub fn dead_enemies_play_death_animation(mut self) -> Self {
         self.dead_enemies_play_death_animation = true;
         self
@@ -238,6 +258,37 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
 
     pub fn dead_enemies_despawn_after_animation(mut self) -> Self {
         self.dead_enemies_despawn_after_animation = true;
+        self
+    }
+
+    /// Spawns each defeated enemy's configured `.drops(...)` prefab.
+    pub fn enemy_drops(mut self) -> Self {
+        self.enemy_drops = true;
+        self
+    }
+
+    /// Changes to the conventional `win` scene after the last pickup is gone.
+    pub fn win_when_all_pickups_collected(mut self) -> Self {
+        self.win_when_all_pickups_collected = true;
+        self
+    }
+
+    /// Changes to the conventional `win` scene after the last enemy is dead.
+    pub fn win_when_all_enemies_dead(mut self) -> Self {
+        self.win_when_all_enemies_dead = true;
+        self
+    }
+
+    /// Records the most recently entered checkpoint marker.
+    pub fn player_activates_checkpoints(mut self) -> Self {
+        self.player_activates_checkpoints = true;
+        self
+    }
+
+    /// Restarts the current map and moves the player to the last activated
+    /// checkpoint when the player dies.
+    pub fn respawn_at_checkpoint(mut self) -> Self {
+        self.respawn_at_checkpoint = true;
         self
     }
 
@@ -270,6 +321,9 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             }
             if self.enemies_directional_animation {
                 top_down = top_down.with_enemy_directional_animation();
+            }
+            if self.directional_attack_animation {
+                top_down = top_down.with_directional_attack_animation();
             }
             top_down.build();
         }
@@ -321,6 +375,30 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             app.every_tick(dead_enemies_despawn_after_animation_system);
         }
 
+        if self.enemy_drops {
+            app.every_tick(enemy_drops_system);
+        }
+
+        if self.player_activates_checkpoints {
+            app.every_tick(checkpoint_activation_system);
+        }
+
+        if self.respawn_at_checkpoint {
+            app.every_tick(checkpoint_respawn_system);
+        }
+
+        if self.win_when_all_pickups_collected || self.win_when_all_enemies_dead {
+            let require_pickups = self.win_when_all_pickups_collected;
+            let require_enemies = self.win_when_all_enemies_dead;
+            app.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+                let pickups_done = !require_pickups || game.pickups().count() == 0;
+                let enemies_done = !require_enemies || game.enemies().alive().count() == 0;
+                if pickups_done && enemies_done {
+                    game.change_scene_or_log("win");
+                }
+            });
+        }
+
         if self.show_score
             || self.show_enemy_count
             || self.show_player_health
@@ -367,6 +445,96 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             app.every_tick(spawners_spawn_prefabs_system);
         }
     }
+}
+
+fn enemy_drops_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    let drops = game
+        .entities_with::<Enemy>()
+        .into_iter()
+        .filter(|id| game.is_dead(*id) && !game.has::<DropSpawned>(*id))
+        .filter_map(|id| {
+            let drop = game.component::<DropsPrefab>(id)?.clone();
+            let position = game.position(id)?;
+            Some((id, position, drop))
+        })
+        .collect::<Vec<_>>();
+
+    for (enemy, position, drop) in drops {
+        if drop.prefab.is_empty() || drop.chance <= 0.0 {
+            continue;
+        }
+        // A stable position-derived roll keeps examples deterministic without
+        // adding an RNG dependency. The common `.drops(...)` path always uses
+        // chance 1.0.
+        let roll = ((position.x.to_bits() ^ position.y.to_bits()) % 10_000) as f32 / 10_000.0;
+        if drop.chance >= 1.0 || roll < drop.chance {
+            game.spawn_prefab_or_log(&drop.prefab, position);
+        }
+        game.insert_component(enemy, DropSpawned);
+    }
+}
+
+fn checkpoint_activation_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    let Some(player_position) = game.player_position() else {
+        return;
+    };
+    let checkpoint = game
+        .entities_with::<Checkpoint>()
+        .into_iter()
+        .filter(|id| {
+            game.component::<Checkpoint>(*id)
+                .is_some_and(|checkpoint| checkpoint.enabled)
+        })
+        .find_map(|id| {
+            let position = game.position(id)?;
+            let collider = game.component::<game_physics::Collider>(id)?;
+            let offset = (player_position - position).abs();
+            (offset.x <= collider.half_extents.x && offset.y <= collider.half_extents.y)
+                .then_some(position)
+        });
+    if let Some(position) = checkpoint {
+        game.insert_resource(CheckpointState {
+            position: Some(position),
+        });
+    }
+}
+
+fn checkpoint_respawn_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    if let Some(position) = game
+        .resource::<PendingCheckpointRespawn>()
+        .and_then(|pending| pending.position)
+    {
+        if let Some(player) = game.player_id() {
+            if let Some(transform) = game.component_mut::<game_core::world::Transform>(player) {
+                transform.pos = position;
+            }
+        }
+        if let Some(pending) = game.resource_mut::<PendingCheckpointRespawn>() {
+            pending.position = None;
+        }
+        return;
+    }
+
+    let Some(position) = game
+        .resource::<CheckpointState>()
+        .and_then(|checkpoint| checkpoint.position)
+    else {
+        return;
+    };
+    if !game.player_is_dead() {
+        return;
+    }
+    // RestartMap is applied after this fixed tick. Remember the intended
+    // position so the newly spawned player can be moved on the next tick.
+    game.insert_resource(PendingCheckpointRespawn {
+        position: Some(position),
+    });
+    game.restart_map_or_log();
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct PendingCheckpointRespawn {
+    position: Option<glam::Vec2>,
 }
 
 fn enemy_animation_by_movement_system(game: &mut GameCtx<'_, '_>, _dt: f32) {
@@ -705,7 +873,10 @@ mod tests {
     use game_core::world::{Transform, Velocity};
 
     use crate::app::{GameApp, GamePlugin};
-    use crate::beginner::actors::{Enemy, Pickup, PlayerProjectile, Projectile, Spawner};
+    use crate::beginner::actors::{
+        Checkpoint, CheckpointState, Enemy, FacingDirection, Pickup, PlayerProjectile, Projectile,
+        Spawner,
+    };
     use crate::beginner::animation::{Animation, AnimationSet, SpriteSheet};
     use crate::beginner::collections::Score;
     use crate::harness::GameTestHarness;
@@ -973,5 +1144,146 @@ mod tests {
         game.frame(0.4);
         game.step();
         game.assert_enemy_count(0);
+    }
+
+    struct RecipeRulesPlugin;
+
+    impl GamePlugin for RecipeRulesPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            game.start_scene("game").scene("win");
+            let controls = game.input(|input| input.top_down_controls())?;
+
+            game.player_prefab("player")
+                .sprite(TextureHandle(1))
+                .health(100)
+                .moves_with(controls.movement, 130.0)
+                .build()?;
+            game.pickup_prefab("heart")
+                .sprite(TextureHandle(2))
+                .heal_player(25)
+                .despawn_on_collect()
+                .build()?;
+            game.enemy_prefab("slime")
+                .sprite(TextureHandle(3))
+                .health(10)
+                .drops("heart")
+                .build()?;
+            game.checkpoint_prefab("checkpoint")
+                .sprite(TextureHandle(4))
+                .build()?;
+
+            game.map("recipes")
+                .tile_size(16.0)
+                .tiles(["#########", "#PHEK...#", "#########"])
+                .simple_theme(TextureHandle(10), TextureHandle(11))
+                .legend('P', "player")
+                .legend('H', "heart")
+                .legend('E', "slime")
+                .legend('K', "checkpoint")
+                .start();
+            game.on_start(|game| game.spawn_start_map());
+
+            game.rules()
+                .player_collects_pickups()
+                .enemy_drops()
+                .win_when_all_pickups_collected()
+                .win_when_all_enemies_dead()
+                .player_activates_checkpoints()
+                .respawn_at_checkpoint()
+                .build();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn recipe_rules_heal_drop_win_and_respawn_at_checkpoints() {
+        let mut game = GameTestHarness::from_plugin(RecipeRulesPlugin).unwrap();
+        game.assert_scene("game");
+
+        let player = game.player();
+        game.set_entity_health(player, 50);
+        game.collect_first_pickup();
+        game.assert_player_health(75);
+        assert_eq!(game.count::<Pickup>(), 0);
+
+        game.set_enemy_health(0, 0);
+        game.step();
+        assert_eq!(
+            game.count::<Pickup>(),
+            1,
+            "a defeated enemy drops its prefab"
+        );
+        game.assert_scene("win");
+
+        let checkpoint = game.world().ids_with::<Checkpoint>()[0];
+        let checkpoint_position = game.world().get::<Transform>(checkpoint).unwrap().pos;
+        let player = game.player();
+        game.move_entity_to(player, checkpoint_position);
+        game.step();
+        assert_eq!(
+            game.world()
+                .get_resource::<CheckpointState>()
+                .unwrap()
+                .position,
+            Some(checkpoint_position)
+        );
+
+        let player = game.player();
+        game.set_entity_health(player, 0);
+        game.step();
+        game.step();
+        game.assert_player_health(100);
+        assert_eq!(game.player().position(), checkpoint_position);
+    }
+
+    struct DirectionalAttackPlugin;
+
+    impl GamePlugin for DirectionalAttackPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            let controls = game.input(|input| input.top_down_controls())?;
+            let sheet = SpriteSheet::new(TextureHandle(1), 4, 1);
+            game.player_prefab("player")
+                .spritesheet(sheet)
+                .idle(0..1)
+                .attack(0..1)
+                .attack_up(0..1)
+                .attack_down(1..2)
+                .attack_left(2..3)
+                .attack_right(3..4)
+                .moves_with(controls.movement, 130.0)
+                .build()?;
+            game.map("directional-attack")
+                .tiles(["###", "#P#", "###"])
+                .simple_theme(TextureHandle(10), TextureHandle(11))
+                .legend('P', "player")
+                .start();
+            game.rules()
+                .top_down_controls(controls)
+                .animate_attacks_directionally()
+                .build();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn directional_attack_rule_uses_remembered_facing_and_one_shot_clips() {
+        let mut game = GameTestHarness::from_plugin(DirectionalAttackPlugin).unwrap();
+
+        game.tap_action("attack");
+        let player = game.player();
+        assert_eq!(
+            game.world().get::<Animation>(player.id()).unwrap().current,
+            "attack_down"
+        );
+
+        *game
+            .world_mut()
+            .get_mut::<FacingDirection>(player.id())
+            .unwrap() = FacingDirection::Left;
+        game.tap_action("attack");
+        assert_eq!(
+            game.world().get::<Animation>(player.id()).unwrap().current,
+            "attack_left"
+        );
     }
 }

@@ -6,7 +6,9 @@ use game_core::world::{EntityId, Velocity};
 use glam::Vec2;
 
 use crate::assets::SoundRef;
-use crate::beginner::actors::{CollectSound, DespawnOnCollect, Enemy, Pickup, Player, ScoreValue};
+use crate::beginner::actors::{
+    CollectSound, DespawnOnCollect, Enemy, HealValue, Pickup, Player, ScoreValue,
+};
 use crate::context::GameCtx;
 
 const PROJECTILE_DIRECTION_X: &str = "beginner/projectile_direction_x";
@@ -307,12 +309,16 @@ impl<'g, 'a, 'w> PickupCollection<'g, 'a, 'w> {
 
     pub(crate) fn collect_ids(&mut self, ids: Vec<EntityId>) -> usize {
         let mut score_delta = 0;
+        let mut heal_delta = 0;
         let mut sounds = Vec::new();
         let mut despawn = Vec::new();
 
         for id in &ids {
             if let Some(score) = self.game.component::<ScoreValue>(*id) {
                 score_delta += score.0;
+            }
+            if let Some(heal) = self.game.component::<HealValue>(*id) {
+                heal_delta += heal.0;
             }
             if let Some(sound) = self.game.component::<CollectSound>(*id) {
                 sounds.push(sound.0);
@@ -324,6 +330,9 @@ impl<'g, 'a, 'w> PickupCollection<'g, 'a, 'w> {
 
         if score_delta != 0 {
             self.game.score().add(score_delta);
+        }
+        if heal_delta != 0 {
+            self.game.player().heal(heal_delta);
         }
 
         let mut commands = self.game.commands();

@@ -17,3 +17,4 @@ game-renderer-vulkan = { version = "0.1.0", path = "../game-renderer-vulkan" }
 
 [features]
 ogg = ["game-audio/ogg"]
+mp3 = ["game-audio/mp3"]

@@ -1,5 +1,7 @@
 use game_kit::prelude::*;
 use game_kit::testing::GameTestHarness;
+use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const PLAYER: &str = "flow/player";
 
@@ -118,12 +120,66 @@ impl GamePlugin for TextMapPlugin {
         game.enemy_prefab("slime")
             .sprite(TextureHandle(2))
             .build()?;
-        game.map_from_text("text_level", "maps/beginner_text_map.txt")
+        game.map_from_text_auto("beginner_text_map")
             .simple_theme(TextureHandle(0), TextureHandle(0))
             .legend('P', "player")
             .legend('E', "slime")
             .start();
         game.on_start(|game| game.spawn_start_map());
+        Ok(())
+    }
+}
+
+struct ReloadableTextMapPlugin {
+    path: String,
+}
+
+struct LdtkMapPlugin {
+    map_entities: bool,
+}
+
+impl GamePlugin for LdtkMapPlugin {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let controls = game.input(|input| input.top_down_controls())?;
+        game.player_prefab("player")
+            .sprite(TextureHandle(1))
+            .moves_with(controls.movement, 120.0)
+            .build()?;
+        game.enemy_prefab("slime")
+            .sprite(TextureHandle(2))
+            .build()?;
+
+        let mut map = game
+            .map_from_ldtk("ldtk", "maps/ldtk_demo.ldtk")
+            .level("Level_1")
+            .simple_theme(TextureHandle(0), TextureHandle(0))
+            .entity("PlayerStart", "player");
+        if self.map_entities {
+            map = map.entity("Slime", "slime");
+        }
+        map.start();
+
+        game.use_top_down_game().controls(controls).build();
+        Ok(())
+    }
+}
+
+impl GamePlugin for ReloadableTextMapPlugin {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let controls = game.input(|input| input.top_down_controls())?;
+        game.player_prefab("player")
+            .sprite(TextureHandle(1))
+            .moves_with(controls.movement, 120.0)
+            .build()?;
+        game.enemy_prefab("slime")
+            .sprite(TextureHandle(2))
+            .build()?;
+        game.map_from_text("reloadable", self.path.clone())
+            .simple_theme(TextureHandle(0), TextureHandle(0))
+            .legend('P', "player")
+            .legend('E', "slime")
+            .start();
+        game.use_top_down_game().controls(controls).build();
         Ok(())
     }
 }
@@ -272,9 +328,61 @@ fn symbolic_map_legends_spawn_prefabs_from_tile_rows() {
 fn beginner_text_map_loads_symbolic_spawns_from_assets_folder() {
     let game = GameTestHarness::from_plugin(TextMapPlugin).unwrap();
 
-    assert_eq!(game.current_map_name(), Some("text_level".to_owned()));
+    assert_eq!(
+        game.current_map_name(),
+        Some("beginner_text_map".to_owned())
+    );
     assert_eq!(game.player_count(), 1);
     assert_eq!(game.enemy_count(), 1);
+}
+
+#[test]
+fn f5_reloads_the_current_text_map_without_restarting_rust_content() {
+    let path = std::env::temp_dir().join(format!(
+        "game-kit-reload-{}-{}.txt",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::write(&path, "###\n#PE\n###\n").unwrap();
+
+    let mut game = GameTestHarness::from_plugin(ReloadableTextMapPlugin {
+        path: path.display().to_string(),
+    })
+    .unwrap();
+    assert_eq!(game.map().tilemap.width(), 3);
+    assert_eq!(game.player_count(), 1);
+    assert_eq!(game.enemy_count(), 1);
+
+    fs::write(&path, "#####\n#P..E\n#####\n").unwrap();
+    game = game.press_action("reload");
+    game.fixed_step(1.0 / 120.0);
+
+    assert_eq!(game.map().tilemap.width(), 5);
+    assert_eq!(game.player_count(), 1);
+    assert_eq!(game.enemy_count(), 1);
+}
+
+#[test]
+fn ldtk_level_spawns_entities_from_named_prefab_mappings() {
+    let game = GameTestHarness::from_plugin(LdtkMapPlugin { map_entities: true }).unwrap();
+    assert_eq!(game.map().tilemap.width(), 8);
+    assert_eq!(game.player_count(), 1);
+    assert_eq!(game.enemy_count(), 1);
+}
+
+#[test]
+fn ldtk_level_reports_missing_entity_mappings() {
+    let error = match GameTestHarness::from_plugin(LdtkMapPlugin {
+        map_entities: false,
+    }) {
+        Ok(_) => panic!("LDtk maps must reject unmapped entities"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("entity 'Slime' with no prefab mapping"));
+    assert!(error.contains(".entity(\"Slime\", \"some_prefab\")"));
 }
 
 fn register_marker_prefab(game: &mut GameApp<'_>, name: &str) -> Result<()> {

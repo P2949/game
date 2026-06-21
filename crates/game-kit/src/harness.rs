@@ -14,7 +14,7 @@ use game_core::audio::{Audio, AudioCommands};
 use game_core::backend::{AudioCommand, SoundHandle};
 use game_core::builder::{GameBuilder, MapId, MapRegistry, PrefabRegistry, RuntimeContent};
 use game_core::camera::Camera2D;
-use game_core::commands::{Command, CommandQueue};
+use game_core::commands::{Command, CommandQueue, MapReload};
 use game_core::gfx::Gfx;
 use game_core::input::{ActionId, Axis2dId, Input, InputRegistry, MouseButton};
 use game_core::plugin::GamePlugin as CoreGamePlugin;
@@ -434,6 +434,7 @@ impl GameTestHarness {
                     sound,
                     volume: 0.8,
                     looping: false,
+                    bus: None,
                 }),
                 Command::SpawnPrefab {
                     prefab,
@@ -445,6 +446,23 @@ impl GameTestHarness {
                         .expect("test command should spawn prefab");
                 }
                 Command::ChangeMap(map) => self.switch_active_map(map),
+                Command::Quit => {}
+                Command::ReloadMap(map) => {
+                    let reload = self.world.remove_resource::<MapReload>();
+                    match reload {
+                        Some(reload) if reload.map == map => {
+                            self.maps
+                                .replace(map, reload.data.tilemap, reload.data.theme)
+                                .expect("test map reload should replace a registered map");
+                            self.switch_active_map(map);
+                        }
+                        Some(reload) => panic!(
+                            "reload data for {:?} did not match command for {:?}",
+                            reload.map, map
+                        ),
+                        None => panic!("map reload command had no replacement data"),
+                    }
+                }
                 Command::RestartMap => self.switch_active_map(self.active_map),
                 Command::RestartStartMap => self.switch_active_map(self.start_map),
             }

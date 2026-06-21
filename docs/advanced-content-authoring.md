@@ -1,13 +1,139 @@
 # Advanced content authoring
 
-This document is intentionally second, not the starting point. Use the
+This document is intentionally second, not the starting point. Begin with the
 [beginner authoring guide](beginner-authoring.md) unless you specifically need
 custom ECS-shaped prefabs, systems, queries, RON maps, or engine pressure tests.
 
-Advanced content imports `game_kit::advanced::prelude::*`. The repository's
-`testbed-content` crate uses that surface on purpose: it is an engine testbed,
-not a template for first projects.
+The repository's `testbed-content` crate uses the advanced surface on purpose:
+it is an engine testbed, not a template for first projects.
 
-When an advanced game needs a recurring beginner-friendly pattern, prefer adding
-one focused `game-kit` builder or rule instead of copying the low-level plumbing
-into every new game.
+## Imports and typed assets
+
+Advanced content imports the explicit lower-level facade:
+
+```rust
+use game_kit::advanced::prelude::*;
+```
+
+For a larger Rust content crate, typed asset structures can make dependencies
+explicit:
+
+```rust
+struct ArenaAssets {
+    player: TextureHandle,
+    slime: TextureHandle,
+}
+
+let assets = game.assets(|assets| {
+    Ok(ArenaAssets {
+        player: assets.texture("arena/player", "textures/player.png")?,
+        slime: assets.texture("arena/slime", "textures/slime.png")?,
+    })
+})?;
+```
+
+## Raw prefabs and systems
+
+Use this path for custom tuple prefabs, manual schedules, explicit queries, RON
+map experiments, or specialized content tests. Advanced content still depends
+on `game-kit`; it does not wire SDL, Vulkan, audio devices, schedules,
+validators, registries, command queues, or raw runtime contexts.
+
+```rust
+game.prefab("demo/player", |prefab| {
+    prefab
+        .spawn(move |at| {
+            (
+                Transform::at(at),
+                Velocity::default(),
+                Sprite::new(assets.player, vec2s(20.0)),
+                Collider::box_of(vec2s(20.0)),
+            )
+        })?
+        .require::<Transform>()
+        .require::<Collider>()
+        .require::<Sprite>();
+    Ok(())
+})?;
+
+game.startup(startup);
+game.fixed_active::<GameState>(player_control);
+game.update(camera_follow);
+game.ui(ui);
+game.fixed_systems_are_pause_guarded();
+```
+
+Systems use `GameCtx` helpers for entity queries, input, map movement, pathing,
+camera/UI/audio/resources, and reset behavior:
+
+```rust
+fn player_control(game: &mut GameCtx<'_, '_>, _dt: f32) {
+    game.drive_input::<PlayerController, MoveSpeed>();
+}
+
+fn physics(game: &mut GameCtx<'_, '_>, dt: f32) {
+    game.move_and_collide(dt);
+}
+```
+
+Query helpers keep common component scans inside `GameCtx`:
+
+```rust
+game.each2::<Transform, Sprite>(|entity, transform, sprite| {
+    let _ = (entity, transform, sprite);
+});
+
+let input = game.input().clone();
+game.for_each3_copy_mut::<PlayerController, MoveSpeed, Velocity>(
+    |_, controller, speed, velocity| {
+        velocity.0 = input.axis2d(controller.move_axis) * speed.0;
+    },
+);
+```
+
+Use the explicit `for_each*` names when they make borrowing or copy behavior
+clearer. The facade intentionally does not provide query macros or automatic
+system-parameter injection.
+
+Startup systems are fallible because content initialization can fail. Fixed,
+update, and UI systems are infallible by design. Runtime operations that should
+not fail after validation expose helpers such as `reset_to_start_map_or_log`;
+they log invariant failures instead of making every gameplay system return a
+`Result`.
+
+Deferred runtime operations use the command queue:
+
+```rust
+let mut commands = game.commands();
+commands.play_sound(assets.hit);
+commands.despawn(entity);
+```
+
+## Validation and testing
+
+Plugin build finalization validates duplicate names, required prefab
+components, map shape, required map objects, prefab references, content assets,
+and renderer built-in assets before backend creation. Authoring mistakes return
+`anyhow::Result` from plugin build rather than panicking in the facade.
+
+Use the testing prelude that matches the content layer:
+
+```rust
+// Beginner production content
+use game_kit::beginner::prelude::*;
+// Beginner tests
+use game_kit::beginner::testing::prelude::*;
+// Advanced production content
+use game_kit::advanced::prelude::*;
+// Advanced tests with raw ECS/world inspection
+use game_kit::advanced::testing::prelude::*;
+```
+
+## Keep the boundary intact
+
+Even advanced content should not import `GameBuilder`, `Schedule`,
+`PrefabRegistry`, `MapRegistry`, validators, raw `Ctx` / `StartCtx`,
+`CommandQueue`, runtime crates, renderer/platform/audio backends, Vulkan, SDL,
+or GPU allocator types. When an advanced project repeatedly needs a
+beginner-friendly pattern, add one focused `game-kit` builder or rule instead
+of copying lower-level plumbing into every game.

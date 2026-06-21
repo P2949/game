@@ -44,7 +44,7 @@ fn new_demo(name_or_path: &str) -> Result<()> {
     values.insert("title", title.as_str());
 
     copy_template(&template, &destination, &values)?;
-    copy_dir(&workspace.join("assets"), &destination.join("assets"))?;
+    seed_beginner_assets(&workspace, &destination)?;
 
     println!("created demo at {}", destination.display());
     println!("run it with:");
@@ -169,26 +169,31 @@ fn copy_template_file(src: &Path, dst: &Path, values: &HashMap<&str, &str>) -> R
     fs::write(dst, text).with_context(|| format!("failed to write '{}'", dst.display()))
 }
 
-fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
-    if !src.is_dir() {
-        bail!("directory '{}' does not exist", src.display());
+fn seed_beginner_assets(workspace: &Path, destination: &Path) -> Result<()> {
+    let assets = workspace.join("assets");
+    let textures = destination.join("assets/textures");
+    let sounds = destination.join("assets/sounds");
+    let maps = destination.join("assets/maps");
+    fs::create_dir_all(&textures)
+        .with_context(|| format!("failed to create '{}'", textures.display()))?;
+    fs::create_dir_all(&sounds)
+        .with_context(|| format!("failed to create '{}'", sounds.display()))?;
+    fs::create_dir_all(&maps).with_context(|| format!("failed to create '{}'", maps.display()))?;
+
+    let placeholder_texture = assets.join("textures/test.png");
+    for name in ["player", "slime", "floor", "wall"] {
+        copy_asset(&placeholder_texture, &textures.join(format!("{name}.png")))?;
     }
-    fs::create_dir_all(dst).with_context(|| format!("failed to create '{}'", dst.display()))?;
-    for entry in fs::read_dir(src).with_context(|| format!("failed to read '{}'", src.display()))? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
-            copy_dir(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path).with_context(|| {
-                format!(
-                    "failed to copy '{}' to '{}'",
-                    src_path.display(),
-                    dst_path.display()
-                )
-            })?;
-        }
-    }
+    copy_asset(&assets.join("sounds/hit.wav"), &sounds.join("hit.wav"))?;
+    copy_asset(
+        &assets.join("maps/beginner_text_map.txt"),
+        &maps.join("level_1.txt"),
+    )?;
+    Ok(())
+}
+
+fn copy_asset(src: &Path, dst: &Path) -> Result<()> {
+    fs::copy(src, dst)
+        .with_context(|| format!("failed to copy '{}' to '{}'", src.display(), dst.display()))?;
     Ok(())
 }

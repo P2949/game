@@ -1,6 +1,6 @@
 //! High-level beginner UI helpers.
 
-use game_core::input::MouseButton;
+use game_core::input::{ActionId, MouseButton};
 use glam::{Vec2, vec2, vec4};
 
 use crate::context::GameCtx;
@@ -15,6 +15,7 @@ const PANEL_BACKGROUND: glam::Vec4 = vec4(0.055, 0.075, 0.12, 0.94);
 const PANEL_BORDER: glam::Vec4 = vec4(0.92, 0.72, 0.26, 1.0);
 const BUTTON_BACKGROUND: glam::Vec4 = vec4(0.15, 0.2, 0.32, 0.98);
 const BUTTON_HOVER: glam::Vec4 = vec4(0.3, 0.38, 0.58, 1.0);
+const BUTTON_FOCUSED: glam::Vec4 = vec4(0.42, 0.5, 0.74, 1.0);
 
 #[derive(Clone, Copy)]
 enum HorizontalLayout {
@@ -26,6 +27,26 @@ enum HorizontalLayout {
 enum StackDirection {
     Vertical,
     Horizontal,
+}
+
+/// Persistent selection for a beginner menu. It is updated automatically by
+/// [`UiMenu`] using the standard top-down menu controls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UiFocus {
+    pub selected_index: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct UiNavigation {
+    up: ActionId,
+    down: ActionId,
+    accept: ActionId,
+}
+
+impl UiNavigation {
+    pub(crate) fn new(up: ActionId, down: ActionId, accept: ActionId) -> Self {
+        Self { up, down, accept }
+    }
 }
 
 /// Immediate-mode helpers for common beginner labels.
@@ -111,6 +132,33 @@ impl<'g, 'a, 'w> UiOps<'g, 'a, 'w> {
         UiPanel {
             game: self.game,
             lines: vec![title.as_ref().to_owned()],
+        }
+    }
+
+    /// Begins a conventional centred dialog box.
+    pub fn dialog(self, speaker: impl AsRef<str>) -> UiPanel<'g, 'a, 'w> {
+        self.panel(speaker)
+    }
+
+    /// Begins a centred menu with focus-aware buttons. Standard top-down
+    /// controls bind Up/Down and a controller D-pad to selection, and
+    /// Space/Enter/controller South to activation.
+    pub fn menu(self, title: impl AsRef<str>) -> UiMenu<'g, 'a, 'w> {
+        UiMenu {
+            game: self.game,
+            title: title.as_ref().to_owned(),
+            buttons: Vec::new(),
+        }
+    }
+
+    /// Begins a compact, conventional status panel for score, health, and
+    /// remaining enemies.
+    pub fn status_panel(self) -> UiStatusPanel<'g, 'a, 'w> {
+        UiStatusPanel {
+            game: self.game,
+            score: false,
+            player_health: false,
+            enemy_count: false,
         }
     }
 
@@ -291,38 +339,207 @@ impl<'g, 'a, 'w> UiButton<'g, 'a, 'w> {
 
     fn draw_and_hit_test(&mut self) -> bool {
         let center = self.center.unwrap_or_else(|| vec2(MARGIN, MARGIN));
-        let size = vec2(
-            estimated_width(&self.label) + BUTTON_PADDING.x * 2.0,
-            LINE_HEIGHT + BUTTON_PADDING.y * 2.0,
-        );
-        let origin = center - size * 0.5;
-        let mouse = self.game.mouse_position();
-        let hovered = mouse.x >= origin.x
-            && mouse.x <= origin.x + size.x
-            && mouse.y >= origin.y
-            && mouse.y <= origin.y + size.y;
-        let background = if hovered {
-            BUTTON_HOVER
+        draw_button(self.game, &self.label, center, false).1
+    }
+}
+
+fn draw_button(
+    game: &mut GameCtx<'_, '_>,
+    label: &str,
+    center: Vec2,
+    focused: bool,
+) -> (bool, bool) {
+    let size = vec2(
+        estimated_width(label) + BUTTON_PADDING.x * 2.0,
+        LINE_HEIGHT + BUTTON_PADDING.y * 2.0,
+    );
+    let origin = center - size * 0.5;
+    let mouse = game.mouse_position();
+    let hovered = mouse.x >= origin.x
+        && mouse.x <= origin.x + size.x
+        && mouse.y >= origin.y
+        && mouse.y <= origin.y + size.y;
+    let background = if hovered {
+        BUTTON_HOVER
+    } else if focused {
+        BUTTON_FOCUSED
+    } else {
+        BUTTON_BACKGROUND
+    };
+    let border = if focused {
+        vec4(1.0, 0.9, 0.4, 1.0)
+    } else {
+        PANEL_BORDER
+    };
+    game.ui_rect_at_layer(
+        origin - Vec2::splat(2.0),
+        size + Vec2::splat(4.0),
+        border,
+        9_910,
+    );
+    game.ui_rect_at_layer(origin, size, background, 9_911);
+    game.text(
+        label,
+        origin + vec2(BUTTON_PADDING.x, BUTTON_PADDING.y + 4.0),
+        if hovered {
+            vec4(1.0, 1.0, 0.6, 1.0)
         } else {
-            BUTTON_BACKGROUND
+            TEXT_COLOR
+        },
+    );
+    (hovered, hovered && game.mouse_pressed(MouseButton::Left))
+}
+
+enum MenuAction {
+    Scene(String),
+    Quit,
+}
+
+struct MenuButton {
+    label: String,
+    action: MenuAction,
+}
+
+/// A focused vertical menu. Build one inside `game.draw_ui(...)`.
+pub struct UiMenu<'g, 'a, 'w> {
+    game: &'g mut GameCtx<'a, 'w>,
+    title: String,
+    buttons: Vec<MenuButton>,
+}
+
+/// The action half of a [`UiMenu`] button declaration.
+pub struct UiMenuButton<'g, 'a, 'w> {
+    menu: UiMenu<'g, 'a, 'w>,
+    label: String,
+}
+
+impl<'g, 'a, 'w> UiMenu<'g, 'a, 'w> {
+    pub fn button(self, label: impl AsRef<str>) -> UiMenuButton<'g, 'a, 'w> {
+        UiMenuButton {
+            menu: self,
+            label: label.as_ref().to_owned(),
+        }
+    }
+
+    pub fn build(self) {
+        if self.buttons.is_empty() {
+            self.game.ui().panel(&self.title).center();
+            return;
+        }
+
+        let navigation = self.game.resource::<UiNavigation>().copied();
+        let mut focus = self.game.resource::<UiFocus>().copied().unwrap_or_default();
+        if let Some(navigation) = navigation {
+            if self.game.pressed(navigation.up) {
+                focus.selected_index = if focus.selected_index == 0 {
+                    self.buttons.len() - 1
+                } else {
+                    focus.selected_index - 1
+                };
+            }
+            if self.game.pressed(navigation.down) {
+                focus.selected_index = (focus.selected_index + 1) % self.buttons.len();
+            }
+        }
+        focus.selected_index %= self.buttons.len();
+
+        let viewport = self.game.input().viewport_size();
+        let viewport = if viewport.x > 0.0 && viewport.y > 0.0 {
+            viewport
+        } else {
+            vec2(800.0, 600.0)
         };
-        self.game.ui_rect_at_layer(
-            origin - Vec2::splat(2.0),
-            size + Vec2::splat(4.0),
-            PANEL_BORDER,
-            9_910,
-        );
-        self.game.ui_rect_at_layer(origin, size, background, 9_911);
-        self.game.text(
-            &self.label,
-            origin + vec2(BUTTON_PADDING.x, BUTTON_PADDING.y + 4.0),
+        let title_center = viewport * 0.5 - vec2(0.0, 72.0);
+        draw_text_panel(self.game, std::slice::from_ref(&self.title), title_center);
+
+        let first_y = viewport.y * 0.5 - (self.buttons.len() as f32 - 1.0) * 28.0;
+        let activate = navigation.is_some_and(|navigation| self.game.pressed(navigation.accept));
+        let mut selected_action = None;
+        for (index, button) in self.buttons.iter().enumerate() {
+            let center = vec2(viewport.x * 0.5, first_y + index as f32 * 56.0);
+            let (hovered, clicked) = draw_button(
+                self.game,
+                &button.label,
+                center,
+                index == focus.selected_index,
+            );
             if hovered {
-                vec4(1.0, 1.0, 0.6, 1.0)
-            } else {
-                TEXT_COLOR
-            },
-        );
-        hovered && self.game.mouse_pressed(MouseButton::Left)
+                focus.selected_index = index;
+            }
+            if clicked || (activate && index == focus.selected_index) {
+                selected_action = Some(match &button.action {
+                    MenuAction::Scene(scene) => MenuAction::Scene(scene.clone()),
+                    MenuAction::Quit => MenuAction::Quit,
+                });
+            }
+        }
+        self.game.insert_resource(focus);
+        match selected_action {
+            Some(MenuAction::Scene(scene)) => self.game.change_scene_or_log(&scene),
+            Some(MenuAction::Quit) => self.game.quit(),
+            None => {}
+        }
+    }
+}
+
+impl<'g, 'a, 'w> UiMenuButton<'g, 'a, 'w> {
+    pub fn go_to_scene(mut self, scene: impl Into<String>) -> UiMenu<'g, 'a, 'w> {
+        self.menu.buttons.push(MenuButton {
+            label: self.label,
+            action: MenuAction::Scene(scene.into()),
+        });
+        self.menu
+    }
+
+    pub fn quit(mut self) -> UiMenu<'g, 'a, 'w> {
+        self.menu.buttons.push(MenuButton {
+            label: self.label,
+            action: MenuAction::Quit,
+        });
+        self.menu
+    }
+}
+
+/// Builder for a standard score/health/enemy-count panel.
+pub struct UiStatusPanel<'g, 'a, 'w> {
+    game: &'g mut GameCtx<'a, 'w>,
+    score: bool,
+    player_health: bool,
+    enemy_count: bool,
+}
+
+impl<'g, 'a, 'w> UiStatusPanel<'g, 'a, 'w> {
+    pub fn score(mut self) -> Self {
+        self.score = true;
+        self
+    }
+
+    pub fn player_health(mut self) -> Self {
+        self.player_health = true;
+        self
+    }
+
+    pub fn enemy_count(mut self) -> Self {
+        self.enemy_count = true;
+        self
+    }
+
+    pub fn build(self) {
+        let mut lines = Vec::new();
+        if self.score {
+            lines.push(format!("Score: {}", self.game.score().value()));
+        }
+        if self.player_health {
+            let health = self.game.player().health().unwrap_or_default();
+            lines.push(format!("Health: {health}"));
+        }
+        if self.enemy_count {
+            lines.push(format!("Enemies: {}", self.game.enemies().alive().count()));
+        }
+        if lines.is_empty() {
+            return;
+        }
+        draw_text_panel(self.game, &lines, vec2(140.0, 70.0));
     }
 }
 
@@ -346,6 +563,11 @@ impl<'g, 'a, 'w> UiPanel<'g, 'a, 'w> {
     /// Draws the panel at a custom screen-space centre position.
     pub fn at(self, center: Vec2) {
         draw_text_panel(self.game, &self.lines, center);
+    }
+
+    /// Draws a dialog/panel in the centre of the current viewport.
+    pub fn build(self) {
+        self.center();
     }
 }
 
@@ -409,6 +631,7 @@ mod tests {
     use game_core::backend::TextureHandle;
     use glam::vec2;
 
+    use super::UiFocus;
     use crate::app::{GameApp, GamePlugin};
     use crate::harness::GameTestHarness;
 
@@ -444,6 +667,16 @@ mod tests {
                     .panel("Custom panel")
                     .line("A second line")
                     .center();
+                game.ui()
+                    .dialog("Old Man")
+                    .line("Welcome to the arena.")
+                    .build();
+                game.ui()
+                    .status_panel()
+                    .score()
+                    .player_health()
+                    .enemy_count()
+                    .build();
                 game.ui()
                     .press_to_start(controls.attack)
                     .press_to_restart(controls.reset)
@@ -482,6 +715,11 @@ mod tests {
             "Horizontal two",
             "Centre panel",
             "Custom panel",
+            "Old Man",
+            "Welcome to the arena.",
+            "Score: 0",
+            "Health: 0",
+            "Enemies: 0",
             "Press Space, Enter, or South to Start",
             "Press R to Restart",
             "Game Over",
@@ -491,5 +729,64 @@ mod tests {
             game.assert_ui_contains(expected);
         }
         assert_eq!(clicks.get(), 1);
+    }
+
+    struct MenuPlugin;
+
+    impl GamePlugin for MenuPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            let controls = game.input(|input| input.top_down_controls())?;
+            game.map("menu")
+                .tiles(["..."])
+                .simple_theme(TextureHandle(0), TextureHandle(0))
+                .start();
+            game.start_scene("menu").scene("game");
+            game.use_top_down_game().controls(controls).build();
+            game.draw_ui(|game, _dt| {
+                if game.current_scene_name().as_deref() == Some("menu") {
+                    game.ui()
+                        .menu("Main Menu")
+                        .button("Start")
+                        .go_to_scene("game")
+                        .button("Quit")
+                        .quit()
+                        .build();
+                }
+            });
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn focused_menu_uses_standard_navigation_and_accept_controls() {
+        let mut game = GameTestHarness::from_plugin(MenuPlugin).unwrap();
+        game.frame(0.0);
+        game.assert_ui_contains("Main Menu");
+        assert_eq!(
+            game.world()
+                .get_resource::<UiFocus>()
+                .unwrap()
+                .selected_index,
+            0
+        );
+
+        game = game.press_action("menu_down");
+        game.frame(0.0);
+        game.clear_input();
+        assert_eq!(
+            game.world()
+                .get_resource::<UiFocus>()
+                .unwrap()
+                .selected_index,
+            1
+        );
+
+        game = game.press_action("menu_up");
+        game.frame(0.0);
+        game.clear_input();
+        game = game.press_action("menu_accept");
+        game.frame(0.0);
+
+        assert_eq!(game.current_scene().as_deref(), Some("game"));
     }
 }

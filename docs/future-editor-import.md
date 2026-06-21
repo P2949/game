@@ -15,3 +15,17 @@ game.map_from_ldtk("world", "maps/world.ldtk");
 Those importers should preserve the current beginner concepts—named prefabs,
 tile themes, and clear diagnostics—rather than exposing an editor's raw data
 model to ordinary game code.
+# Fast iteration before an editor
+
+The first editor loop is deliberately code-and-text based: put files in the
+conventional asset folders, load a map with `map_from_text_auto("level_1")`,
+edit `assets/maps/level_1.txt`, and press F5 in a debug build. The reload keeps
+the same prefabs, legends, and theme while rebuilding the current map.
+
+Press F1 for the debug overlay: it names the active map, shows how many assets
+were registered, and reports whether the latest reload succeeded. Release builds
+can opt in to the same manual reload loop with `GAME_DEV_RELOAD=1`.
+
+Only text maps reload today. Rust code, textures, and sounds still require a
+restart; texture reload will follow once renderer asset replacement has a small,
+safe API.

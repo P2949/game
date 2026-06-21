@@ -134,6 +134,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "boss-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -182,6 +189,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "checkpoint-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -226,6 +240,27 @@ name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+
+[[package]]
+name = "damage-zone-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
+name = "dialog-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
+name = "enemy-drops-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
 
 [[package]]
 name = "env_filter"
@@ -360,6 +395,8 @@ dependencies = [
  "game-physics",
  "glam",
  "log",
+ "ron",
+ "serde",
 ]
 
 [[package]]
@@ -371,6 +408,7 @@ dependencies = [
  "glam",
  "ron",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -467,6 +505,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "health-pickup-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
 name = "image"
 version = "0.25.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -480,10 +525,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "itoa"
+version = "1.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jiff"
@@ -507,6 +565,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "ldtk-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
 ]
 
 [[package]]
@@ -573,6 +638,13 @@ checksum = "ac9557c559cd6fc9867e122e20d2cbefc9ca29d80d027a8e39310920ed2f0a97"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "no-rust-shapes-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
 ]
 
 [[package]]
@@ -910,6 +982,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_json"
+version = "1.0.150"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -986,6 +1071,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "title-menu-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
 name = "trigger-area-demo"
 version = "0.1.0"
 dependencies = [
@@ -1041,6 +1133,13 @@ dependencies = [
 
 [[package]]
 name = "waves-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
+name = "win-condition-demo"
 version = "0.1.0"
 dependencies = [
  "game-starter",
@@ -1180,3 +1279,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
 ]
+
+[[package]]
+name = "zmij"
+version = "1.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"

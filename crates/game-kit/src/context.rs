@@ -11,7 +11,7 @@ use game_core::app::{Ctx, StartCtx};
 use game_core::backend::SoundHandle;
 use game_core::builder::{PrefabId, PropertyBag};
 use game_core::camera::Camera2D;
-use game_core::commands::CommandQueue;
+use game_core::commands::{CommandQueue, MapReload};
 use game_core::input::{ActionId, Axis2dId, Input, MouseButton};
 use game_core::world::{Component, EntityId, Transform, Velocity};
 use game_map::MapCell;
@@ -19,6 +19,7 @@ use glam::{Vec2, Vec4};
 
 use crate::assets::AssetLookup;
 use crate::beginner::audio::AudioOps;
+use crate::beginner::debug::DebugIterationInfo;
 use crate::helpers::{InputDriven, MovementSpeed};
 use crate::map::{
     ContentRuntime, change_to_map_world, reset_to_start_map_world, restart_current_map_world,
@@ -109,6 +110,12 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         self.inner.audio.play(sound, volume);
     }
 
+    /// Plays a sound effect through a named mix bus. The ordinary SFX volume
+    /// still applies, while the bus provides an extra per-category control.
+    pub fn play_sound_on_bus(&mut self, sound: SoundHandle, volume: f32, bus: &str) {
+        self.inner.audio.play_on_bus(sound, volume, bus);
+    }
+
     /// Starts looping music immediately, replacing any currently playing music.
     pub fn play_music(&mut self, sound: SoundHandle, volume: f32) {
         self.inner.audio.play_music(sound, volume);
@@ -124,6 +131,13 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     /// Stops currently playing music.
     pub fn stop_music(&mut self) {
         self.inner.audio.stop_music();
+    }
+
+    /// Blends the currently playing music into `sound` over `duration_seconds`.
+    pub fn crossfade_music(&mut self, sound: SoundHandle, volume: f32, duration_seconds: f32) {
+        self.inner
+            .audio
+            .crossfade_music(sound, volume, duration_seconds);
     }
 
     pub fn pause_music(&mut self) {
@@ -144,6 +158,10 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub fn set_music_volume(&mut self, volume: f32) {
         self.inner.audio.set_music_volume(volume);
+    }
+
+    pub fn set_bus_volume(&mut self, bus: &str, volume: f32) {
+        self.inner.audio.set_bus_volume(bus, volume);
     }
 
     pub fn fade_music_to(&mut self, volume: f32, duration_seconds: f32) {
@@ -507,6 +525,51 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         self.restart_map_or_log();
     }
 
+    /// Requests that the running game close after the current update.
+    pub fn quit(&mut self) {
+        self.commands().quit();
+    }
+
+    /// Reparses the active text map and queues its collision-map replacement.
+    /// This is intended for the development reload action, not regular gameplay.
+    pub fn reload_current_map(&mut self) -> Result<()> {
+        let map_name = self
+            .inner
+            .world
+            .get_resource::<ContentRuntime>()
+            .map(|runtime| runtime.current_map_name().to_owned())
+            .unwrap_or_else(|| "current map".to_owned());
+        let (map, data) = self
+            .inner
+            .world
+            .get_resource_mut::<ContentRuntime>()
+            .ok_or_else(|| {
+                anyhow::anyhow!("content runtime missing; was the game-kit plugin used?")
+            })?
+            .reload_current_text_map()?;
+        restart_current_map_world(self.inner.world)?;
+        self.inner.world.insert_resource(MapReload { map, data });
+        if let Some(iteration) = self.inner.world.get_resource_mut::<DebugIterationInfo>() {
+            iteration.last_reload = format!("ok ({map_name})");
+        }
+        self.commands().reload_map(map);
+        Ok(())
+    }
+
+    /// Reloads the active text map, logging a useful error when the map source
+    /// cannot be parsed or the current map is not text-backed.
+    pub fn reload_current_map_or_log(&mut self) {
+        if let Err(error) = self.reload_current_map() {
+            if let Some(iteration) = self.inner.world.get_resource_mut::<DebugIterationInfo>() {
+                iteration.last_reload = format!(
+                    "failed: {}",
+                    error.to_string().lines().next().unwrap_or("unknown error")
+                );
+            }
+            log::error!("failed to reload current map: {error:#}");
+        }
+    }
+
     pub fn change_map(&mut self, map: &str) -> Result<()> {
         let map_id = change_to_map_world(self.inner.world, map)?;
         self.commands().change_map(map_id);
@@ -620,6 +683,14 @@ impl Commands<'_> {
 
     pub fn change_map(&mut self, map: game_core::builder::MapId) {
         self.queue.change_map(map);
+    }
+
+    pub fn quit(&mut self) {
+        self.queue.quit();
+    }
+
+    pub fn reload_map(&mut self, map: game_core::builder::MapId) {
+        self.queue.reload_map(map);
     }
 
     pub fn restart_map(&mut self) {
@@ -800,6 +871,7 @@ mod tests {
             Rc::new(prefabs),
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
             "test".to_owned(),
         ));
 
@@ -837,6 +909,7 @@ mod tests {
             Rc::new(PrefabRegistry::new()),
             maps,
             map_ids,
+            HashMap::new(),
             "first".to_owned(),
         ));
 
@@ -860,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn named_audio_ops_emit_group_music_and_fade_commands() {
+    fn named_audio_ops_emit_bus_music_crossfade_and_fade_commands() {
         let mut registry = AssetRegistry::new();
         registry.try_sound_file("hit", "sounds/hit.wav").unwrap();
         registry.try_sound_file("theme", "music/theme.wav").unwrap();
@@ -868,12 +941,14 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(AssetLookup::from_registry(&registry));
         let (_, commands) = with_game_ctx_audio(&mut world, |game| {
-            game.audio().play_sound("hit");
+            game.audio().play_sound("hit").bus("ambience");
             game.audio().play_music("theme").volume(0.4).fade_in(1.5);
             let mut audio = game.audio();
             audio.set_master_volume(0.8);
             audio.set_sfx_volume(0.7);
             audio.set_music_volume(0.6);
+            audio.bus("ambience").volume(0.5);
+            audio.crossfade_music("theme", 0.75);
             audio.fade_music_to(0.0, 1.0);
             audio.pause_music();
             audio.resume_music();
@@ -886,6 +961,7 @@ mod tests {
                     sound: game_core::backend::SoundHandle(0),
                     volume: 1.0,
                     looping: false,
+                    bus: Some("ambience".to_owned()),
                 },
                 AudioCommand::PlayMusic {
                     sound: game_core::backend::SoundHandle(1),
@@ -895,6 +971,15 @@ mod tests {
                 AudioCommand::SetMasterVolume { volume: 0.8 },
                 AudioCommand::SetSfxVolume { volume: 0.7 },
                 AudioCommand::SetMusicVolume { volume: 0.6 },
+                AudioCommand::SetBusVolume {
+                    bus: "ambience".to_owned(),
+                    volume: 0.5,
+                },
+                AudioCommand::CrossfadeMusic {
+                    sound: game_core::backend::SoundHandle(1),
+                    volume: 1.0,
+                    duration_seconds: 0.75,
+                },
                 AudioCommand::FadeMusicTo {
                     volume: 0.0,
                     duration_seconds: 1.0,

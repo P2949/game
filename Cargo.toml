@@ -21,6 +21,17 @@ members = [
     "examples/beginner-mini-game",
     "examples/coin-collector",
     "examples/menu-game-over",
+    "examples/no-rust-shapes-demo",
+    "examples/win-condition-demo",
+    "examples/enemy-drops-demo",
+    "examples/health-pickup-demo",
+    "examples/checkpoint-demo",
+    "examples/boss-demo",
+    "examples/dialog-demo",
+    "examples/inventory-demo",
+    "examples/title-menu-demo",
+    "examples/damage-zone-demo",
+    "examples/ldtk-demo",
     "examples/one-file-demo",
     "examples/projectile-demo",
     "examples/script-like-custom-rules",
@@ -52,6 +63,7 @@ log = "0.4"
 ron = "0.12.1"
 sdl3 = "0.18.4"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 walkdir = "2"
 
 [profile.release]

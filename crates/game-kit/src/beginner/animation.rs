@@ -78,6 +78,30 @@ impl SpriteSheet {
     }
 }
 
+/// A spritesheet plus named clips loaded from a small animation metadata file.
+/// Pass it directly to a prefab's `.animation_sheet(...)` method to avoid
+/// writing frame ranges in Rust.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnimationSheet {
+    sheet: SpriteSheet,
+    clips: Vec<(String, AnimationClip)>,
+}
+
+impl AnimationSheet {
+    pub(crate) fn new(sheet: SpriteSheet, clips: Vec<(String, AnimationClip)>) -> Self {
+        Self { sheet, clips }
+    }
+
+    /// The sheet portion, useful when a recipe wants to configure clips by hand.
+    pub fn spritesheet(&self) -> SpriteSheet {
+        self.sheet
+    }
+
+    pub(crate) fn into_parts(self) -> (SpriteSheet, Vec<(String, AnimationClip)>) {
+        (self.sheet, self.clips)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Animation {
     pub current: String,

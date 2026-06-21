@@ -13,14 +13,14 @@ use glam::{Vec2, Vec4, vec2};
 use crate::app::GameApp;
 use crate::assets::{SoundRef, TextureRef};
 use crate::beginner::actors::{
-    Area, AreaName, CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect,
-    DespawnOnHit, Door, DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Pickup, Player,
-    PlayerMovement, PlayerProjectile, Projectile, ProjectileDamage, ScoreValue, SpawnPlacement,
-    Spawner, Speed, TriggerArea,
+    Area, AreaName, Checkpoint, CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect,
+    DespawnOnHit, Door, DoorAction, DoorTarget, DropsPrefab, Enemy, ExitDoor, FacingDirection,
+    HealValue, Lifetime, Name, Pickup, Player, PlayerMovement, PlayerProjectile, Projectile,
+    ProjectileDamage, ScoreValue, SpawnPlacement, Spawner, Speed, TriggerArea,
 };
 use crate::beginner::animation::{
-    Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, idle_frames,
-    walk_frames,
+    Animation, AnimationClip, AnimationSet, AnimationSheet, SpriteSheet, attack_frames, die_frames,
+    idle_frames, walk_frames,
 };
 use crate::bundle::vec2s;
 
@@ -306,6 +306,14 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
         self
     }
 
+    /// Uses a metadata-authored spritesheet and all of its named clips.
+    pub fn animation_sheet(mut self, sheet: AnimationSheet) -> Self {
+        let (sheet, clips) = sheet.into_parts();
+        self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
+        self.spec.animations.extend(clips);
+        self
+    }
+
     pub fn animation(mut self, name: impl Into<String>, clip: AnimationClip) -> Self {
         self.spec.animations.push((name.into(), clip));
         self
@@ -337,6 +345,22 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
 
     pub fn attack(self, frames: impl IntoIterator<Item = usize>) -> Self {
         self.animation("attack", attack_frames(frames))
+    }
+
+    pub fn attack_up(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("attack_up", attack_frames(frames))
+    }
+
+    pub fn attack_down(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("attack_down", attack_frames(frames))
+    }
+
+    pub fn attack_left(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("attack_left", attack_frames(frames))
+    }
+
+    pub fn attack_right(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("attack_right", attack_frames(frames))
     }
 
     pub fn die(self, frames: impl IntoIterator<Item = usize>) -> Self {
@@ -432,6 +456,7 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
                             Transform::at(at),
                             Velocity::default(),
                             Player,
+                            FacingDirection::default(),
                             PlayerMovement::axis(movement_axis),
                             Speed::new(spec.speed),
                             Health::new(spec.health),
@@ -466,6 +491,7 @@ impl<'a, 'app> PlayerPrefabAuthor<'a, 'app> {
                             Transform::at(at),
                             Velocity::default(),
                             Player,
+                            FacingDirection::default(),
                             PlayerMovement::axis(movement_axis),
                             Speed::new(spec.speed),
                             Health::new(spec.health),
@@ -512,6 +538,7 @@ pub struct EnemyPrefabAuthor<'a, 'app> {
     patrol: Option<PatrolSpec>,
     patrol_speed: Option<f32>,
     despawn_after_death_animation: bool,
+    drops: DropsPrefab,
 }
 
 impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
@@ -524,6 +551,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
             patrol: None,
             patrol_speed: None,
             despawn_after_death_animation: false,
+            drops: DropsPrefab::default(),
         }
     }
 
@@ -539,6 +567,14 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
 
     pub fn spritesheet(mut self, sheet: SpriteSheet) -> Self {
         self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
+        self
+    }
+
+    /// Uses a metadata-authored spritesheet and all of its named clips.
+    pub fn animation_sheet(mut self, sheet: AnimationSheet) -> Self {
+        let (sheet, clips) = sheet.into_parts();
+        self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
+        self.spec.animations.extend(clips);
         self
     }
 
@@ -573,6 +609,22 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
 
     pub fn attack(self, frames: impl IntoIterator<Item = usize>) -> Self {
         self.animation("attack", attack_frames(frames))
+    }
+
+    pub fn attack_up(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("attack_up", attack_frames(frames))
+    }
+
+    pub fn attack_down(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("attack_down", attack_frames(frames))
+    }
+
+    pub fn attack_left(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("attack_left", attack_frames(frames))
+    }
+
+    pub fn attack_right(self, frames: impl IntoIterator<Item = usize>) -> Self {
+        self.animation("attack_right", attack_frames(frames))
     }
 
     pub fn die(self, frames: impl IntoIterator<Item = usize>) -> Self {
@@ -702,6 +754,22 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
         self
     }
 
+    /// Spawns this prefab at the enemy's position when it is defeated.
+    pub fn drops(mut self, prefab: impl Into<String>) -> Self {
+        self.drops = DropsPrefab {
+            prefab: prefab.into(),
+            chance: 1.0,
+        };
+        self
+    }
+
+    /// Sets the chance for the configured drop. `0.0` disables it and `1.0`
+    /// always drops; intermediate values use a stable per-enemy roll.
+    pub fn drop_chance(mut self, chance: f32) -> Self {
+        self.drops.chance = chance.clamp(0.0, 1.0);
+        self
+    }
+
     pub fn build(self) -> Result<()> {
         let sprite_source = self.spec.sprite_source(self.app, "enemy", &self.name)?;
         let spec = self.spec;
@@ -720,6 +788,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
         let death_animation_policy = DeathAnimationPolicy {
             despawn_after_animation: self.despawn_after_death_animation,
         };
+        let drops = self.drops;
 
         if let Some(chase) = self.chase {
             if patrol.is_some() {
@@ -744,6 +813,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Velocity::default(),
                                 Enemy,
                                 death_animation_policy,
+                                drops.clone(),
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -787,6 +857,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Velocity::default(),
                                 Enemy,
                                 death_animation_policy,
+                                drops.clone(),
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -842,6 +913,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Velocity::default(),
                                 Enemy,
                                 death_animation_policy,
+                                drops.clone(),
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -887,6 +959,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Velocity::default(),
                                 Enemy,
                                 death_animation_policy,
+                                drops.clone(),
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -926,6 +999,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Velocity::default(),
                                 Enemy,
                                 death_animation_policy,
+                                drops.clone(),
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -960,6 +1034,7 @@ impl<'a, 'app> EnemyPrefabAuthor<'a, 'app> {
                                 Velocity::default(),
                                 Enemy,
                                 death_animation_policy,
+                                drops.clone(),
                                 Speed::new(spec.speed),
                                 Health::new(spec.health),
                                 Faction::enemy(),
@@ -990,6 +1065,7 @@ pub struct PickupPrefabAuthor<'a, 'app> {
     name: String,
     spec: ObjectPrefabSpec,
     score: i32,
+    heal: i32,
     sound: Option<SoundRef>,
     despawn_on_collect: bool,
 }
@@ -1001,6 +1077,7 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
             name,
             spec: ObjectPrefabSpec::new(PICKUP_SIZE),
             score: 0,
+            heal: 0,
             sound: None,
             despawn_on_collect: false,
         }
@@ -1051,6 +1128,12 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
         self
     }
 
+    /// Restores the player's health when this pickup is collected.
+    pub fn heal_player(mut self, amount: i32) -> Self {
+        self.heal = amount.max(0);
+        self
+    }
+
     pub fn play_sound(mut self, sound: impl Into<SoundRef>) -> Self {
         self.sound = Some(sound.into());
         self
@@ -1072,6 +1155,7 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
         let display_name = spec.display_name(&prefab_name);
         let collider = spec.collider();
         let score = self.score;
+        let heal = self.heal;
 
         match (sound, self.despawn_on_collect) {
             (Some(sound), true) => self.app.prefab(self.name, move |prefab| {
@@ -1083,6 +1167,7 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
                             Pickup,
                             Collectible,
                             ScoreValue(score),
+                            HealValue(heal),
                             CollectSound(sound),
                             DespawnOnCollect,
                             spec.sprite(sprite_source),
@@ -1108,6 +1193,7 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
                             Pickup,
                             Collectible,
                             ScoreValue(score),
+                            HealValue(heal),
                             CollectSound(sound),
                             spec.sprite(sprite_source),
                             Collider::box_of(collider),
@@ -1131,6 +1217,7 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
                             Pickup,
                             Collectible,
                             ScoreValue(score),
+                            HealValue(heal),
                             DespawnOnCollect,
                             spec.sprite(sprite_source),
                             Collider::box_of(collider),
@@ -1154,6 +1241,7 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
                             Pickup,
                             Collectible,
                             ScoreValue(score),
+                            HealValue(heal),
                             spec.sprite(sprite_source),
                             Collider::box_of(collider),
                         )
@@ -1190,6 +1278,7 @@ pub struct AreaPrefabAuthor<'a, 'app> {
     debug_sprite: Option<SpriteSourceRef>,
     tint: Vec4,
     layer: i16,
+    checkpoint: bool,
 }
 
 impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
@@ -1203,7 +1292,14 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
             debug_sprite: None,
             tint: Vec4::new(1.0, 0.2, 0.2, 0.35),
             layer: DEFAULT_LAYER,
+            checkpoint: false,
         }
+    }
+
+    pub(crate) fn new_checkpoint(app: &'a mut GameApp<'app>, name: String) -> Self {
+        let mut author = Self::new(app, name);
+        author.checkpoint = true;
+        author
     }
 
     pub fn named(mut self, name: impl Into<String>) -> Self {
@@ -1239,6 +1335,12 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
         self
     }
 
+    /// Displays this area with a sprite. For normal areas this is a visual aid;
+    /// checkpoint areas use it as their regular marker.
+    pub fn sprite(self, texture: impl Into<TextureRef>) -> Self {
+        self.visible_debug(texture)
+    }
+
     pub fn tint(mut self, tint: Vec4) -> Self {
         self.tint = tint;
         self
@@ -1267,6 +1369,9 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
         let collider = self.collider.unwrap_or(size);
         let tint = self.tint;
         let layer = self.layer;
+        let checkpoint = Checkpoint {
+            enabled: self.checkpoint,
+        };
 
         if let Some(source) = debug_sprite {
             self.app.prefab(self.name, move |prefab| {
@@ -1283,6 +1388,7 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
                             Transform::at(at),
                             Area,
                             TriggerArea,
+                            checkpoint,
                             AreaName(area_name.clone()),
                             Trigger,
                             Collider::box_of(collider),
@@ -1307,6 +1413,7 @@ impl<'a, 'app> AreaPrefabAuthor<'a, 'app> {
                             Transform::at(at),
                             Area,
                             TriggerArea,
+                            checkpoint,
                             AreaName(area_name.clone()),
                             Trigger,
                             Collider::box_of(collider),
@@ -1475,6 +1582,21 @@ impl<'a, 'app> ProjectilePrefabAuthor<'a, 'app> {
 
     pub fn spritesheet(mut self, sheet: SpriteSheet) -> Self {
         self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
+        self
+    }
+
+    /// Uses `flight` and `impact` clips from an animation metadata sheet when
+    /// those names are present.
+    pub fn animation_sheet(mut self, sheet: AnimationSheet) -> Self {
+        let (sheet, clips) = sheet.into_parts();
+        self.spec.sprite = Some(SpriteSourceRef::Sheet(sheet));
+        for (name, clip) in clips {
+            match name.as_str() {
+                "flight" => self.flight = Some(clip),
+                "impact" => self.impact = Some(clip),
+                _ => {}
+            }
+        }
         self
     }
 
@@ -1917,6 +2039,7 @@ mod tests {
                 sound: SoundHandle(0),
                 volume: 1.0,
                 looping: false,
+                bus: None,
             }]
         );
     }

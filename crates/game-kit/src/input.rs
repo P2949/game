@@ -16,8 +16,16 @@ pub struct TopDownControls {
     pub attack: ActionId,
     pub pause: ActionId,
     pub reset: ActionId,
+    /// Reloads the current text map during development (F5).
+    pub reload: ActionId,
     pub debug_die: ActionId,
     pub debug_overlay: ActionId,
+    /// Moves focused menu selection up (Up arrow or gamepad D-pad up).
+    pub menu_up: ActionId,
+    /// Moves focused menu selection down (Down arrow or gamepad D-pad down).
+    pub menu_down: ActionId,
+    /// Activates the focused menu button (Space, Enter, or gamepad South).
+    pub menu_accept: ActionId,
     pub zoom_in: ActionId,
     pub zoom_out: ActionId,
 }
@@ -64,8 +72,18 @@ impl<'a> InputAuthor<'a> {
             reset: self
                 .action("reset")?
                 .key_or_gamepad(Key::R, GamepadButton::Select),
+            reload: self.action("reload")?.key(Key::F5),
             debug_die: self.action("debug_die")?.key(Key::K),
             debug_overlay: self.action("debug_overlay")?.key(Key::F1),
+            menu_up: self
+                .action("menu_up")?
+                .key_or_gamepad(Key::Up, GamepadButton::DPadUp),
+            menu_down: self
+                .action("menu_down")?
+                .key_or_gamepad(Key::Down, GamepadButton::DPadDown),
+            menu_accept: self
+                .action("menu_accept")?
+                .space_or_enter_or_mouse_left_or_gamepad_south(),
             zoom_in: self.action("zoom_in")?.key(Key::Plus),
             zoom_out: self.action("zoom_out")?.key(Key::Minus),
         })
@@ -80,8 +98,12 @@ impl<'a> InputAuthor<'a> {
             attack: self.action("attack")?.gamepad_south(),
             pause: self.action("pause")?.gamepad_start(),
             reset: self.action("reset")?.gamepad_select(),
+            reload: self.action("reload")?.key(Key::F5),
             debug_die: self.action("debug_die")?.gamepad_west(),
             debug_overlay: self.action("debug_overlay")?.gamepad_north(),
+            menu_up: self.action("menu_up")?.gamepad(GamepadButton::DPadUp),
+            menu_down: self.action("menu_down")?.gamepad(GamepadButton::DPadDown),
+            menu_accept: self.action("menu_accept")?.gamepad_south(),
             zoom_in: self.action("zoom_in")?.gamepad_right_shoulder(),
             zoom_out: self.action("zoom_out")?.gamepad_left_shoulder(),
         })
@@ -300,10 +322,15 @@ mod tests {
         let controls = input.top_down_controls().unwrap();
 
         assert_eq!(registry.action_id("attack"), Some(controls.attack));
+        assert_eq!(registry.action_id("reload"), Some(controls.reload));
         assert_eq!(registry.axis2d_id("move"), Some(controls.movement));
         assert_eq!(
             registry.action_binding(controls.pause).unwrap().keys,
             [Key::Escape, Key::P]
+        );
+        assert_eq!(
+            registry.action_binding(controls.reload).unwrap().keys,
+            [Key::F5]
         );
         assert_eq!(
             registry

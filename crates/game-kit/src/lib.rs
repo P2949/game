@@ -93,19 +93,47 @@ pub mod map;
 pub mod prefab;
 pub mod system;
 
+/// Defines a content crate plugin without exposing trait or app boilerplate.
+///
+/// Beginner content crates can use this through
+/// `game_kit::beginner::prelude::*`:
+///
+/// ```ignore
+/// content_plugin!(MyContent, plugin, |game| {
+///     game.asset_bag().texture("player", "textures/player.png")?.build();
+/// });
+/// ```
+#[macro_export]
+macro_rules! content_plugin {
+    ($plugin_ty:ident, $plugin_fn:ident, |$game:ident| $body:block) => {
+        pub struct $plugin_ty;
+
+        pub fn $plugin_fn() -> $crate::Plugin<$plugin_ty> {
+            $crate::plugin($plugin_ty)
+        }
+
+        impl $crate::GamePlugin for $plugin_ty {
+            fn build(&self, $game: &mut $crate::GameApp<'_>) -> anyhow::Result<()> {
+                $body
+                Ok(())
+            }
+        }
+    };
+}
+
 pub use app::{DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, Plugin, plugin, plugin_fn};
 pub use assets::{AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, SoundRef, TextureRef};
 pub use beginner::actors::{
-    Area, AreaName, CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect,
-    DespawnOnHit, Door, DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Npc, Pickup,
-    Player, PlayerMovement, Projectile, ProjectileDamage, ProjectileImpact, ScoreValue, Solid,
-    Spawner, Speed, TriggerArea,
+    Area, AreaName, Checkpoint, CheckpointState, CollectSound, Collectible, DeathAnimationPolicy,
+    DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget, DropSpawned, DropsPrefab, Enemy,
+    ExitDoor, HealValue, Lifetime, Name, Npc, Pickup, Player, PlayerMovement, Projectile,
+    ProjectileDamage, ProjectileImpact, ScoreValue, Solid, Spawner, Speed, TriggerArea,
 };
 pub use beginner::animation::{
-    Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
-    idle_frames, walk_frames,
+    Animation, AnimationClip, AnimationSet, AnimationSheet, SpriteSheet, attack_frames, die_frames,
+    frames, idle_frames, walk_frames,
 };
-pub use beginner::audio::{AudioOps, MusicPlayback};
+pub use beginner::audio::{AudioBus, AudioOps, MusicPlayback, SoundPlayback};
 pub use beginner::camera::CameraShake;
 pub use beginner::collections::{
     CameraOps, EnemyCollection, FiredShot, PickupCollection, PlayerActor, Score, ScoreOps,
@@ -125,7 +153,9 @@ pub use beginner::rules::RulesAuthor;
 pub use beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
 pub use beginner::spawn::SpawnAuthor;
 pub use beginner::state::SimpleGameState;
-pub use beginner::ui::{UiButton, UiOps, UiPanel, UiText};
+pub use beginner::ui::{
+    UiButton, UiFocus, UiMenu, UiMenuButton, UiOps, UiPanel, UiStatusPanel, UiText,
+};
 pub use bundle::{Bundle, vec2s};
 pub use context::{Commands, GameCtx, StartupGameCtx};
 pub use helpers::{
@@ -165,14 +195,15 @@ pub mod prelude {
         AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, SoundRef, TextureRef,
     };
     pub use crate::beginner::actors::{
-        Area, AreaName, CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect,
-        DespawnOnHit, Door, DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Npc, Pickup,
-        Player, PlayerMovement, Projectile, ProjectileDamage, ProjectileImpact, ScoreValue, Solid,
-        Spawner, Speed, TriggerArea,
+        Area, AreaName, Checkpoint, CheckpointState, CollectSound, Collectible,
+        DeathAnimationPolicy, DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget,
+        DropSpawned, DropsPrefab, Enemy, ExitDoor, HealValue, Lifetime, Name, Npc, Pickup, Player,
+        PlayerMovement, Projectile, ProjectileDamage, ProjectileImpact, ScoreValue, Solid, Spawner,
+        Speed, TriggerArea,
     };
     pub use crate::beginner::animation::{
-        Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
-        idle_frames, walk_frames,
+        Animation, AnimationClip, AnimationSet, AnimationSheet, SpriteSheet, attack_frames,
+        die_frames, frames, idle_frames, walk_frames,
     };
     pub use crate::beginner::camera::CameraShake;
     pub use crate::beginner::collections::{
@@ -194,7 +225,9 @@ pub mod prelude {
     pub use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
     pub use crate::beginner::spawn::SpawnAuthor;
     pub use crate::beginner::state::SimpleGameState;
-    pub use crate::beginner::ui::{UiButton, UiOps, UiPanel, UiText};
+    pub use crate::beginner::ui::{
+        UiButton, UiFocus, UiMenu, UiMenuButton, UiOps, UiPanel, UiStatusPanel, UiText,
+    };
     pub use crate::bundle::{Bundle, vec2s};
     pub use crate::context::{Commands, GameCtx, StartupGameCtx};
     pub use crate::helpers::{InputDriven, MovementSpeed, SimulationState};

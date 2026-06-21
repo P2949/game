@@ -4,13 +4,14 @@
 //! the engine's `AssetRegistry`. Reached through [`GameApp::assets`].
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use game_core::assets::AssetRegistry;
 use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
+use serde::Deserialize;
 
-use crate::beginner::animation::SpriteSheet;
+use crate::beginner::animation::{AnimationClip, AnimationSheet, SpriteSheet};
 
 /// Declares the assets a game depends on, returning stable handles content stores
 /// in its own asset struct.
@@ -24,6 +25,7 @@ pub struct AssetBag {
     sounds: HashMap<String, SoundHandle>,
     fonts: HashMap<String, FontHandle>,
     sheets: HashMap<String, SpriteSheet>,
+    animation_sheets: HashMap<String, AnimationSheet>,
 }
 
 /// A texture supplied directly as a handle or deferred by its registered asset
@@ -148,6 +150,14 @@ impl AssetBag {
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
+    /// Returns a spritesheet together with clips loaded from animation metadata.
+    /// Pass it to `.animation_sheet(...)` on a player, enemy, or projectile
+    /// prefab to avoid spelling out frame ranges in Rust.
+    pub fn animation_sheet(&self, key: &str) -> AnimationSheet {
+        self.animation_sheet_result(key)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
     /// Looks up a texture and reports the registered keys plus a likely typo
     /// correction when it is missing.
     pub fn texture_result(&self, key: &str) -> Result<TextureHandle> {
@@ -179,6 +189,16 @@ impl AssetBag {
         })
     }
 
+    pub fn animation_sheet_result(&self, key: &str) -> Result<AnimationSheet> {
+        self.try_animation_sheet(key).ok_or_else(|| {
+            missing_asset_error(
+                "animation sheet",
+                key,
+                self.animation_sheets.keys().map(String::as_str),
+            )
+        })
+    }
+
     pub fn try_texture(&self, key: &str) -> Option<TextureHandle> {
         self.textures.get(key).copied()
     }
@@ -193,6 +213,10 @@ impl AssetBag {
 
     pub fn try_spritesheet(&self, key: &str) -> Option<SpriteSheet> {
         self.sheets.get(key).copied()
+    }
+
+    pub fn try_animation_sheet(&self, key: &str) -> Option<AnimationSheet> {
+        self.animation_sheets.get(key).cloned()
     }
 }
 
@@ -252,7 +276,8 @@ pub struct AssetBagAuthor<'a> {
 /// Registers common beginner asset folders using the asset key as the filename.
 /// `textures(["player"])` maps to `assets/textures/player.png`, while
 /// `sounds(["hit"])` maps to `assets/sounds/hit.wav`. Explicit `.sound(...)`
-/// and `.music(...)` paths may use WAV or optional OGG Vorbis files.
+/// and `.music(...)` paths may use WAV, optional OGG Vorbis, or optional MP3
+/// files.
 pub struct AssetFolderAuthor<'a> {
     bag: AssetBagAuthor<'a>,
 }
@@ -268,15 +293,17 @@ impl<'a> AssetFolderAuthor<'a> {
         Ok(self)
     }
 
-    /// Registers `assets/sounds/<key>.wav` or `<key>.ogg`, preferring WAV when
-    /// both exist. OGG playback still requires the runtime's `ogg` feature.
+    /// Registers `assets/sounds/<key>.wav`, `<key>.ogg`, or `<key>.mp3`,
+    /// preferring WAV then OGG. OGG and MP3 playback require their matching
+    /// optional runtime features.
     pub fn sound(mut self, key: impl Into<String>) -> Result<Self> {
         self.bag = self.bag.sound_auto(key)?;
         Ok(self)
     }
 
-    /// Registers `assets/music/<key>.wav` or `<key>.ogg`, preferring WAV when
-    /// both exist. OGG playback still requires the runtime's `ogg` feature.
+    /// Registers `assets/music/<key>.wav`, `<key>.ogg`, or `<key>.mp3`,
+    /// preferring WAV then OGG. OGG and MP3 playback require their matching
+    /// optional runtime features.
     pub fn music(mut self, key: impl Into<String>) -> Result<Self> {
         self.bag = self.bag.music_auto(key)?;
         Ok(self)
@@ -289,8 +316,30 @@ impl<'a> AssetFolderAuthor<'a> {
         Ok(self)
     }
 
+    /// Validates and registers conventional PNG textures.
+    ///
+    /// Use this in a starter game when the listed files are required for the
+    /// game to run. Missing files fail during setup with the path to add and a
+    /// custom-path escape hatch.
+    pub fn required_textures<const N: usize>(mut self, keys: [&str; N]) -> Result<Self> {
+        for key in keys {
+            validate_required_conventional_asset("texture", "textures", key, &["png"])?;
+            self = self.texture(key)?;
+        }
+        Ok(self)
+    }
+
     pub fn sounds<const N: usize>(mut self, keys: [&str; N]) -> Result<Self> {
         for key in keys {
+            self = self.sound(key)?;
+        }
+        Ok(self)
+    }
+
+    /// Validates and registers conventional WAV, OGG, or MP3 sound effects.
+    pub fn required_sounds<const N: usize>(mut self, keys: [&str; N]) -> Result<Self> {
+        for key in keys {
+            validate_required_conventional_asset("sound", "sounds", key, &["wav", "ogg", "mp3"])?;
             self = self.sound(key)?;
         }
         Ok(self)
@@ -341,13 +390,13 @@ impl<'a> AssetBagAuthor<'a> {
     }
 
     /// Registers the first conventional sound found for `key`: WAV first, then
-    /// OGG. An OGG asset reports a clear startup error until the runtime enables
-    /// its `ogg` feature.
+    /// OGG, then MP3. Optional formats report a clear startup error until the
+    /// matching runtime feature is enabled.
     pub fn sound_auto(self, key: impl Into<String>) -> Result<Self> {
         let key = key.into();
         self.sound(
             key.clone(),
-            conventional_asset_path("sounds", &key, &["wav", "ogg"]),
+            conventional_asset_path("sounds", &key, &["wav", "ogg", "mp3"]),
         )
     }
 
@@ -359,12 +408,13 @@ impl<'a> AssetBagAuthor<'a> {
     }
 
     /// Registers the first conventional music file found for `key`: WAV first,
-    /// then OGG. An OGG asset requires the runtime's `ogg` feature.
+    /// then OGG, then MP3. Optional formats require their matching runtime
+    /// features.
     pub fn music_auto(self, key: impl Into<String>) -> Result<Self> {
         let key = key.into();
         self.music(
             key.clone(),
-            conventional_asset_path("music", &key, &["wav", "ogg"]),
+            conventional_asset_path("music", &key, &["wav", "ogg", "mp3"]),
         )
     }
 
@@ -395,6 +445,23 @@ impl<'a> AssetBagAuthor<'a> {
         Ok(self)
     }
 
+    /// Registers a spritesheet and named clips from a RON metadata document
+    /// under `assets/<path>`. Use `assets.animation_sheet("player")` with a
+    /// prefab's `.animation_sheet(...)` method afterwards.
+    pub fn spritesheet_from_meta(
+        mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<Self> {
+        let key = key.into();
+        let animation_sheet = self.author.spritesheet_from_meta(key.clone(), path)?;
+        self.bag
+            .sheets
+            .insert(key.clone(), animation_sheet.spritesheet());
+        self.bag.animation_sheets.insert(key, animation_sheet);
+        Ok(self)
+    }
+
     pub fn build(self) -> AssetBag {
         self.bag
     }
@@ -406,6 +473,39 @@ fn conventional_asset_path(folder: &str, key: &str, extensions: &[&str]) -> Stri
         .map(|extension| format!("{folder}/{key}.{extension}"))
         .collect::<Vec<_>>();
     select_conventional_path(&candidates, asset_path_exists)
+}
+
+fn validate_required_conventional_asset(
+    kind: &str,
+    folder: &str,
+    key: &str,
+    extensions: &[&str],
+) -> Result<()> {
+    let candidates = extensions
+        .iter()
+        .map(|extension| format!("{folder}/{key}.{extension}"))
+        .collect::<Vec<_>>();
+    if candidates
+        .iter()
+        .any(|candidate| asset_path_exists(candidate))
+    {
+        return Ok(());
+    }
+
+    let looked_for = candidates
+        .iter()
+        .map(|candidate| format!("- assets/{candidate}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let preferred = candidates
+        .first()
+        .expect("asset extensions must not be empty");
+    let custom_extension = extensions
+        .first()
+        .expect("asset extensions must not be empty");
+    anyhow::bail!(
+        "Missing {kind} asset '{key}'.\n\nLooked for:\n{looked_for}\n\nFix:\n- add assets/{preferred}\n- or register a custom path:\n  game.asset_bag().{kind}(\"{key}\", \"some/path.{custom_extension}\")?"
+    );
 }
 
 fn select_conventional_path(candidates: &[String], mut exists: impl FnMut(&str) -> bool) -> String {
@@ -430,6 +530,96 @@ fn asset_path_exists(relative: &str) -> bool {
     current_dir
         .ancestors()
         .any(|directory| directory.join(&root).join(relative).is_file())
+}
+
+fn beginner_asset_file(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    let root = std::env::var_os("GAME_ASSET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("assets"));
+    if root.is_absolute() {
+        return root.join(path);
+    }
+    let relative = root.join(path);
+    let Ok(current_dir) = std::env::current_dir() else {
+        return relative;
+    };
+    current_dir
+        .ancestors()
+        .map(|directory| directory.join(&relative))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| current_dir.join(relative))
+}
+
+#[derive(Deserialize)]
+struct AnimationSheetMetadata {
+    texture: String,
+    columns: u32,
+    rows: u32,
+    clips: HashMap<String, AnimationClipMetadata>,
+}
+
+#[derive(Deserialize)]
+struct AnimationClipMetadata {
+    frames: Vec<usize>,
+    #[serde(default = "default_animation_fps")]
+    fps: f32,
+    #[serde(default = "default_animation_looping")]
+    looping: bool,
+}
+
+type ParsedAnimationSheetMetadata = (String, u32, u32, Vec<(String, AnimationClip)>);
+
+fn default_animation_fps() -> f32 {
+    8.0
+}
+
+fn default_animation_looping() -> bool {
+    true
+}
+
+fn parse_animation_sheet_metadata(
+    path: &str,
+    source: &str,
+) -> Result<ParsedAnimationSheetMetadata> {
+    let metadata: AnimationSheetMetadata = ron::from_str(source).map_err(|error| {
+        anyhow!(
+            "Animation metadata 'assets/{path}' is not valid RON: {error}.\n\nUse fields: texture, columns, rows, and clips."
+        )
+    })?;
+    if metadata.columns == 0 || metadata.rows == 0 {
+        anyhow::bail!("Animation metadata 'assets/{path}' needs non-zero columns and rows.");
+    }
+    let total_frames = metadata.columns as usize * metadata.rows as usize;
+    let mut clips = metadata.clips.into_iter().collect::<Vec<_>>();
+    clips.sort_by(|left, right| left.0.cmp(&right.0));
+    let clips = clips
+        .into_iter()
+        .map(|(name, clip)| {
+            if clip.frames.is_empty() {
+                anyhow::bail!(
+                    "Animation metadata 'assets/{path}' clip '{name}' has no frames."
+                );
+            }
+            if let Some(frame) = clip.frames.iter().copied().find(|frame| *frame >= total_frames)
+            {
+                anyhow::bail!(
+                    "Animation metadata 'assets/{path}' clip '{name}' uses frame {frame}, but the sheet has only {total_frames} frames."
+                );
+            }
+            let animation = AnimationClip::frames(clip.frames).fps(clip.fps);
+            let animation = if clip.looping {
+                animation.looping()
+            } else {
+                animation.once()
+            };
+            Ok((name, animation))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((metadata.texture, metadata.columns, metadata.rows, clips))
 }
 
 impl<'a> AssetAuthor<'a> {
@@ -462,6 +652,28 @@ impl<'a> AssetAuthor<'a> {
     ) -> Result<SpriteSheet> {
         let texture = self.texture(key, path)?;
         Ok(SpriteSheet::new(texture, columns, rows))
+    }
+
+    /// Loads `texture`, grid dimensions, and named clips from a small RON file.
+    /// The metadata texture path is relative to the game asset folder, just like
+    /// `.texture(...)` and `.spritesheet(...)` paths.
+    pub fn spritesheet_from_meta(
+        &mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<AnimationSheet> {
+        let key = key.into();
+        let path = path.into();
+        let file = beginner_asset_file(&path);
+        let source = std::fs::read_to_string(&file).map_err(|error| {
+            anyhow!(
+                "Could not read animation metadata 'assets/{path}' (looked for '{}'): {error}",
+                file.display()
+            )
+        })?;
+        let (texture, columns, rows, clips) = parse_animation_sheet_metadata(&path, &source)?;
+        let sheet = self.spritesheet(key, texture, columns, rows)?;
+        Ok(AnimationSheet::new(sheet, clips))
     }
 
     /// A font loaded from `path` (relative to the asset root).
@@ -498,7 +710,10 @@ impl<'a> AssetAuthor<'a> {
 mod tests {
     use game_core::assets::AssetRegistry;
 
-    use super::{AssetAuthor, AssetBagAuthor, AssetFolderAuthor, select_conventional_path};
+    use super::{
+        AssetAuthor, AssetBagAuthor, AssetFolderAuthor, parse_animation_sheet_metadata,
+        select_conventional_path, validate_required_conventional_asset,
+    };
 
     #[test]
     fn asset_bag_collects_declared_handles_by_key() {
@@ -599,5 +814,76 @@ mod tests {
         assert!(bag.try_texture("player").is_some());
         assert!(bag.try_sound("hit").is_some());
         assert!(bag.try_sound("theme").is_some());
+    }
+
+    #[test]
+    fn required_asset_diagnostics_name_the_conventional_path_and_escape_hatch() {
+        let error = validate_required_conventional_asset(
+            "texture",
+            "textures",
+            "missing_beginner_texture",
+            &["png"],
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("Missing texture asset 'missing_beginner_texture'"));
+        assert!(error.contains("assets/textures/missing_beginner_texture.png"));
+        assert!(error.contains("game.asset_bag().texture"));
+    }
+
+    #[test]
+    fn animation_metadata_creates_sorted_named_clips_without_rust_frame_ranges() {
+        let (texture, columns, rows, clips) = parse_animation_sheet_metadata(
+            "animations/player.ron",
+            r#"(
+                texture: "textures/player.png",
+                columns: 4,
+                rows: 1,
+                clips: {
+                    "walk_right": (frames: [3], fps: 10.0),
+                    "attack_down": (frames: [1, 2], fps: 12.0, looping: false),
+                },
+            )"#,
+        )
+        .unwrap();
+
+        assert_eq!(texture, "textures/player.png");
+        assert_eq!((columns, rows), (4, 1));
+        assert_eq!(clips[0].0, "attack_down");
+        assert!(!clips[0].1.looping);
+        assert_eq!(clips[1].0, "walk_right");
+        assert!(clips[1].1.looping);
+    }
+
+    #[test]
+    fn animation_metadata_explains_invalid_frame_numbers() {
+        let error = parse_animation_sheet_metadata(
+            "animations/player.ron",
+            r#"(
+                texture: "textures/player.png",
+                columns: 2,
+                rows: 1,
+                clips: { "idle": (frames: [2]) },
+            )"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("clip 'idle' uses frame 2"));
+        assert!(error.contains("only 2 frames"));
+    }
+
+    #[test]
+    fn checked_in_animation_demo_metadata_matches_the_loader_format() {
+        let (texture, columns, rows, clips) = parse_animation_sheet_metadata(
+            "animations/player.ron",
+            include_str!("../../../assets/animations/player.ron"),
+        )
+        .unwrap();
+
+        assert_eq!(texture, "textures/test.png");
+        assert_eq!((columns, rows), (4, 1));
+        assert!(clips.iter().any(|(name, _)| name == "attack_right"));
     }
 }

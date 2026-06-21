@@ -17,3 +17,6 @@ game-core = { version = "0.1.0", path = "../game-core" }
 [features]
 ci-build-sdl3 = ["sdl3/build-from-source"]
 ogg = ["dep:lewton"]
+# MP3 decoding is intentionally opt-in. It invokes the user's installed ffmpeg
+# at asset-load time, keeping the default runtime small and dependency-free.
+mp3 = []

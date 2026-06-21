@@ -16,14 +16,15 @@ pub use crate::assets::{
     AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, SoundRef, TextureRef,
 };
 pub use crate::beginner::actors::{
-    Area, AreaName, DeathAnimationPolicy, Door, Enemy, Name, Npc, Pickup, Player, PlayerMovement,
-    Projectile, ProjectileImpact, ScoreValue, Solid, Speed, TriggerArea,
+    Area, AreaName, Checkpoint, CheckpointState, DeathAnimationPolicy, Door, DropsPrefab, Enemy,
+    HealValue, Name, Npc, Pickup, Player, PlayerMovement, Projectile, ProjectileImpact, ScoreValue,
+    Solid, Speed, TriggerArea,
 };
 pub use crate::beginner::animation::{
-    Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
-    idle_frames, walk_frames,
+    Animation, AnimationClip, AnimationSet, AnimationSheet, SpriteSheet, attack_frames, die_frames,
+    frames, idle_frames, walk_frames,
 };
-pub use crate::beginner::audio::{AudioOps, MusicPlayback};
+pub use crate::beginner::audio::{AudioBus, AudioOps, MusicPlayback, SoundPlayback};
 pub use crate::beginner::camera::CameraShake;
 pub use crate::beginner::collections::{
     CameraOps, EnemyCollection, FiredShot, PickupCollection, PlayerActor, Score, ScoreOps,
@@ -44,7 +45,11 @@ pub use crate::beginner::rules::RulesAuthor;
 pub use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
 pub use crate::beginner::spawn::SpawnAuthor;
 pub use crate::beginner::state::SimpleGameState;
-pub use crate::beginner::ui::{UiButton, UiOps, UiPanel, UiText};
+pub use crate::beginner::ui::{
+    UiButton, UiFocus, UiMenu, UiMenuButton, UiOps, UiPanel, UiStatusPanel, UiText,
+};
 pub use crate::bundle::vec2s;
+/// Defines a content plugin without requiring `GamePlugin` boilerplate.
+pub use crate::content_plugin;
 pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
 pub use crate::map::MapAuthor;

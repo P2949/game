@@ -90,6 +90,22 @@ impl MapRegistry {
         self.maps.get(id.0 as usize)
     }
 
+    /// Replaces a registered map's collision/navigation data while preserving
+    /// its stable ID and author-facing name. This supports development-time
+    /// reloads without invalidating queued map references.
+    pub fn replace(&mut self, id: MapId, tilemap: TileMap, theme: TileTheme) -> anyhow::Result<()> {
+        let map = self
+            .maps
+            .get_mut(id.0 as usize)
+            .ok_or_else(|| anyhow::anyhow!("map {:?} is not registered", id))?;
+        map.data = MapData {
+            nav: NavGrid::from_tilemap(&tilemap),
+            tilemap,
+            theme,
+        };
+        Ok(())
+    }
+
     pub fn id(&self, name: &str) -> Option<MapId> {
         self.maps
             .iter()

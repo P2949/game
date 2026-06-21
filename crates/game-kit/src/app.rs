@@ -23,7 +23,7 @@ use crate::assets::{
 };
 use crate::beginner::actors::{Door, PrefabName};
 use crate::beginner::animation::AnimationFinishedEvents;
-use crate::beginner::debug::{DebugOverlay, draw_debug_overlay};
+use crate::beginner::debug::{DebugIterationInfo, DebugOverlay, draw_debug_overlay};
 use crate::beginner::defaults::TopDownGameAuthor;
 use crate::beginner::events::{
     ActorToken, AnimationFinishedEvent, CollectEvent, CollisionEvent, DEFAULT_PICKUP_COLLECT_RANGE,
@@ -207,6 +207,12 @@ impl<'app> GameApp<'app> {
         self.area_prefab(name)
     }
 
+    /// Begins a non-solid checkpoint marker that rules can activate and use as
+    /// a respawn position.
+    pub fn checkpoint_prefab(&mut self, name: impl Into<String>) -> AreaPrefabAuthor<'_, 'app> {
+        AreaPrefabAuthor::new_checkpoint(self, name.into())
+    }
+
     /// Begins a beginner-friendly projectile prefab.
     pub fn projectile_prefab(
         &mut self,
@@ -247,6 +253,22 @@ impl<'app> GameApp<'app> {
         path: impl Into<String>,
     ) -> MapAuthor<'_, 'app> {
         MapAuthor::from_text(self, name.into(), path.into())
+    }
+
+    /// Begins a text map named `<name>` from `assets/maps/<name>.txt`.
+    pub fn map_from_text_auto(&mut self, name: impl Into<String>) -> MapAuthor<'_, 'app> {
+        let name = name.into();
+        let path = format!("maps/{name}.txt");
+        MapAuthor::from_text(self, name, path)
+    }
+
+    /// Begins a map imported from an LDtk project under `assets/<path>`.
+    pub fn map_from_ldtk(
+        &mut self,
+        name: impl Into<String>,
+        path: impl Into<String>,
+    ) -> MapAuthor<'_, 'app> {
+        MapAuthor::from_ldtk(self, name.into(), path.into())
     }
 
     /// Declares a named beginner scene.
@@ -798,9 +820,11 @@ impl<'app> GameApp<'app> {
         let mut maps: HashMap<String, GameMap> = HashMap::new();
         let mut map_ids: HashMap<String, game_core::builder::MapId> = HashMap::new();
         let mut start_map_name: Option<String> = None;
+        let mut text_maps = HashMap::new();
 
         for pending in std::mem::take(&mut self.pending_maps) {
-            let (game_map, theme, start) = pending.resolve(self.builder.prefabs())?;
+            let (game_map, theme, start, reload_source) =
+                pending.resolve(self.builder.prefabs())?;
             let map_id = self.builder.maps_mut().try_register(
                 game_map.name.clone(),
                 game_map.collision_tilemap(),
@@ -819,6 +843,9 @@ impl<'app> GameApp<'app> {
                 start_map_name = Some(game_map.name.clone());
             }
             map_ids.insert(game_map.name.clone(), map_id);
+            if let Some(reload_source) = reload_source {
+                text_maps.insert(game_map.name.clone(), reload_source);
+            }
             maps.insert(game_map.name.clone(), game_map);
         }
 
@@ -836,7 +863,12 @@ impl<'app> GameApp<'app> {
             )
         })?;
         let prefabs = self.builder.prefabs_shared();
-        *self.content.borrow_mut() = Some(ContentRuntime::new(prefabs, maps, map_ids, start_map));
+        *self.content.borrow_mut() = Some(ContentRuntime::new(
+            prefabs, maps, map_ids, text_maps, start_map,
+        ));
+        let asset_count = self.builder.assets().texture_keys().count()
+            + self.builder.assets().sound_keys().count()
+            + self.builder.assets().font_keys().count();
         *self.asset_lookup.borrow_mut() = Some(AssetLookup::from_registry(self.builder.assets()));
 
         if !self.scenes.is_empty() {
@@ -854,8 +886,10 @@ impl<'app> GameApp<'app> {
         }
 
         if let Some(overlay) = self.debug_overlay {
+            let iteration_info = DebugIterationInfo::new(asset_count);
             self.builder.schedule_mut().add_startup(move |ctx| {
                 ctx.world.insert_resource(overlay);
+                ctx.world.insert_resource(iteration_info.clone());
                 Ok(())
             });
             self.builder.schedule_mut().add_ui(move |ctx, dt| {

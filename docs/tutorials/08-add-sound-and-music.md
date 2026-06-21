@@ -29,7 +29,8 @@ fn main() -> Result<()> {
             .tiles([".....", "....."])
             .simple_theme("floor", "wall")
             .start();
-        game.on_start(|game| game.spawn_start_map());
+
+        game.rules().top_down_controls(controls).build();
 
         game.on_action(controls.attack, |game| {
             game.audio().play_sound("coin");

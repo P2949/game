@@ -3,6 +3,24 @@
 These short combinations cover the first questions that come up in a small
 top-down game.
 
+## Drop-in assets and map
+
+For the fastest file-first loop, put named images in `assets/textures/`, a sound
+in `assets/sounds/`, and `level_1.txt` in `assets/maps/`:
+
+```rust
+game.assets_from_folders()
+    .required_textures(["player", "slime", "floor", "wall"])?
+    .required_sounds(["hit"])?
+    .build();
+
+game.map_from_text_auto("level_1")
+    .simple_theme("floor", "wall")
+    .legend('P', "player")
+    .legend('E', "slime")
+    .start();
+```
+
 ## Locked exit
 
 ```rust

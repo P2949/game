@@ -1,0 +1,12 @@
+(
+    texture: "textures/test.png",
+    columns: 4,
+    rows: 1,
+    clips: {
+        "idle": (frames: [0], fps: 6.0),
+        "walk_up": (frames: [0], fps: 10.0),
+        "walk_down": (frames: [1], fps: 10.0),
+        "walk_left": (frames: [2], fps: 10.0),
+        "walk_right": (frames: [3], fps: 10.0),
+    },
+)

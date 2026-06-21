@@ -31,7 +31,7 @@ This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 - fixed-timestep gameplay
 - axis-separated AABB collision with wall sliding
 - file-backed WAV sound effects and looping music handles through `game-kit`,
-  plus optional OGG Vorbis decoding
+  plus optional OGG Vorbis and MP3 decoding
 - generated placeholder sounds through a lock-free mixer
 
 It is **not** yet:
@@ -39,7 +39,7 @@ It is **not** yet:
 - a full engine
 - a finished game
 - a general asset pipeline
-- MP3 playback or streaming audio; WAV and optional OGG files are loaded into
+- streaming audio; WAV, optional OGG, and optional MP3 files are loaded into
   memory and converted to the mixer rate/channels at startup
 
 ## Features
@@ -53,95 +53,47 @@ It is **not** yet:
 
 ## Content Authoring Model
 
-Beginner content crates import the beginner facade and describe assets, controls,
-prefabs, maps, and rules through `GameApp`:
+Start with one file. This is the path used throughout the beginner tutorial:
+
+```rust
+use game_starter::prelude::*;
+
+fn main() -> Result<()> {
+    run_game("My Game", |game| {
+        // Add assets, prefabs, maps, and rules here.
+        Ok(())
+    })
+}
+```
+
+When a workspace game grows into a reusable content crate, use the same
+beginner vocabulary and let `content_plugin!` supply the crate glue:
 
 ```rust
 use game_kit::beginner::prelude::*;
 
-impl GamePlugin for DemoPlugin {
-    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.asset_bag()
-            .texture("player", "textures/test.png")?
-            .texture("slime", "textures/test.png")?
-            .texture("floor", "textures/test.png")?
-            .texture("wall", "textures/test.png")?
-            .sound("hit", "sounds/hit.wav")?
-            .build();
+content_plugin!(MyContent, plugin, |game| {
+    game.asset_bag()
+        .texture("player", "textures/player.png")?
+        .texture("floor", "textures/floor.png")?
+        .texture("wall", "textures/wall.png")?
+        .build();
 
-        let controls = game.input(|input| input.top_down_controls())?;
-
-        game.player_prefab("player")
-            .sprite("player")
-            .moves_with(controls.movement, 130.0)
-            .build()?;
-
-        game.enemy_prefab("slime")
-            .sprite("slime")
-            .chases_player()
-            .build()?;
-
-        game.map("level_1")
-            .tiles(["#####", "#P.E#", "#####"])
-            .simple_theme("floor", "wall")
-            .legend('P', "player")
-            .legend('E', "slime")
-            .start();
-
-        game.rules()
-            .top_down_controls(controls)
-            .enemies_damage_player()
-            .camera_follows_player()
-            .build();
-
-        Ok(())
-    }
-}
+    game.player_prefab("player").sprite("player").build()?;
+    game.map("level_1")
+        .tiles(["#####", "#P..#", "#####"])
+        .simple_theme("floor", "wall")
+        .legend('P', "player")
+        .start();
+});
 ```
 
-This is the intended first path: content code talks to `game-kit`, not to
-runtime/backend/registry/schedule internals.
-
-`testbed-content` intentionally uses the advanced API. It is useful for engine
-testing, RON maps, patrol setup, and lower-level examples, but beginners should
-copy `simple-content`, `arena-content`, `examples/one-file-demo`, or
-`templates/simple-demo` instead.
-
-### Advanced API
-
-Advanced custom ECS-style content still exists under
-`game_kit::advanced::prelude::*`. Advanced content can still register raw tuple
-prefabs and custom systems when it intentionally needs lower-level access:
-
-```rust
-game.prefab("demo/player", |prefab| {
-    prefab
-        .spawn(|at| {
-            (
-                Transform::at(at),
-                Velocity::default(),
-                PlayerController {
-                    move_axis: actions.movement,
-                },
-                Health::new(100),
-                Sprite::new(assets.player, vec2s(20.0)),
-                Collider::box_of(vec2s(20.0)),
-            )
-        })?
-        .require::<Transform>()
-        .require::<Collider>();
-    Ok(())
-})?;
-
-game.fixed_active::<GameState>(player_control_system);
-```
-
-Content crates do not talk to SDL, Vulkan, audio devices, memory allocation,
-swapchains, descriptor sets, renderer texture IDs, event pumps, fixed timestep
-internals, raw `World`/`Input`/`TileMap`/`NavGrid`, or direct low-level AI,
-physics, and combat systems. See
-[`docs/content-authoring.md`](docs/content-authoring.md) for the author-facing
-guide.
+Copy `simple-content`, `arena-content`, `examples/one-file-demo`, or
+`templates/simple-demo` for beginner games. `testbed-content` is intentionally
+advanced; see the [advanced authoring guide](docs/advanced-content-authoring.md)
+only when you need that separate path. The [beginner guide](docs/beginner-authoring.md),
+[tutorials](docs/tutorials/README.md), and [cookbook](docs/cookbook/README.md)
+are the normal starting points.
 
 ## Authoring levels
 
@@ -209,6 +161,7 @@ Release packages should not rely on the source-tree fallback.
 | `GAME_DEMO` | Selects the content plugin: `arena` (default), `simple`, or `testbed`. |
 | `GAME_SMOKE_FRAMES` | If set to `N`, initializes normally, renders exactly `N` frames, then exits. `0` exits after initialization before rendering. Invalid values fail early. |
 | `GAME_ASSET_DIR` | Overrides runtime asset root discovery. |
+| `GAME_DEV_RELOAD` | Set to `1` in a release build to enable F5 text-map reload. Debug builds enable it automatically. |
 | `GAME_PRESENT_MODE` | `fifo` (default), `mailbox`, or `immediate`; unavailable opt-in modes fall back to FIFO. |
 | `GAME_VK_DEVICE_NAME` | Selects a suitable Vulkan GPU whose device name contains the given substring. |
 | `GAME_FRAME_TIMINGS` | Set to `1`, `true`, `yes`, or `on` to emit periodic debug frame timing logs. |
@@ -243,7 +196,7 @@ The crate manifest directory is only a debug development fallback (used by
 - No texture atlas yet
 - No bindless descriptors
 - Simple bitmap text
-- No asset hot reload
+- No texture or sound hot reload (text maps reload with F5 in development)
 
 Sprites are batched by layer and texture. Layer order always wins. Within one
 layer, texture batching groups draws by texture; same-layer cross-texture

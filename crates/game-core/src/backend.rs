@@ -52,11 +52,20 @@ pub enum AudioCommand {
         sound: SoundHandle,
         volume: f32,
         looping: bool,
+        /// An optional named sound-effect bus. `None` uses the standard SFX
+        /// group, preserving the simple default path.
+        bus: Option<String>,
     },
     PlayMusic {
         sound: SoundHandle,
         volume: f32,
         fade_in_seconds: Option<f32>,
+    },
+    /// Replaces music by fading the old track out while fading this one in.
+    CrossfadeMusic {
+        sound: SoundHandle,
+        volume: f32,
+        duration_seconds: f32,
     },
     StopMusic,
     PauseMusic,
@@ -68,6 +77,10 @@ pub enum AudioCommand {
         volume: f32,
     },
     SetMusicVolume {
+        volume: f32,
+    },
+    SetBusVolume {
+        bus: String,
         volume: f32,
     },
     FadeMusicTo {
