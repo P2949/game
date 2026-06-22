@@ -1,0 +1,12 @@
+[template]
+cargo_generate_version = ">=0.23.0"
+
+[placeholders.title]
+type = "string"
+prompt = "Game window title"
+default = "My Game"
+
+[placeholders.game_starter_dependency]
+type = "string"
+prompt = "game-starter dependency"
+default = '{ git = "https://github.com/P2949/game", package = "game-starter" }'

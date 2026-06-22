@@ -1,11 +1,16 @@
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crossbeam_queue::ArrayQueue;
-use game_core::backend::{SoundHandle, SoundLoadRequest};
+use game_core::backend::{
+    AudioBackend, AudioCommand as BackendAudioCommand, SoundHandle, SoundLoadRequest,
+};
 use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback};
 
 #[cfg(feature = "ogg")]
@@ -30,8 +35,13 @@ const MAX_GENERATED_FRAMES: usize = 1 << 22; // 4,194,304 frames
 const MAX_GENERATED_CHANNELS: u16 = 8;
 // Hard cap on the total interleaved sample count (frames * channels).
 const MAX_GENERATED_SAMPLES: usize = MAX_GENERATED_FRAMES * MAX_GENERATED_CHANNELS as usize;
+/// Four seconds of stereo 48 kHz audio: bounded regardless of source track size.
+const STREAM_BUFFER_SAMPLES: usize = 48_000 * 2 * 4;
+const STREAM_READ_BYTES: usize = 16 * 1024;
+const STREAM_WORKER_IDLE: Duration = Duration::from_millis(2);
 
 pub type SoundId = usize;
+type StreamId = usize;
 
 /// Outcome of [`Mixer::play`]. Returned so callers (and tests) can distinguish a
 /// started voice from the two silent-drop cases instead of guessing from voice
@@ -56,8 +66,18 @@ enum AudioCommand {
         volume: f32,
         fade_in_seconds: Option<f32>,
     },
+    PlayStreamedMusic {
+        stream_id: StreamId,
+        volume: f32,
+        fade_in_seconds: Option<f32>,
+    },
     CrossfadeMusic {
         sound_id: SoundId,
+        volume: f32,
+        duration_seconds: f32,
+    },
+    CrossfadeStreamedMusic {
+        stream_id: StreamId,
         volume: f32,
         duration_seconds: f32,
     },
@@ -110,10 +130,10 @@ impl Sound {
     }
 }
 
-// Voices are created only by Mixer::play after sound_id validation, so mix_into
-// can index self.sounds by voice.sound_id without revalidating every sample.
+// Static voices are created only after sound-id validation; streamed music uses
+// a separately validated bounded-reader source.
 pub struct Voice {
-    sound_id: SoundId,
+    source: VoiceSource,
     cursor: usize,
     volume: f32,
     looping: bool,
@@ -124,8 +144,68 @@ pub struct Voice {
     remove_when_faded: bool,
 }
 
+enum VoiceSource {
+    Static(SoundId),
+    Streamed {
+        stream_id: StreamId,
+        generation: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct StreamSample {
+    generation: u64,
+    value: f32,
+}
+
+struct StreamState {
+    samples: ArrayQueue<StreamSample>,
+    generation: AtomicU64,
+    running: AtomicBool,
+    underruns: AtomicU64,
+}
+
+impl StreamState {
+    fn new() -> Self {
+        Self {
+            samples: ArrayQueue::new(STREAM_BUFFER_SAMPLES),
+            generation: AtomicU64::new(0),
+            running: AtomicBool::new(true),
+            underruns: AtomicU64::new(0),
+        }
+    }
+
+    fn restart(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::AcqRel) + 1
+    }
+}
+
+/// A bounded music reader. Its worker performs file I/O and PCM conversion away
+/// from SDL's callback; the callback only pops predecoded samples from the
+/// lock-free queue.
+struct MusicStream {
+    state: Arc<StreamState>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl MusicStream {
+    fn state(&self) -> Arc<StreamState> {
+        Arc::clone(&self.state)
+    }
+}
+
+impl Drop for MusicStream {
+    fn drop(&mut self) {
+        self.state.running.store(false, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 pub struct Mixer {
     sounds: Vec<Sound>,
+    streams: Vec<Arc<StreamState>>,
     voices: Vec<Voice>,
     master_volume: f32,
     sfx_volume: f32,
@@ -150,6 +230,7 @@ impl Mixer {
     pub fn new() -> Self {
         Self {
             sounds: Vec::new(),
+            streams: Vec::new(),
             voices: Vec::with_capacity(MAX_VOICES),
             master_volume: 1.0,
             sfx_volume: 1.0,
@@ -263,10 +344,39 @@ impl Mixer {
     }
 
     pub fn add_sound(&mut self, sound: Sound) -> anyhow::Result<SoundId> {
+        self.validate_sound(&sound)?;
+
+        let id = self.sounds.len();
+        self.sounds.push(sound);
+        Ok(id)
+    }
+
+    fn add_stream(&mut self, state: Arc<StreamState>) -> StreamId {
+        let id = self.streams.len();
+        self.streams.push(state);
+        id
+    }
+
+    /// Replaces a sound at a stable id. Voices already using that id are
+    /// stopped so new playback uses the replacement samples deterministically.
+    pub fn replace_sound(&mut self, id: SoundId, sound: Sound) -> anyhow::Result<()> {
+        self.validate_sound(&sound)?;
+        let slot = self
+            .sounds
+            .get_mut(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown sound id {id}"))?;
+        *slot = sound;
+        self.voices.retain(
+            |voice| !matches!(&voice.source, VoiceSource::Static(sound_id) if *sound_id == id),
+        );
+        Ok(())
+    }
+
+    fn validate_sound(&self, sound: &Sound) -> anyhow::Result<()> {
         if sound.samples.is_empty() {
             anyhow::bail!("sound must contain at least one sample");
         }
-        if !Self::sound_is_well_formed(&sound) {
+        if !Self::sound_is_well_formed(sound) {
             anyhow::bail!(
                 "sound has {} samples, which is not a whole number of {}-channel frames",
                 sound.samples.len(),
@@ -279,7 +389,7 @@ impl Mixer {
         if !sound.samples.iter().all(|sample| sample.is_finite()) {
             anyhow::bail!("sound contains non-finite sample data");
         }
-        if !self.sound_format_matches(&sound) {
+        if !self.sound_format_matches(sound) {
             anyhow::bail!(
                 "sound format {}ch/{}Hz does not match mixer output {}ch/{}Hz; normalize it before adding to the mixer",
                 sound.channels,
@@ -288,10 +398,7 @@ impl Mixer {
                 self.output_sample_rate,
             );
         }
-
-        let id = self.sounds.len();
-        self.sounds.push(sound);
-        Ok(id)
+        Ok(())
     }
 
     pub fn play(&mut self, sound_id: SoundId, volume: f32, looping: bool) -> PlayResult {
@@ -305,7 +412,7 @@ impl Mixer {
         looping: bool,
         bus: Option<u8>,
     ) -> PlayResult {
-        self.push_voice(sound_id, volume, looping, false, bus)
+        self.push_static_voice(sound_id, volume, looping, false, bus)
     }
 
     pub fn play_music(
@@ -326,7 +433,32 @@ impl Mixer {
                 self.music_fade = None;
             }
         }
-        self.push_voice(sound_id, volume, true, true, None)
+        self.push_static_voice(sound_id, volume, true, true, None)
+    }
+
+    fn play_streamed_music(
+        &mut self,
+        stream_id: StreamId,
+        volume: f32,
+        fade_in_seconds: Option<f32>,
+    ) -> PlayResult {
+        let Some(stream) = self.streams.get(stream_id).cloned() else {
+            return PlayResult::InvalidSoundId;
+        };
+        self.stop_music();
+        self.music_paused = false;
+        match fade_in_seconds {
+            Some(duration_seconds) => {
+                self.music_fade_volume = 0.0;
+                self.fade_music_to(1.0, duration_seconds);
+            }
+            None => {
+                self.music_fade_volume = 1.0;
+                self.music_fade = None;
+            }
+        }
+        let generation = stream.restart();
+        self.push_streamed_voice(stream_id, generation, volume)
     }
 
     /// Blends every active music voice out while fading a new looping track in.
@@ -355,7 +487,7 @@ impl Mixer {
             voice.remove_when_faded = true;
         }
 
-        let result = self.push_voice(sound_id, volume, true, true, None);
+        let result = self.push_static_voice(sound_id, volume, true, true, None);
         if matches!(result, PlayResult::Started) {
             let voice = self
                 .voices
@@ -370,6 +502,70 @@ impl Mixer {
             });
         }
         result
+    }
+
+    fn crossfade_streamed_music(
+        &mut self,
+        stream_id: StreamId,
+        volume: f32,
+        duration_seconds: f32,
+    ) -> PlayResult {
+        if !duration_seconds.is_finite() || duration_seconds <= 0.0 {
+            return self.play_streamed_music(stream_id, volume, None);
+        }
+        let Some(stream) = self.streams.get(stream_id).cloned() else {
+            return PlayResult::InvalidSoundId;
+        };
+
+        self.music_paused = false;
+        self.music_fade = None;
+        self.music_fade_volume = 1.0;
+        for voice in self.voices.iter_mut().filter(|voice| voice.music) {
+            voice.fade = Some(VoiceFade {
+                from: voice.fade_volume,
+                to: 0.0,
+                elapsed_seconds: 0.0,
+                duration_seconds,
+            });
+            voice.remove_when_faded = true;
+        }
+
+        let generation = stream.restart();
+        let result = self.push_streamed_voice(stream_id, generation, volume);
+        if matches!(result, PlayResult::Started) {
+            let voice = self
+                .voices
+                .last_mut()
+                .expect("a started voice is appended to the mixer");
+            voice.fade_volume = 0.0;
+            voice.fade = Some(VoiceFade {
+                from: 0.0,
+                to: 1.0,
+                elapsed_seconds: 0.0,
+                duration_seconds,
+            });
+        }
+        result
+    }
+
+    fn restart_stream(&mut self, stream_id: StreamId) -> anyhow::Result<()> {
+        let stream = self
+            .streams
+            .get(stream_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unknown streamed music id {stream_id}"))?;
+        let generation = stream.restart();
+        for voice in &mut self.voices {
+            if let VoiceSource::Streamed {
+                stream_id: voice_stream,
+                generation: voice_generation,
+            } = &mut voice.source
+                && *voice_stream == stream_id
+            {
+                *voice_generation = generation;
+            }
+        }
+        Ok(())
     }
 
     pub fn stop_music(&mut self) {
@@ -402,7 +598,7 @@ impl Mixer {
         });
     }
 
-    fn push_voice(
+    fn push_static_voice(
         &mut self,
         sound_id: SoundId,
         volume: f32,
@@ -424,12 +620,39 @@ impl Mixer {
         }
 
         self.voices.push(Voice {
-            sound_id,
+            source: VoiceSource::Static(sound_id),
             cursor: 0,
             volume: sanitize_volume(volume),
             looping,
             music,
             bus,
+            fade_volume: 1.0,
+            fade: None,
+            remove_when_faded: false,
+        });
+        PlayResult::Started
+    }
+
+    fn push_streamed_voice(
+        &mut self,
+        stream_id: StreamId,
+        generation: u64,
+        volume: f32,
+    ) -> PlayResult {
+        if self.voices.len() >= MAX_VOICES {
+            self.dropped_voices.fetch_add(1, Ordering::Relaxed);
+            return PlayResult::DroppedVoiceLimit;
+        }
+        self.voices.push(Voice {
+            source: VoiceSource::Streamed {
+                stream_id,
+                generation,
+            },
+            cursor: 0,
+            volume: sanitize_volume(volume),
+            looping: true,
+            music: true,
+            bus: None,
             fade_volume: 1.0,
             fade: None,
             remove_when_faded: false,
@@ -453,7 +676,6 @@ impl Mixer {
             if voice.music && self.music_paused {
                 continue;
             }
-            let sound = &self.sounds[voice.sound_id];
             let group_volume = if voice.music {
                 music_volume
             } else {
@@ -463,21 +685,49 @@ impl Mixer {
                         .and_then(|bus| self.bus_volumes.get(bus as usize).copied())
                         .unwrap_or(1.0)
             };
-            for sample in out.iter_mut() {
-                if voice.cursor >= sound.samples.len() {
-                    if voice.looping {
-                        voice.cursor = 0;
-                    } else {
-                        break;
+            match &voice.source {
+                VoiceSource::Static(sound_id) => {
+                    let sound = &self.sounds[*sound_id];
+                    for sample in out.iter_mut() {
+                        if voice.cursor >= sound.samples.len() {
+                            if voice.looping {
+                                voice.cursor = 0;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        *sample += sound.samples[voice.cursor]
+                            * voice.volume
+                            * voice.fade_volume
+                            * group_volume
+                            * master_volume;
+                        voice.cursor += 1;
                     }
                 }
-
-                *sample += sound.samples[voice.cursor]
-                    * voice.volume
-                    * voice.fade_volume
-                    * group_volume
-                    * master_volume;
-                voice.cursor += 1;
+                VoiceSource::Streamed {
+                    stream_id,
+                    generation,
+                } => {
+                    let state = &self.streams[*stream_id];
+                    for sample in out.iter_mut() {
+                        let value = loop {
+                            match state.samples.pop() {
+                                Some(sample) if sample.generation == *generation => {
+                                    break Some(sample.value);
+                                }
+                                Some(_) => continue,
+                                None => break None,
+                            }
+                        };
+                        let Some(value) = value else {
+                            state.underruns.fetch_add(1, Ordering::Relaxed);
+                            break;
+                        };
+                        *sample +=
+                            value * voice.volume * voice.fade_volume * group_volume * master_volume;
+                    }
+                }
             }
         }
 
@@ -486,10 +736,14 @@ impl Mixer {
         }
 
         self.voices.retain(|voice| {
-            (voice.looping || voice.cursor < self.sounds[voice.sound_id].samples.len())
-                && !(voice.remove_when_faded
-                    && voice.fade.is_none()
-                    && voice.fade_volume <= f32::EPSILON)
+            (match &voice.source {
+                VoiceSource::Static(sound_id) => {
+                    voice.looping || voice.cursor < self.sounds[*sound_id].samples.len()
+                }
+                VoiceSource::Streamed { .. } => true,
+            }) && !(voice.remove_when_faded
+                && voice.fade.is_none()
+                && voice.fade_volume <= f32::EPSILON)
         });
     }
 
@@ -537,7 +791,10 @@ impl Default for Mixer {
 pub struct AudioSystem {
     commands: Arc<ArrayQueue<AudioCommand>>,
     blip_sound: SoundId,
-    sound_ids: HashMap<SoundHandle, SoundId>,
+    sound_sources: HashMap<SoundHandle, AudioSource>,
+    // Owns the reader workers for as long as the audio system lives. The mixer
+    // holds only their lock-free shared states.
+    _streamed_tracks: Vec<MusicStream>,
     /// Maps friendly bus names to compact identifiers on the main thread. The
     /// callback only receives those identifiers, so it does not allocate or
     /// hash strings while mixing audio.
@@ -552,7 +809,15 @@ pub struct AudioSystem {
     // `poll_dropped_voices`.
     dropped_voices: Arc<AtomicU64>,
     reported_voice_drops: AtomicU64,
-    _stream: AudioStreamWithCallback<MixerCallback>,
+    output_channels: u16,
+    output_sample_rate: u32,
+    stream: AudioStreamWithCallback<MixerCallback>,
+}
+
+#[derive(Clone, Copy)]
+enum AudioSource {
+    Static(SoundId),
+    Streamed(StreamId),
 }
 
 impl AudioSystem {
@@ -580,20 +845,31 @@ impl AudioSystem {
             channels as u16,
         )?)?;
 
-        let mut sound_ids = HashMap::new();
+        let mut sound_sources = HashMap::new();
+        let mut streamed_tracks = Vec::new();
         for (handle, request) in sound_loads {
-            let sound_id = match request {
-                SoundLoadRequest::Generated { .. } => blip_sound,
+            let source = match request {
+                SoundLoadRequest::Generated { .. } => AudioSource::Static(blip_sound),
                 SoundLoadRequest::File { path } => {
                     let sound = load_file_sound(
                         &asset_root.join(&path),
                         channels as u16,
                         sample_rate as u32,
                     )?;
-                    mixer.add_sound(sound)?
+                    AudioSource::Static(mixer.add_sound(sound)?)
+                }
+                SoundLoadRequest::StreamedFile { path } => {
+                    let track = open_streamed_music(
+                        &asset_root.join(&path),
+                        channels as u16,
+                        sample_rate as u32,
+                    )?;
+                    let stream_id = mixer.add_stream(track.state());
+                    streamed_tracks.push(track);
+                    AudioSource::Streamed(stream_id)
                 }
             };
-            sound_ids.insert(handle, sound_id);
+            sound_sources.insert(handle, source);
         }
 
         let commands = Arc::new(ArrayQueue::new(AUDIO_COMMAND_QUEUE_CAPACITY));
@@ -619,15 +895,89 @@ impl AudioSystem {
         Ok(Self {
             commands,
             blip_sound,
-            sound_ids,
+            sound_sources,
+            _streamed_tracks: streamed_tracks,
             bus_ids: Mutex::new(HashMap::new()),
             put_failures,
             reported_failures: AtomicU64::new(0),
             command_push_failures: AtomicU64::new(0),
             dropped_voices,
             reported_voice_drops: AtomicU64::new(0),
-            _stream: stream,
+            output_channels: channels as u16,
+            output_sample_rate: sample_rate as u32,
+            stream,
         })
+    }
+
+    /// Reloads file-backed sounds while retaining their public `SoundHandle`s.
+    /// Existing voices using a replaced sample are stopped; subsequent plays use
+    /// the freshly decoded sound. Generated sounds are intentionally unchanged.
+    pub fn reload_file_sounds(
+        &mut self,
+        asset_root: &Path,
+        sound_loads: &[(SoundHandle, SoundLoadRequest)],
+    ) -> anyhow::Result<usize> {
+        let mut replacements = Vec::new();
+        let mut streams_to_restart = Vec::new();
+        for (handle, request) in sound_loads {
+            match request {
+                SoundLoadRequest::Generated { .. } => {}
+                SoundLoadRequest::File { path } => {
+                    let sound = load_file_sound(
+                        &asset_root.join(path),
+                        self.output_channels,
+                        self.output_sample_rate,
+                    )?;
+                    let AudioSource::Static(id) =
+                        self.sound_sources.get(handle).copied().ok_or_else(|| {
+                            anyhow::anyhow!("sound reload has no source for {handle:?}")
+                        })?
+                    else {
+                        anyhow::bail!("sound reload expected static source for {handle:?}");
+                    };
+                    replacements.push((id, sound));
+                }
+                SoundLoadRequest::StreamedFile { path } => {
+                    let AudioSource::Streamed(id) =
+                        self.sound_sources.get(handle).copied().ok_or_else(|| {
+                            anyhow::anyhow!("sound reload has no source for {handle:?}")
+                        })?
+                    else {
+                        anyhow::bail!("sound reload expected streamed source for {handle:?}");
+                    };
+                    // Validate the replacement header before asking its worker to
+                    // restart. The worker will then reopen at the new generation.
+                    validate_streamed_music(
+                        &asset_root.join(path),
+                        self.output_channels,
+                        self.output_sample_rate,
+                    )?;
+                    streams_to_restart.push(id);
+                }
+            }
+        }
+        if replacements.is_empty() && streams_to_restart.is_empty() {
+            return Ok(0);
+        }
+        let mut callback = self
+            .stream
+            .lock()
+            .ok_or_else(|| anyhow::anyhow!("could not lock SDL audio stream for reload"))?;
+        for (id, sound) in replacements {
+            callback.mixer.replace_sound(id, sound)?;
+        }
+        for id in streams_to_restart {
+            callback.mixer.restart_stream(id)?;
+        }
+        Ok(sound_loads
+            .iter()
+            .filter(|(_, request)| {
+                matches!(
+                    request,
+                    SoundLoadRequest::File { .. } | SoundLoadRequest::StreamedFile { .. }
+                )
+            })
+            .count())
     }
 
     pub fn play_blip(&self) {
@@ -639,8 +989,15 @@ impl AudioSystem {
     }
 
     pub fn play_on_bus(&self, sound: SoundHandle, volume: f32, looping: bool, bus: Option<&str>) {
-        let Some(sound_id) = self.sound_ids.get(&sound).copied() else {
+        let Some(source) = self.sound_sources.get(&sound).copied() else {
             log::warn!("ignoring play request for unknown sound handle {:?}", sound);
+            return;
+        };
+        let AudioSource::Static(sound_id) = source else {
+            log::warn!(
+                "ignoring SFX play request for streamed music handle {:?}",
+                sound
+            );
             return;
         };
         self.enqueue_play(
@@ -660,33 +1017,53 @@ impl AudioSystem {
     }
 
     pub fn crossfade_music(&self, sound: SoundHandle, volume: f32, duration_seconds: f32) {
-        let Some(sound_id) = self.sound_ids.get(&sound).copied() else {
+        let Some(source) = self.sound_sources.get(&sound).copied() else {
             log::warn!(
                 "ignoring crossfade_music request for unknown sound handle {:?}",
                 sound
             );
             return;
         };
-        self.enqueue_audio_command(AudioCommand::CrossfadeMusic {
-            sound_id,
-            volume,
-            duration_seconds,
-        });
+        match source {
+            AudioSource::Static(sound_id) => {
+                self.enqueue_audio_command(AudioCommand::CrossfadeMusic {
+                    sound_id,
+                    volume,
+                    duration_seconds,
+                })
+            }
+            AudioSource::Streamed(stream_id) => {
+                self.enqueue_audio_command(AudioCommand::CrossfadeStreamedMusic {
+                    stream_id,
+                    volume,
+                    duration_seconds,
+                })
+            }
+        }
     }
 
     fn play_music_with_fade(&self, sound: SoundHandle, volume: f32, fade_in_seconds: Option<f32>) {
-        let Some(sound_id) = self.sound_ids.get(&sound).copied() else {
+        let Some(source) = self.sound_sources.get(&sound).copied() else {
             log::warn!(
                 "ignoring play_music request for unknown sound handle {:?}",
                 sound
             );
             return;
         };
-        self.enqueue_audio_command(AudioCommand::PlayMusic {
-            sound_id,
-            volume,
-            fade_in_seconds,
-        });
+        match source {
+            AudioSource::Static(sound_id) => self.enqueue_audio_command(AudioCommand::PlayMusic {
+                sound_id,
+                volume,
+                fade_in_seconds,
+            }),
+            AudioSource::Streamed(stream_id) => {
+                self.enqueue_audio_command(AudioCommand::PlayStreamedMusic {
+                    stream_id,
+                    volume,
+                    fade_in_seconds,
+                })
+            }
+        }
     }
 
     pub fn stop_music(&self) {
@@ -814,9 +1191,64 @@ impl AudioSystem {
         );
     }
 
+    /// Submits a content-facing audio command to the lock-free mixer queue.
+    pub fn submit_command(&self, command: BackendAudioCommand) {
+        match command {
+            BackendAudioCommand::Play {
+                sound,
+                volume,
+                looping,
+                bus,
+            } => self.play_on_bus(sound, volume, looping, bus.as_deref()),
+            BackendAudioCommand::PlayMusic {
+                sound,
+                volume,
+                fade_in_seconds,
+            } => match fade_in_seconds {
+                Some(duration_seconds) => self.play_music_fade_in(sound, volume, duration_seconds),
+                None => self.play_music(sound, volume),
+            },
+            BackendAudioCommand::CrossfadeMusic {
+                sound,
+                volume,
+                duration_seconds,
+            } => self.crossfade_music(sound, volume, duration_seconds),
+            BackendAudioCommand::StopMusic => self.stop_music(),
+            BackendAudioCommand::PauseMusic => self.pause_music(),
+            BackendAudioCommand::ResumeMusic => self.resume_music(),
+            BackendAudioCommand::SetMasterVolume { volume } => self.set_master_volume(volume),
+            BackendAudioCommand::SetSfxVolume { volume } => self.set_sfx_volume(volume),
+            BackendAudioCommand::SetMusicVolume { volume } => self.set_music_volume(volume),
+            BackendAudioCommand::SetBusVolume { bus, volume } => self.set_bus_volume(&bus, volume),
+            BackendAudioCommand::FadeMusicTo {
+                volume,
+                duration_seconds,
+            } => self.fade_music_to(volume, duration_seconds),
+        }
+    }
+
     #[allow(dead_code)]
     pub fn dropped_voices(&self) -> u64 {
         self.dropped_voices.load(Ordering::Relaxed)
+    }
+}
+
+impl AudioBackend for AudioSystem {
+    fn reload_sounds(
+        &mut self,
+        asset_root: &Path,
+        sounds: &[(SoundHandle, SoundLoadRequest)],
+    ) -> anyhow::Result<usize> {
+        self.reload_file_sounds(asset_root, sounds)
+    }
+
+    fn submit(&self, command: BackendAudioCommand) {
+        self.submit_command(command);
+    }
+
+    fn poll_diagnostics(&self) {
+        self.poll_dropped_frames();
+        self.poll_dropped_voices();
     }
 }
 
@@ -864,6 +1296,14 @@ impl MixerCallback {
                 } => {
                     self.mixer.play_music(sound_id, volume, fade_in_seconds);
                 }
+                AudioCommand::PlayStreamedMusic {
+                    stream_id,
+                    volume,
+                    fade_in_seconds,
+                } => {
+                    self.mixer
+                        .play_streamed_music(stream_id, volume, fade_in_seconds);
+                }
                 AudioCommand::CrossfadeMusic {
                     sound_id,
                     volume,
@@ -871,6 +1311,14 @@ impl MixerCallback {
                 } => {
                     self.mixer
                         .crossfade_music(sound_id, volume, duration_seconds);
+                }
+                AudioCommand::CrossfadeStreamedMusic {
+                    stream_id,
+                    volume,
+                    duration_seconds,
+                } => {
+                    self.mixer
+                        .crossfade_streamed_music(stream_id, volume, duration_seconds);
                 }
                 AudioCommand::StopMusic => self.mixer.stop_music(),
                 AudioCommand::PauseMusic => self.mixer.pause_music(),
@@ -1034,6 +1482,12 @@ fn loop_sine_sound(
     }
 
     Ok(Sound::new(samples, channels, sample_rate))
+}
+
+/// Decodes and normalizes a supported file-backed audio asset without opening
+/// an SDL stream. Tooling uses this to validate packaged sounds before shipping.
+pub fn validate_file_sound(path: &Path) -> anyhow::Result<()> {
+    load_file_sound(path, 2, 48_000).map(|_| ())
 }
 
 fn load_file_sound(
@@ -1450,17 +1904,259 @@ fn parse_wav_format(chunk: &[u8]) -> anyhow::Result<WavFormat> {
     })
 }
 
+struct StreamedPcm16Wav {
+    file: File,
+    data_start: u64,
+    data_end: u64,
+}
+
+impl StreamedPcm16Wav {
+    fn open(path: &Path, target_channels: u16, target_sample_rate: u32) -> anyhow::Result<Self> {
+        let mut file = File::open(path).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to open streamed music '{}': {error}",
+                path.display()
+            )
+        })?;
+        let mut header = [0_u8; 12];
+        file.read_exact(&mut header).map_err(|error| {
+            streamed_music_error(path, format!("could not read a RIFF/WAVE header: {error}"))
+        })?;
+        if &header[..4] != b"RIFF" || &header[8..] != b"WAVE" {
+            return Err(streamed_music_error(
+                path,
+                "detected a non-WAV file".to_owned(),
+            ));
+        }
+
+        let mut format = None;
+        let mut data = None;
+        loop {
+            let mut chunk_header = [0_u8; 8];
+            if file.read_exact(&mut chunk_header).is_err() {
+                break;
+            }
+            let size = u32::from_le_bytes(chunk_header[4..].try_into().unwrap()) as u64;
+            let chunk_start = file.stream_position().map_err(anyhow::Error::from)?;
+            match &chunk_header[..4] {
+                b"fmt " => {
+                    if size > 4096 {
+                        return Err(streamed_music_error(
+                            path,
+                            format!("fmt chunk is unexpectedly large ({size} bytes)"),
+                        ));
+                    }
+                    let mut chunk = vec![0_u8; size as usize];
+                    file.read_exact(&mut chunk).map_err(|error| {
+                        streamed_music_error(path, format!("could not read fmt chunk: {error}"))
+                    })?;
+                    format = Some(parse_wav_format(&chunk).map_err(|error| {
+                        streamed_music_error(path, format!("invalid WAV fmt chunk: {error}"))
+                    })?);
+                }
+                b"data" => {
+                    data = Some((chunk_start, size));
+                    break;
+                }
+                _ => {
+                    let skip = size + size % 2;
+                    file.seek(SeekFrom::Current(skip as i64))
+                        .map_err(anyhow::Error::from)?;
+                }
+            }
+            if &chunk_header[..4] == b"fmt " && !size.is_multiple_of(2) {
+                file.seek(SeekFrom::Current(1))
+                    .map_err(anyhow::Error::from)?;
+            }
+        }
+
+        let format =
+            format.ok_or_else(|| streamed_music_error(path, "missing fmt chunk".to_owned()))?;
+        let (data_start, data_len) =
+            data.ok_or_else(|| streamed_music_error(path, "missing data chunk".to_owned()))?;
+        if format.audio_format != 1
+            || format.bits_per_sample != 16
+            || format.channels != target_channels
+            || format.sample_rate != target_sample_rate
+            || format.block_align != target_channels * 2
+        {
+            return Err(streamed_music_error(
+                path,
+                format!(
+                    "detected WAV format {} / {} channels / {} Hz / {} bits (streaming needs PCM16 / {target_channels} channels / {target_sample_rate} Hz)",
+                    format.audio_format,
+                    format.channels,
+                    format.sample_rate,
+                    format.bits_per_sample,
+                ),
+            ));
+        }
+        if data_len == 0 || data_len % u64::from(format.block_align) != 0 {
+            return Err(streamed_music_error(
+                path,
+                "data chunk is empty or is not aligned to complete PCM frames".to_owned(),
+            ));
+        }
+        let data_end = data_start.checked_add(data_len).ok_or_else(|| {
+            streamed_music_error(
+                path,
+                "data chunk length overflows the file offset".to_owned(),
+            )
+        })?;
+        file.seek(SeekFrom::Start(data_start))
+            .map_err(anyhow::Error::from)?;
+        Ok(Self {
+            file,
+            data_start,
+            data_end,
+        })
+    }
+
+    fn rewind(&mut self) -> std::io::Result<()> {
+        self.file.seek(SeekFrom::Start(self.data_start))?;
+        Ok(())
+    }
+
+    fn read_chunk(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        let position = self.file.stream_position()?;
+        if position >= self.data_end {
+            return Ok(0);
+        }
+        let remaining = (self.data_end - position) as usize;
+        let length = bytes.len().min(remaining);
+        self.file.read(&mut bytes[..length])
+    }
+}
+
+fn streamed_music_error(path: &Path, details: impl std::fmt::Display) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Streamed music '{}' {details}.\n\nStreaming currently supports a 48 kHz stereo PCM16 WAV file so it can use a bounded background reader. Convert with:\n    ffmpeg -i {} -ac 2 -ar 48000 -c:a pcm_s16le {}",
+        path.display(),
+        path.display(),
+        path.with_extension("wav").display(),
+    )
+}
+
+fn validate_streamed_music(
+    path: &Path,
+    target_channels: u16,
+    target_sample_rate: u32,
+) -> anyhow::Result<()> {
+    StreamedPcm16Wav::open(path, target_channels, target_sample_rate).map(|_| ())
+}
+
+fn open_streamed_music(
+    path: &Path,
+    target_channels: u16,
+    target_sample_rate: u32,
+) -> anyhow::Result<MusicStream> {
+    validate_streamed_music(path, target_channels, target_sample_rate)?;
+    let path = path.to_path_buf();
+    let state = Arc::new(StreamState::new());
+    let worker_state = Arc::clone(&state);
+    let worker = thread::Builder::new()
+        .name("game-audio-stream".to_owned())
+        .spawn(move || {
+            streamed_music_worker(path, target_channels, target_sample_rate, worker_state)
+        })
+        .map_err(|error| anyhow::anyhow!("could not start streamed music worker: {error}"))?;
+    Ok(MusicStream {
+        state,
+        worker: Some(worker),
+    })
+}
+
+fn streamed_music_worker(
+    path: std::path::PathBuf,
+    target_channels: u16,
+    target_sample_rate: u32,
+    state: Arc<StreamState>,
+) {
+    let mut source = match StreamedPcm16Wav::open(&path, target_channels, target_sample_rate) {
+        Ok(source) => source,
+        Err(error) => {
+            log::warn!("streamed music worker stopped: {error}");
+            return;
+        }
+    };
+    let mut bytes = vec![0_u8; STREAM_READ_BYTES];
+    let mut generation = state.generation.load(Ordering::Acquire);
+
+    while state.running.load(Ordering::Acquire) {
+        let requested_generation = state.generation.load(Ordering::Acquire);
+        if requested_generation != generation {
+            if let Err(error) = source.rewind() {
+                log::warn!(
+                    "could not rewind streamed music '{}': {error}",
+                    path.display()
+                );
+                return;
+            }
+            generation = requested_generation;
+        }
+        if state.samples.is_full() {
+            thread::sleep(STREAM_WORKER_IDLE);
+            continue;
+        }
+        let read = match source.read_chunk(&mut bytes) {
+            Ok(0) => {
+                if let Err(error) = source.rewind() {
+                    log::warn!(
+                        "could not loop streamed music '{}': {error}",
+                        path.display()
+                    );
+                    return;
+                }
+                continue;
+            }
+            Ok(read) => read - read % 2,
+            Err(error) => {
+                log::warn!(
+                    "could not read streamed music '{}': {error}",
+                    path.display()
+                );
+                return;
+            }
+        };
+        for sample in bytes[..read].chunks_exact(2) {
+            while state
+                .samples
+                .push(StreamSample {
+                    generation,
+                    value: i16::from_le_bytes([sample[0], sample[1]]) as f32 / 32768.0,
+                })
+                .is_err()
+            {
+                if !state.running.load(Ordering::Acquire) {
+                    return;
+                }
+                if state.generation.load(Ordering::Acquire) != generation {
+                    break;
+                }
+                thread::sleep(STREAM_WORKER_IDLE);
+            }
+            if state.generation.load(Ordering::Acquire) != generation {
+                break;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::thread;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crossbeam_queue::ArrayQueue;
 
     use super::{
-        AudioCommand, Mixer, MixerCallback, PlayResult, Sound, SoundFormat, convert_channels,
-        crossed_power_of_two, decode_wav_sound, detect_sound_format, normalize_sound,
-        resample_linear, sanitize_volume,
+        AudioCommand, Mixer, MixerCallback, PlayResult, Sound, SoundFormat, StreamState,
+        StreamedPcm16Wav, VoiceSource, convert_channels, crossed_power_of_two, decode_wav_sound,
+        detect_sound_format, normalize_sound, open_streamed_music, resample_linear,
+        sanitize_volume,
     };
 
     #[cfg(not(feature = "ogg"))]
@@ -1495,6 +2191,126 @@ mod tests {
     }
 
     #[test]
+    fn streamed_music_mixes_bounded_buffered_samples_and_restarts_safely() {
+        let mut mixer = Mixer::new();
+        mixer.set_output_format(1, 48_000).unwrap();
+        let state = Arc::new(StreamState::new());
+        let stream_id = mixer.add_stream(Arc::clone(&state));
+
+        assert_eq!(
+            mixer.play_streamed_music(stream_id, 1.0, None),
+            PlayResult::Started
+        );
+        let first_generation = state.generation.load(Ordering::Acquire);
+        for value in [0.25, -0.5, 0.75] {
+            state
+                .samples
+                .push(super::StreamSample {
+                    generation: first_generation,
+                    value,
+                })
+                .unwrap();
+        }
+        let mut first = [0.0; 3];
+        mixer.mix_into(&mut first);
+        assert_eq!(first, [0.25, -0.5, 0.75]);
+
+        mixer.restart_stream(stream_id).unwrap();
+        let second_generation = state.generation.load(Ordering::Acquire);
+        assert_ne!(first_generation, second_generation);
+        // A stale queued sample is discarded; the current generation is used.
+        state
+            .samples
+            .push(super::StreamSample {
+                generation: first_generation,
+                value: 1.0,
+            })
+            .unwrap();
+        state
+            .samples
+            .push(super::StreamSample {
+                generation: second_generation,
+                value: 0.5,
+            })
+            .unwrap();
+        let mut second = [0.0; 1];
+        mixer.mix_into(&mut second);
+        assert_eq!(second, [0.5]);
+    }
+
+    #[test]
+    fn streamed_wav_reader_requires_the_documented_format_with_conversion_help() {
+        let path = std::env::temp_dir().join(format!(
+            "game-audio-stream-format-{}.ogg",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, b"not a wav file").unwrap();
+
+        let error = StreamedPcm16Wav::open(&path, 2, 48_000)
+            .err()
+            .expect("malformed source must be rejected")
+            .to_string();
+        assert!(error.contains("Streamed music"));
+        assert!(error.contains("48 kHz stereo PCM16 WAV"));
+        assert!(error.contains("ffmpeg -i"));
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn streamed_music_worker_reads_pcm16_wav_in_bounded_chunks() {
+        let path = std::env::temp_dir().join(format!(
+            "game-audio-stream-worker-{}.wav",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, pcm16_wav(&[8_192, -16_384], 2, 48_000)).unwrap();
+
+        let stream = open_streamed_music(&path, 2, 48_000).unwrap();
+        let expected_generation = stream.state.generation.load(Ordering::Acquire);
+        let mut sample = None;
+        for _ in 0..100 {
+            sample = stream.state.samples.pop();
+            if sample.is_some() {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let sample = sample.expect("worker should buffer the tiny WAV");
+        assert_eq!(sample.generation, expected_generation);
+        assert_eq!(sample.value, 0.25);
+
+        drop(stream);
+        fs::remove_file(path).unwrap();
+    }
+
+    fn pcm16_wav(samples: &[i16], channels: u16, sample_rate: u32) -> Vec<u8> {
+        let data_len = (samples.len() * 2) as u32;
+        let mut bytes = Vec::with_capacity(44 + data_len as usize);
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&channels.to_le_bytes());
+        bytes.extend_from_slice(&sample_rate.to_le_bytes());
+        bytes.extend_from_slice(&(sample_rate * u32::from(channels) * 2).to_le_bytes());
+        bytes.extend_from_slice(&(channels * 2).to_le_bytes());
+        bytes.extend_from_slice(&16_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
     fn sanitize_volume_clamps_and_neutralizes_non_finite() {
         assert_eq!(sanitize_volume(0.5), 0.5);
         assert_eq!(sanitize_volume(0.0), 0.0);
@@ -1519,6 +2335,23 @@ mod tests {
         mixer.set_output_format(2, 48_000).unwrap();
         assert!(mixer.sound_format_matches(&matching));
         assert!(!mixer.sound_format_matches(&mismatched));
+    }
+
+    #[test]
+    fn replacing_a_sound_keeps_its_id_and_stops_existing_voices() {
+        let mut mixer = Mixer::new();
+        let id = mixer
+            .add_sound(Sound::new(vec![0.25, 0.25], 1, 48_000))
+            .unwrap();
+        assert_eq!(mixer.play(id, 1.0, true), PlayResult::Started);
+        assert_eq!(mixer.voice_count(), 1);
+
+        mixer
+            .replace_sound(id, Sound::new(vec![0.75, 0.75], 1, 48_000))
+            .unwrap();
+
+        assert_eq!(mixer.voice_count(), 0);
+        assert_eq!(mixer.play(id, 1.0, false), PlayResult::Started);
     }
 
     #[test]
@@ -1818,7 +2651,10 @@ mod tests {
                 .voices
                 .iter()
                 .filter(|voice| voice.music)
-                .map(|voice| voice.sound_id)
+                .map(|voice| match voice.source {
+                    VoiceSource::Static(sound_id) => sound_id,
+                    VoiceSource::Streamed { .. } => panic!("test registered static music"),
+                })
                 .collect::<Vec<_>>(),
             vec![second]
         );
@@ -1882,7 +2718,10 @@ mod tests {
 
         assert_eq!(out, [0.5; 10]);
         assert_eq!(mixer.voices.iter().filter(|voice| voice.music).count(), 1);
-        assert_eq!(mixer.voices[0].sound_id, second);
+        assert!(matches!(
+            mixer.voices[0].source,
+            VoiceSource::Static(sound_id) if sound_id == second
+        ));
     }
 
     #[test]
@@ -2108,7 +2947,10 @@ mod tests {
 
         assert!(commands.is_empty());
         assert_eq!(callback.mixer.voices.len(), 1);
-        assert_eq!(callback.mixer.voices[0].sound_id, sound_id);
+        assert!(matches!(
+            callback.mixer.voices[0].source,
+            VoiceSource::Static(actual) if actual == sound_id
+        ));
         assert_eq!(callback.mixer.voices[0].volume, 0.5);
     }
 

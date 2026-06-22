@@ -18,7 +18,7 @@ No item currently falls in a "remove immediately" bucket.
 
 | Item | Cat | Reason | Revisit when |
 | ---- | --- | ------ | ------------ |
-| `game_core::backend::{RenderBackend, AudioBackend, PlatformBackend}` | C | Explicitly future-facing backend traits; runtime still wires directly to SDL/audio/Vulkan crates and `game-kit` does not expose them to content. | A headless test backend, second renderer, or trait-driven runtime is needed. |
+| `game_core::backend::{RenderBackend, AudioBackend, PlatformBackend}` | A | The trait-driven `Runner` uses these contracts for the production SDL/Vulkan/audio path and the in-memory `game-backend-headless` test path. They remain runtime-internal, not content API. | A second production backend or a public embedding API changes their stability requirements. |
 | `TileMap::from_rows` | A | Lenient constructor for trusted/internal rows and empty defaults. Authoring paths should use `try_from_rows` or `MapBuilder::try_tile_layer`. | A future misuse suggests renaming it to `from_rows_lenient`. |
 
 ## Compatibility Shims
@@ -29,21 +29,31 @@ No split-era compatibility modules remain. The old `game_core::engine`,
 
 `game_core::prelude` is now intentionally small. The former broad set of raw
 builder/schedule/context/registry exports lives under `game_core::internal_prelude`
-for runtime/facade/tests. Content crates use `game_kit::prelude::*`.
+for runtime/facade/tests. Beginner content uses
+`game_kit::beginner::prelude::*`; `game_kit::prelude::*` is compatibility-only
+and should not appear in new beginner code.
 
 `game-kit` keeps beginner harness assertions in
 `game_kit::beginner::testing::prelude::*` and raw world inspection in
 `game_kit::advanced::testing::prelude::*`; the normal prelude exposes authoring
-builders, component types, and `GameCtx` helpers only. `MapAuthor` currently
-exposes only `.start()`;
-additional registered maps and runtime map switching are future work.
+builders, component types, and `GameCtx` helpers only. `MapAuthor` exposes
+`.start()` for the initial map and `.finish()` for additional registered maps.
+Runtime map switching is available through beginner door/map helpers and
+lower-level commands.
 
 ## Runtime Reality Checks
 
 - The runtime validates content asset registrations and renderer built-in assets
   before backend startup; the font atlas image is still built during renderer
   creation after that preflight.
-- File-backed sound requests exist in `game-core` but are not exposed through
-  `game-kit` until runtime playback exists.
+- `game-runtime::Runner` is generic over platform, renderer, and audio
+  backends. `game-backend-headless` records input, frames, reloads, and audio
+  commands so the full content loop is tested without SDL, Vulkan, or an audio
+  device; the production binary still uses the concrete SDL/Vulkan/audio
+  implementations.
+- File-backed WAV/OGG/MP3 sound loading and runtime playback are available
+  through `game-kit` where the relevant decoder features are enabled. Use
+  `AssetBagAuthor::sound`/`::music` (or the folder authoring equivalents) and
+  `game.audio()`.
 - Query order is deterministic for `World::ids_with` / `query` / `query2`; code
   should not depend on `HashMap` iteration order.

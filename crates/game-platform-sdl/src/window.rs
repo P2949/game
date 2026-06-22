@@ -9,6 +9,7 @@ use crate::input::{
     normalize_gamepad_axis,
 };
 use crate::resize::ResizePolicy;
+use game_core::backend::{PlatformBackend, PlatformEvents};
 use game_core::input::InputState;
 
 pub struct Platform {
@@ -271,6 +272,36 @@ impl Platform {
             self.primary_gamepad_id = Some(id);
             self.primary_gamepad = Some(gamepad);
         }
+    }
+}
+
+impl PlatformBackend for Platform {
+    fn pump_events(&mut self) -> PlatformEvents {
+        Platform::pump_events(self);
+        PlatformEvents {
+            should_quit: self.should_quit,
+        }
+    }
+
+    fn input(&self) -> &InputState {
+        &self.input
+    }
+
+    fn drawable_size(&self) -> glam::UVec2 {
+        let (width, height) = Platform::drawable_size(self);
+        glam::uvec2(width, height)
+    }
+
+    fn take_stable_resize_request(&mut self) -> bool {
+        Platform::take_stable_resize_request(self)
+    }
+
+    fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+
+    fn request_quit(&mut self) {
+        self.should_quit = true;
     }
 }
 

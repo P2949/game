@@ -1,5 +1,6 @@
 //! Beginner debug overlay helpers.
 
+use game_core::commands::AssetReloadStatus;
 use glam::{vec2, vec4};
 
 use crate::beginner::actors::{Enemy, Name, Player};
@@ -67,10 +68,13 @@ pub fn draw_debug_overlay(game: &mut GameCtx<'_, '_>, dt: f32) {
         game.current_map_name()
             .unwrap_or_else(|| "<none>".to_owned())
     ));
-    lines.push("F5: reload text map + tuning (development)".to_owned());
+    lines.push("F5: reload text map + tuning + assets (development)".to_owned());
     if let Some(iteration) = game.resource::<DebugIterationInfo>() {
         lines.push(format!("assets: {} loaded", iteration.asset_count));
         lines.push(format!("last reload: {}", iteration.last_reload));
+    }
+    if let Some(status) = game.resource::<AssetReloadStatus>() {
+        lines.push(format!("asset reload: {}", status.message));
     }
     lines.push(format!(
         "entities: {}",
@@ -150,7 +154,7 @@ mod tests {
         game.frame(1.0 / 60.0);
 
         game.assert_ui_contains("current map: debug");
-        game.assert_ui_contains("F5: reload text map + tuning");
+        game.assert_ui_contains("F5: reload text map + tuning + assets");
         game.assert_ui_contains("assets: 2 loaded");
         game.assert_ui_contains("last reload: not reloaded yet");
     }

@@ -17,15 +17,16 @@ use game_core::app::MapData;
 use game_core::builder::{MapId, PrefabId, PrefabRegistry};
 use game_core::commands::CommandQueue;
 use game_core::nav::NavGrid;
-use game_core::world::Sprite;
 use game_core::world::World;
+use game_core::world::{Sprite, Transform};
 use game_map::{
     GameMap, MapBuilder, MapCell, MapValidator, cell, load_game_map_ron, load_ldtk_level_file,
-    validate_map_prefabs,
+    load_tiled_map_file, validate_map_prefabs,
 };
 
 use crate::app::GameApp;
 use crate::assets::TextureRef;
+use crate::beginner::actors::{Door, Enemy, Player, TriggerArea};
 use crate::bundle::vec2s;
 use crate::prefab::IntoContentName;
 
@@ -54,6 +55,10 @@ enum MapSource {
         path: String,
         level: Option<String>,
         entities: Vec<(String, String)>,
+    },
+    Tiled {
+        path: String,
+        objects: Vec<(String, String)>,
     },
 }
 
@@ -117,7 +122,10 @@ impl PendingMap {
                 required_objects: self.required_objects.clone(),
                 theme,
             }),
-            MapSource::InCode { .. } | MapSource::Ron { .. } | MapSource::Ldtk { .. } => None,
+            MapSource::InCode { .. }
+            | MapSource::Ron { .. }
+            | MapSource::Ldtk { .. }
+            | MapSource::Tiled { .. } => None,
         };
 
         let game_map = match self.source {
@@ -159,6 +167,9 @@ impl PendingMap {
                 level,
                 entities,
             } => load_ldtk_game_map(&self.name, &path, level, entities, prefabs)?,
+            MapSource::Tiled { path, objects } => {
+                load_tiled_game_map(&self.name, &path, objects, prefabs)?
+            }
         };
 
         validate_game_map(&game_map, &self.required_objects, prefabs)?;
@@ -251,6 +262,56 @@ fn load_text_game_map(
             anyhow!("map '{map_name}' object '{id}' references unknown prefab '{prefab_name}'")
         })?;
         builder = builder.object(id, prefab, cell);
+    }
+    Ok(builder.finish())
+}
+
+fn load_tiled_game_map(
+    map_name: &str,
+    path: &str,
+    objects: Vec<(String, String)>,
+    prefabs: &PrefabRegistry,
+) -> Result<GameMap> {
+    let full_path = beginner_asset_path(path);
+    let imported = load_tiled_map_file(&full_path)
+        .with_context(|| format!("map '{map_name}' failed to load Tiled TMX map"))?;
+    let mut object_lookup = HashMap::new();
+    for (identifier, prefab) in objects {
+        if object_lookup.insert(identifier.clone(), prefab).is_some() {
+            anyhow::bail!("Tiled map '{map_name}' has duplicate mapping for object '{identifier}'");
+        }
+    }
+
+    let row_refs = imported
+        .collision_rows
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut builder = MapBuilder::new(map_name, imported.tile_size)
+        .try_tile_layer("collision", &row_refs)
+        .with_context(|| format!("Tiled map '{map_name}' has invalid collision cells"))?;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for object in imported.objects {
+        let prefab_name = object_lookup.get(&object.identifier).ok_or_else(|| {
+            anyhow!(
+                "Tiled map '{map_name}' has object '{}' with no prefab mapping.\n\nAdd:\n    .object(\"{}\", \"some_prefab\")",
+                object.identifier,
+                object.identifier
+            )
+        })?;
+        let prefab = prefabs.id(prefab_name).ok_or_else(|| {
+            anyhow!(
+                "Tiled object '{}' in map '{map_name}' maps to unknown prefab '{prefab_name}'",
+                object.identifier
+            )
+        })?;
+        let count = counts.entry(prefab_name.clone()).or_default();
+        *count += 1;
+        builder = builder.object(
+            generated_object_id(prefab_name, *count),
+            prefab,
+            object.cell,
+        );
     }
     Ok(builder.finish())
 }
@@ -375,6 +436,23 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         }
     }
 
+    pub(crate) fn from_tiled(app: &'a mut GameApp<'app>, name: String, path: String) -> Self {
+        Self {
+            app,
+            pending: PendingMap {
+                name,
+                source: MapSource::Tiled {
+                    path,
+                    objects: Vec::new(),
+                },
+                required_objects: Vec::new(),
+                theme: None,
+                start: false,
+                misuse_errors: Vec::new(),
+            },
+        }
+    }
+
     /// Sets the tile size in world units (in-code maps only; RON maps carry it).
     pub fn tile_size(mut self, tile_size: f32) -> Self {
         match &mut self.pending.source {
@@ -386,7 +464,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                     .misuse_errors
                     .push("tile_size() is only valid on in-code maps, not RON maps".to_owned());
             }
-            MapSource::Ldtk { .. } => {
+            MapSource::Ldtk { .. } | MapSource::Tiled { .. } => {
                 self.pending
                     .misuse_errors
                     .push("tile_size() is only valid on in-code or text maps".to_owned());
@@ -402,7 +480,10 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
             MapSource::InCode { rows: r, .. } => {
                 *r = rows.iter().map(|row| (*row).to_owned()).collect();
             }
-            MapSource::Text { .. } | MapSource::Ron { .. } | MapSource::Ldtk { .. } => {
+            MapSource::Text { .. }
+            | MapSource::Ron { .. }
+            | MapSource::Ldtk { .. }
+            | MapSource::Tiled { .. } => {
                 self.pending
                     .misuse_errors
                     .push("tiles() is only valid on in-code maps; text maps read their rows from the file".to_owned());
@@ -428,7 +509,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                     .misuse_errors
                     .push("spawn() is only valid on in-code maps, not RON maps".to_owned());
             }
-            MapSource::Ldtk { .. } => {
+            MapSource::Ldtk { .. } | MapSource::Tiled { .. } => {
                 self.pending
                     .misuse_errors
                     .push("spawn() is only valid on in-code or text maps".to_owned());
@@ -450,7 +531,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                     .misuse_errors
                     .push("legend() is only valid on in-code maps, not RON maps".to_owned());
             }
-            MapSource::Ldtk { .. } => {
+            MapSource::Ldtk { .. } | MapSource::Tiled { .. } => {
                 self.pending
                     .misuse_errors
                     .push("legend() is only valid on in-code or text maps".to_owned());
@@ -486,7 +567,7 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
         let wall = self.app.resolve_texture_ref(wall.into());
         let tile_size = match &self.pending.source {
             MapSource::InCode { tile_size, .. } | MapSource::Text { tile_size, .. } => *tile_size,
-            MapSource::Ron { .. } | MapSource::Ldtk { .. } => 32.0,
+            MapSource::Ron { .. } | MapSource::Ldtk { .. } | MapSource::Tiled { .. } => 32.0,
         };
         match (floor, wall) {
             (Ok(floor), Ok(wall)) => {
@@ -533,6 +614,19 @@ impl<'a, 'app> MapAuthor<'a, 'app> {
                 .pending
                 .misuse_errors
                 .push("entity() is only valid on LDtk maps".to_owned()),
+        }
+        self
+    }
+
+    /// Maps a Tiled object `class`, `type`, or `name` to a prefab. Only valid
+    /// after [`GameApp::map_from_tiled`].
+    pub fn object(mut self, identifier: impl Into<String>, prefab: impl Into<String>) -> Self {
+        match &mut self.pending.source {
+            MapSource::Tiled { objects, .. } => objects.push((identifier.into(), prefab.into())),
+            _ => self
+                .pending
+                .misuse_errors
+                .push("object() is only valid on Tiled maps".to_owned()),
         }
         self
     }
@@ -741,7 +835,55 @@ impl ContentRuntime {
 /// and reset, so neither content crate carries its own copy.
 pub fn spawn_map_objects(world: &mut World, map: &GameMap, prefabs: &PrefabRegistry) -> Result<()> {
     for object in &map.objects {
-        prefabs.spawn(object.prefab, world, object.position, &object.properties)?;
+        let entity = prefabs.spawn(object.prefab, world, object.position, &object.properties)?;
+        validate_spawned_collision_components(world, entity, &map.name, &object.id)?;
+    }
+    Ok(())
+}
+
+/// Validates collision-bearing beginner roles immediately after their prefabs
+/// spawn. Map validation catches bad cells before startup; this catches malformed
+/// custom prefabs that claim a gameplay role but omit or invalidate the runtime
+/// collider needed by that role.
+fn validate_spawned_collision_components(
+    world: &World,
+    entity: game_core::world::EntityId,
+    map_name: &str,
+    object_id: &str,
+) -> Result<()> {
+    let role = if world.has::<Player>(entity) {
+        Some("player")
+    } else if world.has::<Enemy>(entity) {
+        Some("enemy")
+    } else if world.has::<Door>(entity) {
+        Some("door")
+    } else if world.has::<TriggerArea>(entity) {
+        Some("trigger area")
+    } else {
+        None
+    };
+    let Some(role) = role else {
+        return Ok(());
+    };
+
+    let collider = world.get::<game_physics::Collider>(entity).ok_or_else(|| {
+        anyhow!(
+            "map '{map_name}' object '{object_id}' spawned a {role} without a collider. Add a positive `.collider(...)` when defining that prefab."
+        )
+    })?;
+    let size = collider.half_extents * 2.0;
+    if !size.is_finite() || size.x <= 0.0 || size.y <= 0.0 {
+        anyhow::bail!(
+            "map '{map_name}' object '{object_id}' spawned a {role} with a zero-size or invalid collider ({}, {}). Give the prefab a positive `.collider(...)` size.",
+            size.x,
+            size.y,
+        );
+    }
+
+    if world.get::<Transform>(entity).is_none() {
+        anyhow::bail!(
+            "map '{map_name}' object '{object_id}' spawned a {role} without a transform; map objects need a position."
+        );
     }
     Ok(())
 }
@@ -799,7 +941,12 @@ pub(crate) fn reset_to_start_map_world(world: &mut World) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_symbolic_tiles, validate_map_row_widths};
+    use game_core::world::{Entity, World};
+
+    use super::{
+        expand_symbolic_tiles, validate_map_row_widths, validate_spawned_collision_components,
+    };
+    use crate::beginner::actors::{Door, TriggerArea};
 
     #[test]
     fn text_map_diagnostics_name_unknown_symbols_and_their_fix() {
@@ -835,5 +982,34 @@ mod tests {
         .to_string();
         assert!(error.contains("Map 'level_1' has no player spawn"));
         assert!(error.contains("Add 'P'"));
+    }
+
+    #[test]
+    fn spawned_door_diagnostics_explain_missing_collider() {
+        let mut world = World::new();
+        let door = world.spawn(Entity::new(glam::Vec2::ZERO).with(Door));
+
+        let error = validate_spawned_collision_components(&world, door, "level_1", "exit")
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("spawned a door without a collider"));
+        assert!(error.contains(".collider(...)"));
+    }
+
+    #[test]
+    fn spawned_trigger_diagnostics_reject_zero_size_colliders() {
+        let mut world = World::new();
+        let trigger = world.spawn(
+            Entity::new(glam::Vec2::ZERO)
+                .with(TriggerArea)
+                .with(game_physics::Collider::box_of(glam::Vec2::ZERO)),
+        );
+
+        let error = validate_spawned_collision_components(&world, trigger, "level_1", "goal")
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("spawned a trigger area with a zero-size or invalid collider"));
     }
 }

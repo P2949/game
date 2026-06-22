@@ -24,11 +24,16 @@ impl FixedTimestep {
 
     pub fn begin_frame(&mut self) {
         let now = std::time::Instant::now();
-        let mut frame_time = (now - self.previous).as_secs_f64();
+        let frame_time = now - self.previous;
         self.previous = now;
+        self.advance_by(frame_time);
+    }
 
-        frame_time = frame_time.min(self.max_frame_time);
-        self.accumulator += frame_time;
+    /// Advances the accumulator by an explicit duration. The interactive loop
+    /// uses [`Self::begin_frame`]; headless tests use this method so a complete
+    /// frame can be deterministic without sleeping or reading wall-clock time.
+    pub fn advance_by(&mut self, frame_time: std::time::Duration) {
+        self.accumulator += frame_time.as_secs_f64().min(self.max_frame_time);
     }
 
     pub fn step_ready(&self) -> bool {

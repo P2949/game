@@ -1,65 +1,48 @@
 # {{title}}
 
-Generate this template from anywhere with:
+## Start here
+
+1. Run `cargo run`.
+2. Edit `assets/maps/level_1.txt`.
+3. Replace files in `assets/textures/`.
+4. Add a coin by putting `C` on an empty floor tile in the map.
+5. Add an enemy by putting `E` on an empty floor tile in the map.
+6. Change numbers in `src/main.rs`, such as the player's `130.0` movement
+   speed or a coin's score.
+
+The map symbols are simple:
+
+- `#` wall
+- `.` floor
+- `P` player start (use one)
+- `E` enemy
+- `C` coin
+
+Press <kbd>F5</kbd> in a debug build after changing the text map to reload it
+without restarting the game.
+
+The first build makes placeholder `player.png`, `slime.png`, `coin.png`,
+`floor.png`, and `wall.png` files if they do not already exist. Replace any of
+them with your own PNG art whenever you are ready.
+
+## Controls
+
+- Move: WASD, arrow keys, left stick, or D-pad
+- Attack / confirm: Space, Enter, left mouse, or the south face button
+- Pause: P, Esc, or Start
+- Reset: R or Select
+- Debug overlay: F1 or the north face button
+
+## Need a fresh copy?
+
+From a local checkout of the game kit, run:
+
+```bash
+cargo xtask new-demo my-game
+```
+
+From anywhere, generate the template with:
 
 ```bash
 cargo generate gh:P2949/game templates/simple-demo
-```
-
-`cargo xtask new-demo <name>` remains available when you are already working
-inside a local checkout of this repository.
-
-The generated `src/main.rs` is a one-file beginner game. It imports:
-
-```rust
-use game_starter::prelude::*;
-```
-
-It registers textures with `game.assets_from_folders()`, builds player and
-enemy prefabs, draws a small map, and enables the beginner top-down preset. The
-first `cargo run` writes tiny placeholder images into `assets/textures/`,
-so the demo opens before you have made any art.
-
-Run it with:
-
-```bash
-cargo run
-```
-
-This template is deliberately the standalone path. If the game later becomes a
-workspace content crate, import `game_kit::beginner::prelude::*` and wrap the
-same setup in `content_plugin!(MyContent, plugin, |game| { ... });` instead of
-writing plugin glue by hand.
-
-Controls:
-
-- Move: WASD or arrow keys
-- Attack: Space or Enter
-- Reset: R
-- Debug overlay: F1
-
-# Assets and text maps
-
-The initial build creates `player.png`, `slime.png`, `floor.png`, and
-`wall.png` in `assets/textures/`. Replace them with your own PNG files
-whenever you are ready. The template loads these conventional names with:
-
-```rust
-game.assets_from_folders()
-    .required_textures(["player", "slime", "floor", "wall"])?
-    .build();
-```
-
-To add sound later, put a WAV in `assets/sounds/` and register it with
-`.sound("hit", "sounds/hit.wav")?` in an `asset_bag()`.
-
-The generated `assets/maps/level_1.txt` is ready to edit immediately. Its map
-builder is:
-
-```rust
-game.map_from_text_auto("level_1")
-    .simple_theme("floor", "wall")
-    .legend('P', "player")
-    .legend('E', "slime")
-    .start();
 ```

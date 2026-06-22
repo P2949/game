@@ -10,7 +10,7 @@ fn main() {
     fs::create_dir_all(&textures).expect("create template texture directory");
     let image = decode_base64(PLACEHOLDER_PNG.trim());
 
-    for name in ["player", "slime", "floor", "wall"] {
+    for name in ["player", "slime", "coin", "floor", "wall"] {
         let path = textures.join(format!("{name}.png"));
         if !path.exists() {
             fs::write(path, &image).expect("write template placeholder texture");
@@ -42,8 +42,16 @@ fn decode_base64(input: &str) -> Vec<u8> {
     for chunk in bytes.chunks(4) {
         let first = value(chunk[0]);
         let second = value(chunk[1]);
-        let third = chunk.get(2).copied().filter(|byte| *byte != b'=').map(value);
-        let fourth = chunk.get(3).copied().filter(|byte| *byte != b'=').map(value);
+        let third = chunk
+            .get(2)
+            .copied()
+            .filter(|byte| *byte != b'=')
+            .map(value);
+        let fourth = chunk
+            .get(3)
+            .copied()
+            .filter(|byte| *byte != b'=')
+            .map(value);
 
         output.push((first << 2) | (second >> 4));
         if let Some(third) = third {

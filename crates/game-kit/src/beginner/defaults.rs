@@ -252,8 +252,8 @@ impl<'a, 'app> TopDownGameAuthor<'a, 'app> {
         })
         .expect("state input behavior should register");
 
-        if let Some(axis) = self.movement {
-            app.use_behavior(MovementBehavior { axis })
+        if self.movement.is_some() {
+            app.use_behavior(MovementBehavior)
                 .expect("movement behavior should register");
         }
 
@@ -387,13 +387,10 @@ impl GamePlugin for StateInputBehavior {
 }
 
 /// Drives a player movement axis while the simple game is active.
-pub struct MovementBehavior {
-    pub axis: Axis2dId,
-}
+pub struct MovementBehavior;
 
 impl GamePlugin for MovementBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        let _axis = self.axis;
         game.every_active_tick::<SimpleGameState>(|game, _dt| {
             game.drive_input::<PlayerMovement, Speed>();
         });
@@ -634,6 +631,7 @@ fn state_input_system(game: &mut GameCtx<'_, '_>, actions: StateActions) {
     if development_reload_enabled() && pressed(game, actions.reload) {
         game.reload_tuning_if_configured_or_log();
         game.reload_current_map_or_log();
+        game.reload_assets();
         state = SimpleGameState::default();
     }
 

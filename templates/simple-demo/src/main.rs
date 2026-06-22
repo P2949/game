@@ -2,12 +2,15 @@ use game_starter::prelude::*;
 
 fn main() -> Result<()> {
     run_game("{{title}}", |game| {
+        // 1. Register files by name. You use these names later in
+        // `.sprite("player")` and `.simple_theme("floor", "wall")`.
         game.assets_from_folders()
-            .required_textures(["player", "slime", "floor", "wall"])?
+            .required_textures(["player", "slime", "coin", "floor", "wall"])?
             .build();
 
         let controls = game.input(|input| input.top_down_controls())?;
 
+        // 2. Define the game objects that map symbols can spawn.
         game.player_prefab("player")
             .sprite("player")
             .moves_with(controls.movement, 130.0)
@@ -22,10 +25,18 @@ fn main() -> Result<()> {
             .melee(26.0, 6)
             .build()?;
 
+        game.pickup_prefab("coin")
+            .sprite("coin")
+            .score(1)
+            .despawn_on_collect()
+            .build()?;
+
+        // 3. Load the editable text map from assets/maps/level_1.txt.
         game.map_from_text_auto("level_1")
             .simple_theme("floor", "wall")
             .legend('P', "player")
             .legend('E', "slime")
+            .legend('C', "coin")
             .start();
 
         game.use_top_down_game()
@@ -36,6 +47,8 @@ fn main() -> Result<()> {
             .with_camera_follow()
             .with_pause_death_ui()
             .build();
+
+        game.rules().player_collects_pickups().show_score().build();
 
         Ok(())
     })

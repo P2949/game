@@ -340,6 +340,10 @@ pub struct Axis2dBinding {
     pub positive_x: Vec<Key>,
     pub negative_y: Vec<Key>,
     pub positive_y: Vec<Key>,
+    pub negative_x_gamepad_buttons: Vec<GamepadButton>,
+    pub positive_x_gamepad_buttons: Vec<GamepadButton>,
+    pub negative_y_gamepad_buttons: Vec<GamepadButton>,
+    pub positive_y_gamepad_buttons: Vec<GamepadButton>,
     pub gamepad_axes: Vec<GamepadAxis>,
 }
 
@@ -407,6 +411,10 @@ impl InputRegistry {
             positive_x: Vec::new(),
             negative_y: Vec::new(),
             positive_y: Vec::new(),
+            negative_x_gamepad_buttons: Vec::new(),
+            positive_x_gamepad_buttons: Vec::new(),
+            negative_y_gamepad_buttons: Vec::new(),
+            positive_y_gamepad_buttons: Vec::new(),
             gamepad_axes: Vec::new(),
         });
         Ok(Axis2dBindingBuilder { registry: self, id })
@@ -506,6 +514,38 @@ impl Axis2dBindingBuilder<'_> {
         self.registry.axes2d[self.id.0 as usize]
             .positive_y
             .push(key);
+        self
+    }
+
+    /// Binds a gamepad button as negative horizontal movement.
+    pub fn negative_x_gamepad(self, button: GamepadButton) -> Self {
+        self.registry.axes2d[self.id.0 as usize]
+            .negative_x_gamepad_buttons
+            .push(button);
+        self
+    }
+
+    /// Binds a gamepad button as positive horizontal movement.
+    pub fn positive_x_gamepad(self, button: GamepadButton) -> Self {
+        self.registry.axes2d[self.id.0 as usize]
+            .positive_x_gamepad_buttons
+            .push(button);
+        self
+    }
+
+    /// Binds a gamepad button as negative vertical movement.
+    pub fn negative_y_gamepad(self, button: GamepadButton) -> Self {
+        self.registry.axes2d[self.id.0 as usize]
+            .negative_y_gamepad_buttons
+            .push(button);
+        self
+    }
+
+    /// Binds a gamepad button as positive vertical movement.
+    pub fn positive_y_gamepad(self, button: GamepadButton) -> Self {
+        self.registry.axes2d[self.id.0 as usize]
+            .positive_y_gamepad_buttons
+            .push(button);
         self
     }
 
@@ -691,20 +731,35 @@ impl Input {
 }
 
 fn evaluate_axis2d(binding: &Axis2dBinding, state: &InputState) -> Vec2 {
-    let axis = |negative: &[Key], positive: &[Key]| -> f32 {
+    let key_axis = |negative: &[Key], positive: &[Key]| -> f32 {
         let neg = negative.iter().any(|key| state.down(*key));
         let pos = positive.iter().any(|key| state.down(*key));
         f32::from(pos) - f32::from(neg)
     };
     let keyboard = Vec2::new(
-        axis(&binding.negative_x, &binding.positive_x),
-        axis(&binding.negative_y, &binding.positive_y),
+        key_axis(&binding.negative_x, &binding.positive_x),
+        key_axis(&binding.negative_y, &binding.positive_y),
+    );
+    let gamepad_button_axis = |negative: &[GamepadButton], positive: &[GamepadButton]| -> f32 {
+        let neg = negative.iter().any(|button| state.gamepad_down(*button));
+        let pos = positive.iter().any(|button| state.gamepad_down(*button));
+        f32::from(pos) - f32::from(neg)
+    };
+    let gamepad_buttons = Vec2::new(
+        gamepad_button_axis(
+            &binding.negative_x_gamepad_buttons,
+            &binding.positive_x_gamepad_buttons,
+        ),
+        gamepad_button_axis(
+            &binding.negative_y_gamepad_buttons,
+            &binding.positive_y_gamepad_buttons,
+        ),
     );
     let gamepad = binding
         .gamepad_axes
         .iter()
         .fold(Vec2::ZERO, |value, axis| value + state.gamepad_axis(*axis));
-    sanitize_axis2(keyboard + gamepad)
+    sanitize_axis2(keyboard + gamepad_buttons + gamepad)
 }
 
 pub fn sanitize_axis(value: f32) -> f32 {
@@ -825,6 +880,24 @@ mod tests {
 
         let input = Input::evaluate_continuous(&registry, &state);
         assert_eq!(input.axis2d(movement), glam::vec2(1.0, -0.5).normalize());
+    }
+
+    #[test]
+    fn gamepad_directional_buttons_drive_a_2d_axis() {
+        let mut registry = InputRegistry::new();
+        let movement = registry
+            .axis2d("move")
+            .negative_x_gamepad(GamepadButton::DPadLeft)
+            .positive_x_gamepad(GamepadButton::DPadRight)
+            .negative_y_gamepad(GamepadButton::DPadUp)
+            .positive_y_gamepad(GamepadButton::DPadDown)
+            .id();
+        let mut state = InputState::default();
+        state.set_gamepad_button(GamepadButton::DPadRight, true);
+        state.set_gamepad_button(GamepadButton::DPadUp, true);
+
+        let input = Input::evaluate_continuous(&registry, &state);
+        assert_eq!(input.axis2d(movement), glam::vec2(1.0, -1.0).normalize());
     }
 
     #[test]

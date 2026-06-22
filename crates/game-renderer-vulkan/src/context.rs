@@ -1,6 +1,6 @@
 use ash::vk;
 use game_core::app::RenderFrame;
-use game_core::backend::TextureHandle;
+use game_core::backend::{RenderBackend, RenderOutcome, TextureHandle};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -28,12 +28,6 @@ const MIN_RESIZE_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(3
 const MIN_SUBOPTIMAL_SWAPCHAIN_RECREATE_INTERVAL: Duration = Duration::from_millis(1000);
 const FRAME_TIMING_LOG_INTERVAL: Duration = Duration::from_secs(1);
 const UI_TEXT_LAYER: i16 = 1000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenderOutcome {
-    Presented,
-    Skipped,
-}
 
 /// Synchronization resources whose lifetime is tied to one swapchain generation.
 ///
@@ -261,6 +255,68 @@ impl VulkanContext {
         self.request_soft_swapchain_recreate();
     }
 
+    /// Reloads every registered content texture from its current asset path.
+    /// Content `TextureHandle`s and renderer `TextureId`s remain stable; only
+    /// the GPU image, view, sampler, and descriptor resources are replaced.
+    pub fn reload_content_textures(
+        &mut self,
+        content_textures: &[(TextureHandle, String)],
+    ) -> anyhow::Result<usize> {
+        let logical_device = self
+            .logical_device
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("cannot reload textures after device teardown"))?;
+        let device = logical_device.device().clone();
+        let queue = logical_device.graphics_queue();
+        let descriptor_set_layout = self.descriptor_set_layout();
+        let upload_pool = self
+            .upload_command_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("texture upload command pool has been destroyed"))?
+            .handle();
+        let upload_fence = self
+            .upload_fence
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("texture upload fence has been destroyed"))?
+            .handle();
+        let asset_root = assets::asset_root()?;
+
+        unsafe { device.device_wait_idle()? };
+        let allocator = self
+            .allocator
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("texture allocator has been destroyed"))?;
+        for (handle, path) in content_textures {
+            let id = *self.texture_handle_to_id.get(handle).ok_or_else(|| {
+                anyhow::anyhow!("texture reload has no renderer mapping for handle {handle:?}")
+            })?;
+            let texture_path = asset_root.join(path);
+            self.texture_registry.replace_texture(
+                &device,
+                allocator,
+                descriptor_set_layout,
+                id,
+                path.clone(),
+                move |device, allocator| {
+                    let mut upload = texture::TextureUpload {
+                        device,
+                        allocator,
+                        queue,
+                        upload_pool,
+                        upload_fence,
+                    };
+                    texture::Texture::from_path(
+                        &mut upload,
+                        texture_path,
+                        texture::TextureColorSpace::SrgbColor,
+                        "reloaded content texture",
+                    )
+                },
+            )?;
+        }
+        Ok(content_textures.len())
+    }
+
     fn request_soft_swapchain_recreate(&mut self) {
         request_soft_recreate(&mut self.swapchain_recreate_request);
     }
@@ -289,9 +345,9 @@ impl VulkanContext {
 
     fn desired_swapchain_extent(
         &self,
-        window: &sdl3::video::Window,
+        drawable_size: glam::UVec2,
     ) -> anyhow::Result<Option<vk::Extent2D>> {
-        let (width, height) = window.size_in_pixels();
+        let (width, height) = (drawable_size.x, drawable_size.y);
         if width == 0 || height == 0 {
             return Ok(None);
         }
@@ -310,13 +366,13 @@ impl VulkanContext {
 
     fn swapchain_recreate_ready(
         &self,
-        window: &sdl3::video::Window,
+        drawable_size: glam::UVec2,
         reason: SwapchainRecreateReason,
     ) -> anyhow::Result<bool> {
         // Only special-case a zero-size (minimized) window, which has no valid
         // extent to recreate for. Any nonzero size is recreatable: gating on a
         // minimum size would strand a small window with no swapchain forever.
-        if self.desired_swapchain_extent(window)?.is_none() {
+        if self.desired_swapchain_extent(drawable_size)?.is_none() {
             return Ok(false);
         }
 
@@ -332,9 +388,9 @@ impl VulkanContext {
         Ok(true)
     }
 
-    fn recreate_swapchain(&mut self, window: &sdl3::video::Window) -> anyhow::Result<()> {
+    fn recreate_swapchain(&mut self, drawable_size: glam::UVec2) -> anyhow::Result<()> {
         let recreate_start = Instant::now();
-        let (width, height) = window.size_in_pixels();
+        let (width, height) = (drawable_size.x, drawable_size.y);
         if width == 0 || height == 0 {
             // Keep a request pending so we recreate once the window has a size
             // again, but never downgrade an already-pending hard request.
@@ -411,9 +467,9 @@ impl VulkanContext {
         Ok(())
     }
 
-    pub fn render(
+    pub fn render_at(
         &mut self,
-        window: &sdl3::video::Window,
+        drawable_size: glam::UVec2,
         render_frame: RenderFrame,
     ) -> anyhow::Result<RenderOutcome> {
         let camera =
@@ -421,10 +477,10 @@ impl VulkanContext {
         self.submit_render_frame(render_frame);
 
         if let Some(reason) = self.swapchain_recreate_request {
-            let desired_extent = self.desired_swapchain_extent(window)?;
+            let desired_extent = self.desired_swapchain_extent(drawable_size)?;
             let has_nonzero_extent = desired_extent.is_some();
             let extent_matches = desired_extent == Some(self.swapchain.extent());
-            let soft_recreate_ready = self.swapchain_recreate_ready(window, reason)?;
+            let soft_recreate_ready = self.swapchain_recreate_ready(drawable_size, reason)?;
 
             match swapchain_recreate_action(
                 reason,
@@ -443,7 +499,7 @@ impl VulkanContext {
                     // Keep the request pending and continue into normal rendering.
                 }
                 SwapchainRecreateAction::Recreate => {
-                    self.recreate_swapchain(window)?;
+                    self.recreate_swapchain(drawable_size)?;
 
                     // A window that went zero-size during recreate leaves the
                     // request pending; skip this frame and retry next time.
@@ -727,6 +783,24 @@ impl VulkanContext {
                 stats.glyphs_dropped
             );
         }
+    }
+}
+
+impl RenderBackend for VulkanContext {
+    fn reload_textures(&mut self, textures: &[(TextureHandle, String)]) -> anyhow::Result<usize> {
+        self.reload_content_textures(textures)
+    }
+
+    fn request_resize(&mut self) {
+        self.request_swapchain_recreate();
+    }
+
+    fn render(
+        &mut self,
+        drawable_size: glam::UVec2,
+        frame: RenderFrame,
+    ) -> anyhow::Result<RenderOutcome> {
+        self.render_at(drawable_size, frame)
     }
 }
 

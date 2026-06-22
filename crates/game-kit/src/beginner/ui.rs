@@ -96,9 +96,28 @@ impl<'g, 'a, 'w> UiOps<'g, 'a, 'w> {
         self
     }
 
+    /// Alias for [`Self::vertical`] that reads naturally for beginner UI code.
+    pub fn column(self) -> Self {
+        self.vertical()
+    }
+
     /// Places subsequent label helpers on one row.
     pub fn horizontal(mut self) -> Self {
         self.direction = StackDirection::Horizontal;
+        self
+    }
+
+    /// Alias for [`Self::horizontal`] that reads naturally for beginner UI code.
+    pub fn row(self) -> Self {
+        self.horizontal()
+    }
+
+    /// Leaves empty space in the current row or column.
+    pub fn spacer(mut self, amount: f32) -> Self {
+        match self.direction {
+            StackDirection::Vertical => self.next_line.y += amount.max(0.0),
+            StackDirection::Horizontal => self.next_line.x += amount.max(0.0),
+        }
         self
     }
 
@@ -107,7 +126,14 @@ impl<'g, 'a, 'w> UiOps<'g, 'a, 'w> {
             game: self.game,
             text: text.into(),
             color: TEXT_COLOR,
+            width: None,
         }
+    }
+
+    /// Begins a text box. Set its approximate pixel width with
+    /// [`UiText::width`] before positioning it with [`UiText::at`].
+    pub fn text_box(self, text: impl Into<String>) -> UiText<'g, 'a, 'w> {
+        self.text(text)
     }
 
     pub fn top_left_text(mut self, text: impl AsRef<str>) -> Self {
@@ -603,6 +629,7 @@ pub struct UiText<'g, 'a, 'w> {
     game: &'g mut GameCtx<'a, 'w>,
     text: String,
     color: glam::Vec4,
+    width: Option<f32>,
 }
 
 impl<'g, 'a, 'w> UiText<'g, 'a, 'w> {
@@ -611,9 +638,47 @@ impl<'g, 'a, 'w> UiText<'g, 'a, 'w> {
         self
     }
 
-    pub fn at(self, position: Vec2) {
-        self.game.text(&self.text, position, self.color);
+    /// Wraps text using the bitmap UI's fixed-width approximation.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width.max(ESTIMATED_GLYPH_WIDTH));
+        self
     }
+
+    pub fn at(self, position: Vec2) {
+        let lines = self
+            .width
+            .map(|width| wrap_text(&self.text, width))
+            .unwrap_or_else(|| vec![self.text]);
+        for (index, line) in lines.iter().enumerate() {
+            self.game.text(
+                line,
+                position + vec2(0.0, index as f32 * LINE_HEIGHT),
+                self.color,
+            );
+        }
+    }
+}
+
+fn wrap_text(text: &str, width: f32) -> Vec<String> {
+    let max_chars = (width / ESTIMATED_GLYPH_WIDTH).floor().max(1.0) as usize;
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        for word in paragraph.split_whitespace() {
+            let separator = usize::from(!line.is_empty());
+            if line.chars().count() + separator + word.chars().count() > max_chars
+                && !line.is_empty()
+            {
+                lines.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        lines.push(line);
+    }
+    lines
 }
 
 impl<'a, 'w> GameCtx<'a, 'w> {
@@ -631,7 +696,7 @@ mod tests {
     use game_core::backend::TextureHandle;
     use glam::vec2;
 
-    use super::UiFocus;
+    use super::{ESTIMATED_GLYPH_WIDTH, UiFocus, wrap_text};
     use crate::app::{GameApp, GamePlugin};
     use crate::harness::GameTestHarness;
 
@@ -658,10 +723,17 @@ mod tests {
                     .build();
                 game.ui()
                     .top_left()
-                    .horizontal()
+                    .row()
                     .top_left_text("Horizontal one")
                     .top_left_text("Horizontal two")
                     .build();
+                game.ui()
+                    .top_left()
+                    .column()
+                    .spacer(16.0)
+                    .text_box("Wrapped beginner UI text")
+                    .width(128.0)
+                    .at(vec2(24.0, 180.0));
                 game.ui().center_panel("Centre panel").build();
                 game.ui()
                     .panel("Custom panel")
@@ -713,6 +785,9 @@ mod tests {
             "Bottom left",
             "Horizontal one",
             "Horizontal two",
+            "Wrapped",
+            "beginner",
+            "UI text",
             "Centre panel",
             "Custom panel",
             "Old Man",
@@ -788,5 +863,17 @@ mod tests {
         game.frame(0.0);
 
         assert_eq!(game.current_scene().as_deref(), Some("game"));
+    }
+
+    #[test]
+    fn text_wrapping_uses_the_bitmap_width_approximation() {
+        assert_eq!(
+            wrap_text("one two three", ESTIMATED_GLYPH_WIDTH * 7.0),
+            ["one two".to_owned(), "three".to_owned()]
+        );
+        assert_eq!(
+            wrap_text("one\ntwo", 100.0),
+            ["one".to_owned(), "two".to_owned()]
+        );
     }
 }

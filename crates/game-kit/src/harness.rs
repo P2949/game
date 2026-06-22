@@ -14,7 +14,9 @@ use game_core::audio::{Audio, AudioCommands};
 use game_core::backend::{AudioCommand, SoundHandle};
 use game_core::builder::{GameBuilder, MapId, MapRegistry, PrefabRegistry, RuntimeContent};
 use game_core::camera::Camera2D;
-use game_core::commands::{Command, CommandQueue, MapReload};
+use game_core::commands::{
+    AssetReloadRequest, AssetReloadStatus, Command, CommandQueue, MapReload,
+};
 use game_core::gfx::Gfx;
 use game_core::input::{ActionId, Axis2dId, Input, InputRegistry, MouseButton};
 use game_core::plugin::GamePlugin as CoreGamePlugin;
@@ -47,6 +49,24 @@ pub struct GameTestHarness {
 }
 
 impl GameTestHarness {
+    /// Builds normal content into a core [`GameBuilder`] and hands it to an
+    /// externally supplied runtime constructor. This is the bridge for tests
+    /// that want to drive the full `game-runtime::Runner` with a headless
+    /// backend while keeping `game-kit` independent of runtime/backend crates.
+    ///
+    /// Typical content tests should still prefer [`Self::from_plugin`]. This
+    /// helper deliberately accepts the already-wrapped core plugin returned by
+    /// [`crate::plugin`] / [`crate::plugin_fn`], so the caller can choose any
+    /// runtime implementation without a reverse dependency from this crate.
+    pub fn build_runtime<T>(
+        content: impl CoreGamePlugin,
+        construct: impl FnOnce(GameBuilder) -> Result<T>,
+    ) -> Result<T> {
+        let mut builder = GameBuilder::new();
+        content.build(&mut builder)?;
+        construct(builder)
+    }
+
     /// Builds `plugin` through the full facade pipeline (including map/prefab
     /// validation), then runs its startup systems.
     pub fn from_plugin(content: impl GamePlugin) -> Result<Self> {
@@ -462,6 +482,12 @@ impl GameTestHarness {
                         ),
                         None => panic!("map reload command had no replacement data"),
                     }
+                }
+                Command::ReloadAssets => {
+                    self.world.insert_resource(AssetReloadRequest);
+                    self.world.insert_resource(AssetReloadStatus::succeeded(
+                        "not applied in the headless game-kit harness",
+                    ));
                 }
                 Command::RestartMap => self.switch_active_map(self.active_map),
                 Command::RestartStartMap => self.switch_active_map(self.start_map),

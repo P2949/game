@@ -7,6 +7,11 @@ custom ECS-shaped prefabs, systems, queries, RON maps, or engine pressure tests.
 The repository's `testbed-content` crate uses the advanced surface on purpose:
 it is an engine testbed, not a template for first projects.
 
+The authoring levels are deliberate: start by copying `examples/one-file-demo`,
+`examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
+`simple-content`, or `templates/simple-demo`; use `arena-content` for
+structured beginner Rust; and treat `testbed-content` as advanced-only.
+
 ## Imports and typed assets
 
 Advanced content imports the explicit lower-level facade:

@@ -12,6 +12,24 @@ Use one of these two beginner paths:
 Keep the standalone path until your game actually benefits from separate
 content-crate files.
 
+## Choose your starting point
+
+- **Beginner / copy this first:** `examples/one-file-demo`,
+  `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
+  `simple-content`, and `templates/simple-demo`.
+- **Structured beginner Rust:** `arena-content`, which uses the same
+  beginner-facing API but splits assets, maps, and plugin setup into small
+  files.
+- **Advanced / do not copy first:** `testbed-content`. It is a lab for manual
+  systems, RON maps, tuple prefabs, direct component composition, custom
+  state, and lower-level facade APIs.
+
+## When to use typed assets
+
+Use `asset_bag()` first. When a content crate grows and you want compile-time
+field names, use a small typed asset struct like `arena-content`. This is an
+organization choice, not a reason to switch to the advanced API.
+
 The usual order is:
 
 1. Register named assets with `asset_bag()`.
@@ -52,6 +70,22 @@ game.assets_from_folders()
 Put those files in `assets/textures/` and `assets/sounds/`. If a required file
 is missing, setup tells you the exact path to add and how to use a custom path
 instead.
+
+For quick prototypes, you can register every supported file directly in the
+conventional folders instead:
+
+```rust
+game.assets_from_folders()
+    .discover_textures()?
+    .discover_sounds()?
+    .discover_music()?
+    .build();
+```
+
+Filename stems become names: `assets/textures/player.png` becomes `"player"`,
+`assets/sounds/hit.wav` becomes `"hit"`, and `assets/music/theme.ogg` becomes
+`"theme"`. Keep `required_*` in tutorials and finished games when missing
+files should stop setup with a direct diagnostic.
 
 The beginner helpers keep engine details out of your game code.
 

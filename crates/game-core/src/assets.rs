@@ -99,6 +99,19 @@ impl AssetRegistry {
         self.try_register_sound(key.into(), SoundLoadRequest::File { path: path.into() })
     }
 
+    /// Registers a long music track that the audio runtime reads in bounded
+    /// chunks instead of decoding in full at startup.
+    pub fn try_streamed_music_file(
+        &mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> anyhow::Result<SoundHandle> {
+        self.try_register_sound(
+            key.into(),
+            SoundLoadRequest::StreamedFile { path: path.into() },
+        )
+    }
+
     fn try_register_sound(
         &mut self,
         key: String,
@@ -122,6 +135,7 @@ impl AssetRegistry {
         let identity = match &request {
             SoundLoadRequest::Generated { name } => format!("gen:{name}"),
             SoundLoadRequest::File { path } => format!("file:{path}"),
+            SoundLoadRequest::StreamedFile { path } => format!("stream:{path}"),
         };
         let handle = if let Some(handle) = self.sound_identity_handles.get(&identity) {
             *handle
@@ -257,6 +271,7 @@ impl AssetRegistry {
             let identity = match request {
                 SoundLoadRequest::Generated { name } => format!("gen:{name}"),
                 SoundLoadRequest::File { path } => format!("file:{path}"),
+                SoundLoadRequest::StreamedFile { path } => format!("stream:{path}"),
             };
             let handle = *self
                 .sound_identity_handles
@@ -298,7 +313,9 @@ impl<'a> AssetValidator<'a> {
         // Generated sounds are synthesized at runtime and have no file to check;
         // only file-backed sounds are validated on disk.
         for (key, request) in self.registry.sound_requests() {
-            if let SoundLoadRequest::File { path } = request {
+            if let SoundLoadRequest::File { path } | SoundLoadRequest::StreamedFile { path } =
+                request
+            {
                 validate_file(&self.root, key, path, "sound")?;
             }
         }
@@ -333,6 +350,8 @@ fn title_case_ascii(value: &str) -> String {
 mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::backend::SoundLoadRequest;
 
     use super::{AssetRegistry, AssetValidator};
 
@@ -376,6 +395,21 @@ mod tests {
         // Same generated identity -> same handle; distinct keys, same file -> same.
         assert_eq!(hit, hit_alias);
         assert_eq!(ui, ui_alias);
+    }
+
+    #[test]
+    fn streamed_music_uses_a_distinct_bounded_reader_request() {
+        let mut registry = AssetRegistry::new();
+        let streamed = registry
+            .try_streamed_music_file("theme", "music/theme.wav")
+            .unwrap();
+        let static_music = registry.sound_file("theme_static", "music/theme.wav");
+
+        assert_ne!(streamed, static_music);
+        assert!(matches!(
+            registry.sound_request("theme"),
+            Some(SoundLoadRequest::StreamedFile { path }) if path == "music/theme.wav"
+        ));
     }
 
     #[test]

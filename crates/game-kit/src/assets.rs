@@ -3,7 +3,7 @@
 //! [`AssetAuthor`] names the textures/fonts/sounds a game uses without exposing
 //! the engine's `AssetRegistry`. Reached through [`GameApp::assets`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
@@ -310,7 +310,7 @@ pub struct AssetBagAuthor<'a> {
 /// `textures(["player"])` maps to `assets/textures/player.png`, while
 /// `sounds(["hit"])` maps to `assets/sounds/hit.wav`. Explicit `.sound(...)`
 /// and `.music(...)` paths may use WAV, optional OGG Vorbis, or optional MP3
-/// files.
+/// files. `.streamed_music(...)` is for a long 48 kHz stereo PCM16 WAV track.
 pub struct AssetFolderAuthor<'a> {
     bag: AssetBagAuthor<'a>,
 }
@@ -339,6 +339,17 @@ impl<'a> AssetFolderAuthor<'a> {
     /// optional runtime features.
     pub fn music(mut self, key: impl Into<String>) -> Result<Self> {
         self.bag = self.bag.music_auto(key)?;
+        Ok(self)
+    }
+
+    /// Registers `assets/music/<key>.wav` as a bounded streamed music track.
+    /// Streamed tracks intentionally use the strict WAV convention so their
+    /// decoder can run on a background reader without buffering the full file.
+    pub fn streamed_music(mut self, key: impl Into<String>) -> Result<Self> {
+        let key = key.into();
+        self.bag = self
+            .bag
+            .streamed_music(key.clone(), format!("music/{key}.wav"))?;
         Ok(self)
     }
 
@@ -382,6 +393,42 @@ impl<'a> AssetFolderAuthor<'a> {
         for key in keys {
             self = self.music(key)?;
         }
+        Ok(self)
+    }
+
+    /// Discovers PNG files directly under `assets/textures/` and registers each
+    /// filename stem as its texture key. Prefer `required_textures(...)` in a
+    /// tutorial or other setup that should fail for a missing expected file.
+    pub fn discover_textures(mut self) -> Result<Self> {
+        for (key, path) in discover_conventional_assets("textures", &["png"])? {
+            self.bag = self.bag.texture(key, path)?;
+        }
+        Ok(self)
+    }
+
+    /// Discovers WAV, OGG, and MP3 files directly under `assets/sounds/`.
+    /// When multiple supported formats share a filename stem, WAV wins, then
+    /// OGG, then MP3, matching `.sound_auto(...)`.
+    pub fn discover_sounds(mut self) -> Result<Self> {
+        for (key, path) in discover_conventional_assets("sounds", &["wav", "ogg", "mp3"])? {
+            self.bag = self.bag.sound(key, path)?;
+        }
+        Ok(self)
+    }
+
+    /// Discovers WAV, OGG, and MP3 files directly under `assets/music/`.
+    /// When multiple supported formats share a filename stem, WAV wins, then
+    /// OGG, then MP3, matching `.music_auto(...)`.
+    pub fn discover_music(mut self) -> Result<Self> {
+        for (key, path) in discover_conventional_assets("music", &["wav", "ogg", "mp3"])? {
+            self.bag = self.bag.music(key, path)?;
+        }
+        Ok(self)
+    }
+
+    /// Registers `assets/animations/<key>.ron` as an animation sheet.
+    pub fn animation_sheet_auto(mut self, key: impl Into<String>) -> Result<Self> {
+        self.bag = self.bag.animation_sheet_auto(key)?;
         Ok(self)
     }
 
@@ -440,6 +487,20 @@ impl<'a> AssetBagAuthor<'a> {
         Ok(self)
     }
 
+    /// Registers a long 48 kHz stereo PCM16 WAV track for bounded background
+    /// streaming. It is played with the same `game.audio().play_music(...)`
+    /// controls as ordinary music.
+    pub fn streamed_music(
+        mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<Self> {
+        let key = key.into();
+        let handle = self.author.streamed_music(key.clone(), path)?;
+        self.bag.sounds.insert(key, handle);
+        Ok(self)
+    }
+
     /// Registers the first conventional music file found for `key`: WAV first,
     /// then OGG, then MP3. Optional formats require their matching runtime
     /// features.
@@ -493,6 +554,13 @@ impl<'a> AssetBagAuthor<'a> {
             .insert(key.clone(), animation_sheet.spritesheet());
         self.bag.animation_sheets.insert(key, animation_sheet);
         Ok(self)
+    }
+
+    /// Registers `assets/animations/<key>.ron` as a spritesheet with named
+    /// clips. Use `assets.animation_sheet("<key>")` with a prefab afterwards.
+    pub fn animation_sheet_auto(self, key: impl Into<String>) -> Result<Self> {
+        let key = key.into();
+        self.spritesheet_from_meta(key.clone(), format!("animations/{key}.ron"))
     }
 
     pub fn build(self) -> AssetBag {
@@ -585,6 +653,80 @@ fn beginner_asset_file(path: impl AsRef<Path>) -> PathBuf {
         .map(|directory| directory.join(&relative))
         .find(|candidate| candidate.is_file())
         .unwrap_or_else(|| current_dir.join(relative))
+}
+
+fn beginner_asset_directory(folder: &str) -> PathBuf {
+    let root = std::env::var_os("GAME_ASSET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("assets"));
+    if root.is_absolute() {
+        return root.join(folder);
+    }
+    let relative = root.join(folder);
+    let Ok(current_dir) = std::env::current_dir() else {
+        return relative;
+    };
+    current_dir
+        .ancestors()
+        .map(|directory| directory.join(&relative))
+        .find(|candidate| candidate.is_dir())
+        .unwrap_or_else(|| current_dir.join(relative))
+}
+
+fn discover_conventional_assets(
+    folder: &str,
+    extensions: &[&str],
+) -> Result<Vec<(String, String)>> {
+    let directory = beginner_asset_directory(folder);
+    if !directory.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut discovered = BTreeMap::<String, (usize, String)>::new();
+    for entry in std::fs::read_dir(&directory).map_err(|error| {
+        anyhow!(
+            "Could not read asset folder '{}': {error}",
+            directory.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| {
+            anyhow!(
+                "Could not inspect asset folder '{}': {error}",
+                directory.display()
+            )
+        })?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(priority) = extensions
+            .iter()
+            .position(|candidate| extension.eq_ignore_ascii_case(candidate))
+        else {
+            continue;
+        };
+        let Some(key) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if key.is_empty() {
+            continue;
+        }
+        let relative = format!("{folder}/{}", entry.file_name().to_string_lossy());
+        match discovered.get(key) {
+            Some((existing_priority, _)) if *existing_priority <= priority => {}
+            _ => {
+                discovered.insert(key.to_owned(), (priority, relative));
+            }
+        }
+    }
+
+    Ok(discovered
+        .into_iter()
+        .map(|(key, (_, path))| (key, path))
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -733,6 +875,18 @@ impl<'a> AssetAuthor<'a> {
         self.registry.try_sound_file(key, path)
     }
 
+    /// Registers long music for bounded, background streaming rather than
+    /// decoding the whole track during startup. The current backend accepts a
+    /// 48 kHz stereo PCM16 WAV file; use [`Self::music`] for ordinary WAV/OGG/
+    /// MP3 tracks.
+    pub fn streamed_music(
+        &mut self,
+        key: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<SoundHandle> {
+        self.registry.try_streamed_music_file(key, path)
+    }
+
     /// A runtime-synthesized sound effect.
     pub fn generated_sound(&mut self, key: impl Into<String>) -> Result<SoundHandle> {
         self.registry.try_generated_sound(key)
@@ -758,6 +912,8 @@ mod tests {
             .unwrap()
             .music("theme", "music/theme.wav")
             .unwrap()
+            .streamed_music("long_theme", "music/long_theme.wav")
+            .unwrap()
             .spritesheet("hero", "textures/hero.png", 4, 2)
             .unwrap()
             .build();
@@ -765,6 +921,12 @@ mod tests {
         assert!(bag.try_texture("player").is_some());
         assert!(bag.try_sound("hit").is_some());
         assert!(bag.try_sound("theme").is_some());
+        assert!(bag.try_sound("long_theme").is_some());
+        assert!(matches!(
+            registry.sound_request("long_theme"),
+            Some(game_core::backend::SoundLoadRequest::StreamedFile { path })
+                if path == "music/long_theme.wav"
+        ));
         assert_eq!(bag.spritesheet("hero").columns, 4);
         assert!(bag.try_texture("missing").is_none());
     }
@@ -847,6 +1009,30 @@ mod tests {
         assert!(bag.try_texture("player").is_some());
         assert!(bag.try_sound("hit").is_some());
         assert!(bag.try_sound("theme").is_some());
+    }
+
+    #[test]
+    fn discovery_helpers_register_conventional_workspace_assets_by_filename() {
+        let mut registry = AssetRegistry::new();
+        let bag = AssetFolderAuthor::new(AssetBagAuthor::new(AssetAuthor::new(&mut registry)))
+            .discover_textures()
+            .unwrap()
+            .discover_sounds()
+            .unwrap()
+            .discover_music()
+            .unwrap()
+            .build();
+
+        assert!(bag.try_texture("test").is_some());
+        assert!(bag.try_sound("hit").is_some());
+        assert_eq!(
+            registry.texture_request("test").unwrap().path,
+            "textures/test.png"
+        );
+        assert!(matches!(
+            registry.sound_request("hit"),
+            Some(game_core::backend::SoundLoadRequest::File { path }) if path == "sounds/hit.wav"
+        ));
     }
 
     #[test]

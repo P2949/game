@@ -73,8 +73,12 @@ impl<'a> InputAuthor<'a> {
                 .action("reset")?
                 .key_or_gamepad(Key::R, GamepadButton::Select),
             reload: self.action("reload")?.key(Key::F5),
-            debug_die: self.action("debug_die")?.key(Key::K),
-            debug_overlay: self.action("debug_overlay")?.key(Key::F1),
+            debug_die: self
+                .action("debug_die")?
+                .key_or_gamepad(Key::K, GamepadButton::West),
+            debug_overlay: self
+                .action("debug_overlay")?
+                .key_or_gamepad(Key::F1, GamepadButton::North),
             menu_up: self
                 .action("menu_up")?
                 .key_or_gamepad(Key::Up, GamepadButton::DPadUp),
@@ -84,8 +88,12 @@ impl<'a> InputAuthor<'a> {
             menu_accept: self
                 .action("menu_accept")?
                 .space_or_enter_or_mouse_left_or_gamepad_south(),
-            zoom_in: self.action("zoom_in")?.key(Key::Plus),
-            zoom_out: self.action("zoom_out")?.key(Key::Minus),
+            zoom_in: self
+                .action("zoom_in")?
+                .key_or_gamepad(Key::Plus, GamepadButton::RightShoulder),
+            zoom_out: self
+                .action("zoom_out")?
+                .key_or_gamepad(Key::Minus, GamepadButton::LeftShoulder),
         })
     }
 
@@ -94,7 +102,7 @@ impl<'a> InputAuthor<'a> {
     /// keyboard-and-controller configuration.
     pub fn top_down_gamepad_controls(&mut self) -> Result<TopDownControls> {
         Ok(TopDownControls {
-            movement: self.axis2d("move")?.gamepad_left_stick(),
+            movement: self.axis2d("move")?.gamepad_left_stick_and_dpad(),
             attack: self.action("attack")?.gamepad_south(),
             pause: self.action("pause")?.gamepad_start(),
             reset: self.action("reset")?.gamepad_select(),
@@ -259,6 +267,17 @@ impl<'a> Axis2dAuthor<'a> {
         self.builder.bind_gamepad_axis(GamepadAxis::LeftStick).id()
     }
 
+    /// Binds the first controller's left stick and D-pad and finalizes the axis.
+    pub fn gamepad_left_stick_and_dpad(self) -> Axis2dId {
+        self.builder
+            .bind_gamepad_axis(GamepadAxis::LeftStick)
+            .negative_x_gamepad(GamepadButton::DPadLeft)
+            .positive_x_gamepad(GamepadButton::DPadRight)
+            .negative_y_gamepad(GamepadButton::DPadUp)
+            .positive_y_gamepad(GamepadButton::DPadDown)
+            .id()
+    }
+
     /// Binds the first controller's right stick and finalizes the axis.
     pub fn gamepad_right_stick(self) -> Axis2dId {
         self.builder.bind_gamepad_axis(GamepadAxis::RightStick).id()
@@ -271,6 +290,10 @@ impl<'a> Axis2dAuthor<'a> {
             .negative_y(Key::Up)
             .positive_y(Key::Down)
             .bind_gamepad_axis(GamepadAxis::LeftStick)
+            .negative_x_gamepad(GamepadButton::DPadLeft)
+            .positive_x_gamepad(GamepadButton::DPadRight)
+            .negative_y_gamepad(GamepadButton::DPadUp)
+            .positive_y_gamepad(GamepadButton::DPadDown)
             .id()
     }
 
@@ -346,6 +369,34 @@ mod tests {
                 .gamepad_axes,
             [GamepadAxis::LeftStick]
         );
+        assert_eq!(
+            registry
+                .axis2d_binding(controls.movement)
+                .unwrap()
+                .negative_x_gamepad_buttons,
+            [GamepadButton::DPadLeft]
+        );
+        assert_eq!(
+            registry
+                .axis2d_binding(controls.movement)
+                .unwrap()
+                .positive_x_gamepad_buttons,
+            [GamepadButton::DPadRight]
+        );
+        assert_eq!(
+            registry
+                .action_binding(controls.debug_die)
+                .unwrap()
+                .gamepad_buttons,
+            [GamepadButton::West]
+        );
+        assert_eq!(
+            registry
+                .action_binding(controls.debug_overlay)
+                .unwrap()
+                .gamepad_buttons,
+            [GamepadButton::North]
+        );
     }
 
     #[test]
@@ -363,6 +414,22 @@ mod tests {
         assert_eq!(
             registry.axis2d_binding(movement).unwrap().gamepad_axes,
             [GamepadAxis::LeftStick]
+        );
+    }
+
+    #[test]
+    fn combined_gamepad_movement_binds_the_dpad() {
+        let mut registry = InputRegistry::new();
+        let mut input = InputAuthor::new(&mut registry);
+
+        let movement = input.axis2d("move").unwrap().gamepad_left_stick_and_dpad();
+
+        let binding = registry.axis2d_binding(movement).unwrap();
+        assert_eq!(binding.gamepad_axes, [GamepadAxis::LeftStick]);
+        assert_eq!(binding.negative_y_gamepad_buttons, [GamepadButton::DPadUp]);
+        assert_eq!(
+            binding.positive_y_gamepad_buttons,
+            [GamepadButton::DPadDown]
         );
     }
 }

@@ -11,11 +11,17 @@ description.workspace = true
 anyhow.workspace = true
 glam.workspace = true
 log.workspace = true
-game-audio = { version = "0.1.0", path = "../game-audio" }
+game-audio = { version = "0.1.0", path = "../game-audio", optional = true }
 game-core = { version = "0.1.0", path = "../game-core" }
-game-platform-sdl = { version = "0.1.0", path = "../game-platform-sdl" }
-game-renderer-vulkan = { version = "0.1.0", path = "../game-renderer-vulkan" }
+game-platform-sdl = { version = "0.1.0", path = "../game-platform-sdl", optional = true }
+game-renderer-vulkan = { version = "0.1.0", path = "../game-renderer-vulkan", optional = true }
 
 [features]
-ogg = ["game-audio/ogg"]
-mp3 = ["game-audio/mp3"]
+default = ["real-backends"]
+real-backends = ["dep:game-audio", "dep:game-platform-sdl", "dep:game-renderer-vulkan"]
+ogg = ["real-backends", "game-audio/ogg"]
+mp3 = ["real-backends", "game-audio/mp3"]
+
+[dev-dependencies]
+game-backend-headless = { version = "0.1.0", path = "../game-backend-headless" }
+game-kit = { version = "0.1.0", path = "../game-kit" }

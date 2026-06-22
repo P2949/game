@@ -12,12 +12,15 @@ schedule, and raw world APIs stay behind the facade.
 ```bash
 cargo fmt --all -- --check
 cargo test --workspace --locked
+cargo test -p game-runtime --test headless_runner --no-default-features --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build -p game --release --locked
 GAME_ASSET_DIR=assets cargo run -p game --release --locked
 rg "World|Entity::new|ids_with|get::<|get_mut::<|world_and_|world_mut\(|world\(" crates/arena-content/src crates/testbed-content/src
 rg "movement_system|chase_system|patrol_system|apply_damage" crates/arena-content/src crates/testbed-content/src
 cargo deny check advisories licenses sources bans
+# Re-read docs/dead-code-audit.md by hand whenever map.rs, assets.rs, or
+# backend.rs change; prose accuracy needs deliberate review.
 ```
 
 The two `rg` checks should report no production content hits; raw ECS inspection
@@ -46,6 +49,12 @@ cp -r assets /tmp/game-package/
 ```
 
 ## crates.io preflight
+
+**Status: intentionally deferred.** This project currently recommends starting
+new projects via `cargo generate gh:P2949/game templates/simple-demo`, which
+resolves `game-starter` as a git dependency and requires no crates.io
+publication. The sequence below is the procedure to follow if/when publishing
+becomes the right call—it is not a pending task.
 
 Only an authorized maintainer with crates.io credentials should perform this
 section. First run the package dry-runs in dependency order; they rewrite

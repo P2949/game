@@ -30,8 +30,9 @@ This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 - 2D sprite rendering with layered, texture-batched draws
 - fixed-timestep gameplay
 - axis-separated AABB collision with wall sliding
-- file-backed WAV sound effects and looping music handles through `game-kit`,
-  plus optional OGG Vorbis and MP3 decoding
+- file-backed sound effects and looping music handles through `game-kit`, plus
+  optional OGG Vorbis/MP3 decoding and bounded streaming for long PCM16 WAV
+  music tracks
 - generated placeholder sounds through a lock-free mixer
 
 It is **not** yet:
@@ -39,17 +40,19 @@ It is **not** yet:
 - a full engine
 - a finished game
 - a general asset pipeline
-- streaming audio; WAV, optional OGG, and optional MP3 files are loaded into
-  memory and converted to the mixer rate/channels at startup
+- general streamed-audio codecs; long tracks currently stream as 48 kHz stereo
+  PCM16 WAV through a bounded background reader
 
 ## Features
 
-- SDL3 window, keyboard input, and a lock-free audio mixer
+- SDL3 window, keyboard/mouse/gamepad input, and a lock-free audio mixer
 - Vulkan 1.3 renderer (dynamic rendering, synchronization2) through `ash`
 - Sprite batching reuses dynamic GPU vertex buffers after growth, avoiding
   steady-state GPU buffer allocation for normal sprite submission
 - Fixed-timestep update loop
-- Bitmap (ASCII) UI text rendered from a runtime-built font atlas
+- Bitmap UI text rendered from a runtime-built ASCII font atlas; unsupported
+  characters use a fallback glyph. Latin-1, dynamic glyph caching, and complex
+  text shaping are future work.
 
 ## Content Authoring Model
 
@@ -92,24 +95,45 @@ Start a project from anywhere with
 `cargo generate gh:P2949/game templates/simple-demo`; it creates a one-file
 beginner game with a git dependency on `game-starter`. From a local checkout,
 `cargo xtask new-demo my-game` creates the same starter with a local path
-dependency. `simple-content`, `arena-content`, and `examples/one-file-demo`
-remain useful examples to copy. `testbed-content` is intentionally advanced;
-see the [advanced authoring guide](docs/advanced-content-authoring.md) only when
-you need that separate path. The [beginner guide](docs/beginner-authoring.md),
+dependency. Use `cargo xtask new-demo my-game --data-driven` when you want the
+same first-game setup in editable `assets/game.ron` instead. `simple-content`,
+`arena-content`, and `examples/one-file-demo` remain useful examples to copy.
+`testbed-content` is intentionally advanced; see the [advanced authoring
+guide](docs/advanced-content-authoring.md) only when you need that separate
+path. The [beginner guide](docs/beginner-authoring.md),
 [tutorials](docs/tutorials/README.md), and [cookbook](docs/cookbook/README.md)
 are the normal starting points.
 
 ## Authoring levels
 
-- Beginner API: player, enemy, map, action, scene, sound, animation, and
-  top-down helper APIs. Copy `simple-content`, `arena-content`, the tutorials,
-  or `examples/one-file-demo` first. Read the
-  [beginner authoring guide](docs/beginner-authoring.md) and tutorials before
-  looking at the advanced facade.
-- Advanced content API: the current `game-kit` ECS facade for custom prefabs,
-  systems, queries, and tests. `testbed-content` is the advanced demo-lab.
-- Engine/runtime API: internal engine, runtime, renderer, platform, and audio
-  crates. Not for content.
+- **Beginner / copy this first:** `examples/one-file-demo`,
+  `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
+  `simple-content`, and `templates/simple-demo`. These use the high-level
+  beginner API for players, enemies, maps, actions, scenes, sound, animation,
+  and top-down rules.
+- **Structured beginner Rust:** `arena-content`. It uses the same high-level
+  beginner API but organizes assets, maps, and plugin setup across small files.
+- **Advanced / do not copy first:** `testbed-content`. It is an advanced lab
+  for custom prefabs, manual systems, queries, RON maps, and lower-level facade
+  APIs.
+- **Engine/runtime API:** internal engine, runtime, renderer, platform, and
+  audio crates. Not for content.
+
+## What should I copy?
+
+If you are new:
+
+1. Copy `examples/one-file-demo`.
+2. Then read `examples/no-rust-shapes-demo`.
+3. Then use `cargo xtask new-demo my-game` to create your own demo.
+
+If you want a workspace content crate:
+
+1. Copy `simple-content`.
+2. Move to `arena-content` when you want a slightly more organized version
+   with typed assets and separate files.
+
+Do not copy `testbed-content` unless you want the advanced API.
 
 Further reading: [beginner authoring](docs/beginner-authoring.md),
 [advanced content authoring](docs/advanced-content-authoring.md), and the
@@ -200,7 +224,9 @@ The crate manifest directory is only a debug development fallback (used by
 - No texture atlas yet
 - No bindless descriptors
 - Simple bitmap text
-- No texture or sound hot reload (text maps and configured tuning reload with F5 in development)
+- F5 reloads text maps, configured tuning, and registered textures/sounds in
+  development. Existing voices using a replaced static sound stop; an active
+  streamed track restarts from the updated file.
 
 Sprites are batched by layer and texture. Layer order always wins. Within one
 layer, texture batching groups draws by texture; same-layer cross-texture
@@ -209,15 +235,16 @@ required across textures.
 
 ## Controls
 
-| Action            | Keys                          |
-| ----------------- | ----------------------------- |
-| Move              | `W` `A` `S` `D` / Arrow keys  |
-| Action (blip)     | `Space` / `Enter`             |
-| Pause             | `P`                           |
-| Reset             | `R`                           |
-| Debug: kill player| `K`                           |
-| Zoom in / out     | `+` / `=` and `-`             |
-| Quit              | `Esc` (or close the window)   |
+| Action | Keyboard / Mouse | Gamepad |
+| ------ | ---------------- | ------- |
+| Move | `W` `A` `S` `D` / Arrow keys | Left stick / D-pad |
+| Attack / confirm | `Space` / `Enter` / left mouse | South face button |
+| Pause | `Esc` / `P` | Start |
+| Reset | `R` | Select |
+| Debug overlay | `F1` | North face button |
+| Debug kill | `K` | West face button |
+| Zoom in / out | `+` / `=` and `-` | Shoulder buttons |
+| Quit | `Esc` / close window | — |
 
 ## Development checks
 
@@ -247,7 +274,9 @@ GAME_ASSET_DIR=assets GAME_SMOKE_FRAMES=120 cargo run -p game --release --locked
 
 ## Known limitations
 
-- UI text is ASCII-only (unsupported characters render a fallback glyph)
+- UI text currently uses the bundled ASCII bitmap atlas; unsupported characters
+  render a fallback glyph. Latin-1/common accented characters need dynamic
+  glyph caching, while complex text shaping remains out of scope for now.
 - Collision uses discrete axis-separated AABB resolution. It does not perform
   swept collision, so very fast movement can tunnel through thin solids.
   Embedded spawn positions should be avoided or validated.

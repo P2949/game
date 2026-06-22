@@ -368,6 +368,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "game-backend-headless"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-core",
+ "glam",
+]
+
+[[package]]
 name = "game-combat"
 version = "0.1.0"
 dependencies = [
@@ -454,7 +463,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "game-audio",
+ "game-backend-headless",
  "game-core",
+ "game-kit",
  "game-platform-sdl",
  "game-renderer-vulkan",
  "glam",
@@ -1278,6 +1289,12 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "fontdue",
+ "game-audio",
+ "game-map",
+ "image",
+ "serde_json",
+ "walkdir",
 ]
 
 [[package]]

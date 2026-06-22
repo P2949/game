@@ -13,6 +13,38 @@ pub struct MapReload {
     pub data: MapData,
 }
 
+/// Requests that file-backed runtime assets be reloaded after the current
+/// gameplay step. The concrete runtime owns decoding and backend replacement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AssetReloadRequest;
+
+/// Last asset reload result, kept in core so runtime diagnostics can be shown
+/// by a content-facing debug overlay without a runtime -> game-kit dependency.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetReloadStatus {
+    pub message: String,
+}
+
+impl AssetReloadStatus {
+    pub fn queued() -> Self {
+        Self {
+            message: "queued".to_owned(),
+        }
+    }
+
+    pub fn succeeded(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self {
+            message: format!("failed: {}", message.into()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Despawn(EntityId),
@@ -25,6 +57,7 @@ pub enum Command {
     ChangeMap(MapId),
     Quit,
     ReloadMap(MapId),
+    ReloadAssets,
     RestartMap,
     RestartStartMap,
 }
@@ -69,6 +102,10 @@ impl CommandQueue {
 
     pub fn reload_map(&mut self, map: MapId) {
         self.push(Command::ReloadMap(map));
+    }
+
+    pub fn reload_assets(&mut self) {
+        self.push(Command::ReloadAssets);
     }
 
     pub fn restart_map(&mut self) {
@@ -135,6 +172,7 @@ mod tests {
         commands.change_map(MapId(2));
         commands.quit();
         commands.reload_map(MapId(2));
+        commands.reload_assets();
         commands.restart_map();
         commands.restart_start_map();
 
@@ -144,6 +182,7 @@ mod tests {
                 Command::ChangeMap(MapId(2)),
                 Command::Quit,
                 Command::ReloadMap(MapId(2)),
+                Command::ReloadAssets,
                 Command::RestartMap,
                 Command::RestartStartMap,
             ]

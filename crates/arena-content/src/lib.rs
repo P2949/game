@@ -1,3 +1,11 @@
+//! Beginner-style structured content crate.
+//!
+//! This crate uses the same high-level beginner gameplay APIs as
+//! `simple-content`, but splits assets, maps, and plugin setup into separate
+//! files and uses a typed asset struct. Beginners should start with
+//! `simple-content` or `examples/one-file-demo`; this crate shows the next
+//! organization step.
+
 pub mod assets;
 pub mod level;
 

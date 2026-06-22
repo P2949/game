@@ -2,6 +2,60 @@ use std::fs;
 use std::path::Path;
 
 #[test]
+fn architecture_docs_name_the_current_beginner_surface() {
+    for relative in [
+        "README.md",
+        "docs/ARCHITECTURE.md",
+        "docs/beginner-authoring.md",
+        "docs/content-authoring.md",
+    ] {
+        let source = fs::read_to_string(workspace_root().join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains("game_kit::beginner::prelude::*")
+                || source.contains("game_starter::prelude::*"),
+            "{relative} should teach an explicit beginner prelude"
+        );
+    }
+
+    let readme =
+        fs::read_to_string(workspace_root().join("README.md")).expect("failed to read README");
+    for required in [
+        "game_starter::prelude::*",
+        "game_kit::beginner::prelude::*",
+        "testbed-content",
+        "advanced",
+        "gamepad",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README should contain {required:?}"
+        );
+    }
+}
+
+#[test]
+fn docs_do_not_describe_implemented_beginner_features_as_future_work() {
+    for relative in ["docs/future-editor-import.md", "docs/dead-code-audit.md"] {
+        let source = fs::read_to_string(workspace_root().join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+
+        for forbidden in [
+            "LDtk (`.ldtk`) import are intentionally future work",
+            "additional registered maps and runtime map switching are future work",
+            "File-backed sound requests exist in `game-core` but are not exposed",
+            "Content crates use `game_kit::prelude::*`",
+            "SDL3 window, keyboard input, and a lock-free audio mixer",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} contains stale claim: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn game_core_manifest_has_no_backend_dependencies() {
     let manifest = fs::read_to_string(workspace_root().join("crates/game-core/Cargo.toml"))
         .expect("failed to read game-core manifest");
@@ -318,6 +372,8 @@ fn final_no_rust_shapes_demo_stays_a_complete_high_level_acceptance_example() {
         "enemy_drops",
         "heal_player",
         "checkpoint_prefab",
+        "game.rules()",
+        "on_action",
     ] {
         assert!(
             source.contains(required),
@@ -351,7 +407,9 @@ fn script_like_custom_rules_demo_stays_ecs_free() {
         "enemy_prefab",
         "projectile_prefab",
         "spawner_prefab",
+        "map(",
         "game.rules()",
+        "on_action",
     ] {
         assert!(
             source.contains(required),
@@ -813,10 +871,31 @@ fn beginner_content_uses_only_beginner_surface() {
 
 #[test]
 fn simple_content_uses_the_asset_bag_beginner_path() {
+    // `simple-content` is the pure beginner reference: keep its asset names
+    // string-based instead of introducing typed engine handles.
     let findings = forbidden_source_uses("simple-content", SIMPLE_CONTENT_FORBIDDEN);
     assert!(
         findings.is_empty(),
         "simple-content must model the asset_bag beginner path:\n{}",
+        findings.join("\n")
+    );
+}
+
+#[test]
+fn arena_content_is_the_structured_beginner_typed_asset_example() {
+    let assets = fs::read_to_string(workspace_root().join("crates/arena-content/src/assets.rs"))
+        .expect("failed to read arena assets");
+    assert!(
+        assets.contains("pub struct ArenaAssets"),
+        "arena-content should retain its typed asset struct as the structured beginner example"
+    );
+
+    // Typed assets are allowed here, but `arena-content` remains constrained
+    // to the high-level beginner surface by `beginner_content_uses_only_beginner_surface`.
+    let findings = forbidden_source_uses("arena-content", BEGINNER_CONTENT_FORBIDDEN);
+    assert!(
+        findings.is_empty(),
+        "arena-content may use typed assets but must not expose ECS/runtime concepts:\n{}",
         findings.join("\n")
     );
 }
@@ -1045,6 +1124,18 @@ fn content_source_uses_authoring_facade_not_engine_internals() {
             assert_content_avoids_engine_internals(&path, &production);
         }
     }
+}
+
+#[test]
+fn testbed_content_is_documented_as_advanced() {
+    let readme = fs::read_to_string(workspace_root().join("crates/testbed-content/README.md"))
+        .expect("failed to read testbed README");
+    let lib = fs::read_to_string(workspace_root().join("crates/testbed-content/src/lib.rs"))
+        .expect("failed to read testbed lib");
+
+    assert!(readme.to_lowercase().contains("advanced"));
+    assert!(lib.to_lowercase().contains("advanced"));
+    assert!(lib.contains("game_kit::advanced::prelude"));
 }
 
 #[test]

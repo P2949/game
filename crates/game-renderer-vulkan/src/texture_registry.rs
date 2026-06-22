@@ -158,6 +158,50 @@ impl TextureRegistry {
             .ok_or_else(|| anyhow::anyhow!("unknown texture id {id:?}"))
     }
 
+    /// Replaces the image and descriptor resources behind an existing texture
+    /// id. The id itself remains stable, so content-facing texture-handle
+    /// mappings and already-built draw batches continue to resolve correctly.
+    ///
+    /// The caller must ensure the device is idle before calling this method.
+    /// New GPU resources are fully created before the old entry is touched, so
+    /// a decode/upload/descriptor failure leaves the current texture intact.
+    pub fn replace_texture<F>(
+        &mut self,
+        device: &ash::Device,
+        allocator: &mut Allocator,
+        descriptor_set_layout: vk::DescriptorSetLayout,
+        id: TextureId,
+        name: impl Into<String>,
+        make: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnOnce(&ash::Device, &mut Allocator) -> anyhow::Result<Texture>,
+    {
+        let texture = make(device, allocator)?;
+        let pending_texture = PendingTexture::new(texture, device, allocator);
+        let (pool, descriptor_set) = texture::create_texture_descriptor_set(
+            device,
+            descriptor_set_layout,
+            pending_texture.texture(),
+        )?;
+        let replacement = TextureEntry {
+            texture: pending_texture.take(),
+            descriptor_pool: OwnedDescriptorPool::from_handle(device, pool),
+            descriptor_set,
+            name: name.into(),
+        };
+        let entry = self
+            .entries
+            .get_mut(id.0 as usize)
+            .ok_or_else(|| anyhow::anyhow!("unknown texture id {id:?}"))?;
+        let old = std::mem::replace(entry, replacement);
+        drop(old.descriptor_pool);
+        unsafe {
+            old.texture.destroy(device, allocator);
+        }
+        Ok(())
+    }
+
     /// Destroys every registered texture and descriptor pool. Must be called
     /// while the logical device is still alive (the owned descriptor pools drop
     /// here, and texture teardown needs the device and allocator).

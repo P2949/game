@@ -134,6 +134,16 @@ impl<'app> GameApp<'app> {
         AssetFolderAuthor::new(self.asset_bag())
     }
 
+    /// Loads `assets/game.ron`-style beginner content through the same public
+    /// asset, prefab, map, input, and rule builders used by Rust-authored games.
+    /// Add custom Rust behavior after this call for the hybrid workflow.
+    pub fn load_beginner_file(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<crate::input::TopDownControls> {
+        crate::data::load_beginner_game_file(self, path)
+    }
+
     /// Loads named numeric values from an `assets/` RON file and installs the
     /// same file as a runtime resource for development-time reload support.
     pub fn tuning_from_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<TuningFile> {
@@ -292,6 +302,17 @@ impl<'app> GameApp<'app> {
         path: impl Into<String>,
     ) -> MapAuthor<'_, 'app> {
         MapAuthor::from_ldtk(self, name.into_content_name(), path.into())
+    }
+
+    /// Begins a map imported from a Tiled TMX project under `assets/<path>`.
+    /// The beginner importer supports an orthogonal TMX map with a CSV
+    /// `Collision` layer and object mappings configured through `.object(...)`.
+    pub fn map_from_tiled(
+        &mut self,
+        name: impl IntoContentName,
+        path: impl Into<String>,
+    ) -> MapAuthor<'_, 'app> {
+        MapAuthor::from_tiled(self, name.into_content_name(), path.into())
     }
 
     /// Declares a named beginner scene.

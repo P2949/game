@@ -12,19 +12,22 @@ use game_starter::prelude::*;
 maps. Keep following the examples below or copy `simple-content` rather than
 using it as a beginner starting point.
 
-0. [Start here](00-start-here.md)
-1. [Run the demo](01-run-the-demo.md)
-2. [Your first player](02-your-first-player.md)
-3. [Add a map](03-add-a-map.md)
-4. [Add an enemy](04-add-an-enemy.md)
-5. [Add pickups and score](05-add-pickups-and-score.md)
-6. [Add projectiles](06-add-projectiles.md)
-7. [Add doors and levels](07-add-doors-and-levels.md)
-8. [Add sound and music](08-add-sound-and-music.md)
-9. [Add UI and menu](09-add-ui-and-menu.md)
-10. [Package your demo](10-package-your-demo.md)
-11. [Custom behavior](11-custom-behavior.md)
-12. [Fast iteration](12-fast-iteration.md)
+0. [Zero to a running demo](00-zero-to-demo.md)
+1. [Rust you need](rust-you-need.md)
+2. [Start here](00-start-here.md)
+3. [Run the demo](01-run-the-demo.md)
+4. [Your first player](02-your-first-player.md)
+5. [Add a map](03-add-a-map.md)
+6. [Add an enemy](04-add-an-enemy.md)
+7. [Add pickups and score](05-add-pickups-and-score.md)
+8. [Add projectiles](06-add-projectiles.md)
+9. [Add doors and levels](07-add-doors-and-levels.md)
+10. [Add sound and music](08-add-sound-and-music.md)
+11. [Add UI and menu](09-add-ui-and-menu.md)
+12. [Package your demo](10-package-your-demo.md)
+13. [Custom behavior](11-custom-behavior.md)
+14. [Fast iteration](12-fast-iteration.md)
+15. [Data-driven first game](13-data-driven-demo.md)
 
 Keep [common errors](common-errors.md) nearby while editing. The messages are
 written to point back to the builder call that fixes the problem.

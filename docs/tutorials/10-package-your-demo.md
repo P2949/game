@@ -2,8 +2,8 @@
 
 ## Goal
 
-Build a release version and put its executable beside the `assets/` folder it
-needs on another machine.
+Build a release version, validate its files, and create one folder you can send
+to someone else.
 
 ## Files to edit
 
@@ -81,22 +81,33 @@ fn main() -> Result<()> {
 }
 ```
 
-Build and copy the release binary with its assets:
+Create the package from a local checkout:
 
 ```bash
-cargo build -p game --release --locked
-mkdir -p /tmp/game-package
-cp target/release/game /tmp/game-package/
-cp -r assets /tmp/game-package/
-cd /tmp/game-package
-GAME_DEMO=simple ./game
+cargo xtask package-demo --release --out dist/my-game
+```
+
+The result is:
+
+```text
+dist/my-game/
+├── game            # game.exe on Windows
+├── assets/
+├── run.sh
+├── run.bat
+└── README-RUN.txt
 ```
 
 ## What changed
 
-Debug runs can find the workspace assets automatically. A release package
-should keep `game` and `assets/` side by side. Set `GAME_ASSET_DIR=assets` if
-you choose a different layout.
+Before copying, the command checks PNG decoding, the bundled font, supported
+sound decoding, rectangular text maps, TMX maps, and LDtk JSON. Its release
+build also confirms the shaders compile. It then copies the executable and the
+entire `assets/` folder together.
+
+Send the whole `dist/my-game` directory, not just the executable. On Linux run
+`./run.sh`; on Windows double-click `run.bat`; on macOS run `./run.sh` in a
+Terminal. `README-RUN.txt` inside the package repeats these instructions.
 
 When your single file grows uncomfortable, graduate to a content crate: copy
 the structure of `simple-content` or `arena-content`, put your setup inside
@@ -106,8 +117,10 @@ is the deliberately advanced reference lab.
 
 ## Common errors
 
-If the release build reports missing textures, check that the package contains
-both `game` and `assets/`. If it selects the wrong demo, set `GAME_DEMO=simple`.
+If validation reports a PNG, sound, map, or font path, fix that source asset
+and rerun the command. If the destination exists already, choose a new
+`--out` directory rather than mixing an old package with a new one. If it
+selects the wrong bundled demo, set `GAME_DEMO=simple` before launching it.
 For a fast startup check without drawing frames, use `GAME_SMOKE_FRAMES=0`.
 
 ## Next step

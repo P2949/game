@@ -86,6 +86,7 @@ pub mod assets;
 pub mod beginner;
 pub mod bundle;
 pub mod context;
+pub mod data;
 mod harness;
 pub mod helpers;
 pub mod input;
@@ -178,6 +179,10 @@ pub use beginner::ui::{
 };
 pub use bundle::{Bundle, vec2s};
 pub use context::{Commands, GameCtx, StartupGameCtx};
+pub use data::{
+    BeginnerAssetsFile, BeginnerGameFile, BeginnerMapFile, BeginnerPrefabFile,
+    load_beginner_game_file,
+};
 pub use helpers::{
     InputDriven, MovementSpeed, SimulationState, camera_follow_first, stop_all_velocity,
 };
@@ -189,10 +194,11 @@ pub use system::{GameSystem, StartupSystem};
 
 /// Compatibility prelude.
 ///
-/// This broad module remains for older and internal examples. New beginner code
-/// should use `game_kit::beginner::prelude::*`; advanced ECS-style content
-/// should use `game_kit::advanced::prelude::*`. Do not use this prelude in new
-/// beginner docs or templates.
+/// New beginner code should import `game_kit::beginner::prelude::*`.
+/// Advanced code should import `game_kit::advanced::prelude::*`.
+/// This broad prelude exists to avoid breaking older examples while the
+/// authoring facade stabilizes. Do not use it in new beginner code, docs, or
+/// templates.
 pub mod prelude {
     pub use anyhow::{Context, Result};
     pub use glam::{Vec2, Vec4, vec2, vec4};

@@ -121,9 +121,28 @@ impl MapValidator {
             }
             let col = (object.position.x / collision.tiles.tile_size()).floor() as i32;
             let row = (object.position.y / collision.tiles.tile_size()).floor() as i32;
-            if collision.tiles.is_wall(col, row) {
+            if col < 0
+                || row < 0
+                || col as usize >= collision.tiles.width()
+                || row as usize >= collision.tiles.height()
+            {
                 anyhow::bail!(
-                    "map {:?} object '{}' spawns in blocked cell ({col}, {row})",
+                    "map {:?} object '{}' spawns outside the collision map at cell ({col}, {row}); the map is {} by {} cells",
+                    map.name,
+                    object.id,
+                    collision.tiles.width(),
+                    collision.tiles.height(),
+                );
+            }
+            if collision.tiles.is_wall(col, row) {
+                if object.id == "player_start" {
+                    anyhow::bail!(
+                        "map {:?}: Player spawned inside a wall at cell ({col}, {row}). Move the `P` symbol or `player_start` object onto a `.` floor cell.",
+                        map.name,
+                    );
+                }
+                anyhow::bail!(
+                    "map {:?} object '{}' spawns in blocked cell ({col}, {row}); move it onto a `.` floor cell",
                     map.name,
                     object.id
                 );
@@ -200,6 +219,27 @@ mod tests {
             .validate(&map)
             .unwrap_err();
 
-        assert!(err.to_string().contains("blocked cell"));
+        assert!(err.to_string().contains("Player spawned inside a wall"));
+        assert!(err.to_string().contains("cell (1, 1)"));
+    }
+
+    #[test]
+    fn map_validator_names_spawns_outside_the_collision_map() {
+        let player = PrefabId(0);
+        let map = MapBuilder::new("arena", 32.0)
+            .tile_layer("collision", &["...", "...", "..."])
+            .object("enemy_01", player, cell(3, 1))
+            .finish();
+
+        let err = MapValidator::new()
+            .allow_prefab(player)
+            .validate(&map)
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("spawns outside the collision map at cell (3, 1)")
+        );
+        assert!(err.to_string().contains("3 by 3 cells"));
     }
 }

@@ -54,6 +54,7 @@ Press F1 to open the debug overlay. It shows the current map, asset count, and
 whether the most recent reload worked. If a map has a typo, fix the reported
 row or symbol and press F5 again.
 
-Only text maps reload today. Changing Rust code, textures, or sounds still
-requires a restart. This keeps the first iteration loop predictable while those
-asset replacement paths stay deliberately small and safe.
+Text maps, configured tuning, and registered textures/sounds reload today.
+Changing Rust code still requires a restart. Texture reload keeps the same
+content handle even when the replacement image dimensions change; sound reload
+stops voices using old samples so later playback uses the new file.

@@ -6,18 +6,28 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow, bail};
+use fontdue::{Font, FontSettings};
+use image::ImageReader;
+use walkdir::WalkDir;
 
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("new-demo") => {
-            let name = args
-                .next()
-                .ok_or_else(|| anyhow!("usage: cargo xtask new-demo <name-or-path>"))?;
+            let name = args.next().ok_or_else(|| {
+                anyhow!("usage: cargo xtask new-demo <name-or-path> [--data-driven]")
+            })?;
+            let data_driven = match args.next().as_deref() {
+                None => false,
+                Some("--data-driven") => true,
+                Some(extra) => {
+                    bail!("unexpected new-demo argument '{extra}'; expected --data-driven")
+                }
+            };
             if let Some(extra) = args.next() {
                 bail!("unexpected extra argument '{extra}'");
             }
-            new_demo(&name)
+            new_demo(&name, data_driven)
         }
         Some("doctor") => {
             if let Some(extra) = args.next() {
@@ -26,12 +36,266 @@ fn main() -> Result<()> {
             doctor();
             Ok(())
         }
+        Some("package-demo") => package_demo_command(args),
         _ => {
             bail!(
-                "usage:\n    cargo xtask new-demo <name-or-path>\n    cargo xtask doctor\n\nCreates an outside-workspace beginner demo, or checks local graphics prerequisites."
+                "usage:\n    cargo xtask new-demo <name-or-path> [--data-driven]\n    cargo xtask package-demo --release --out <directory>\n    cargo xtask doctor\n\nCreates an outside-workspace beginner demo, packages the bundled playable demo, or checks local graphics prerequisites."
             );
         }
     }
+}
+
+fn package_demo_command(mut args: impl Iterator<Item = String>) -> Result<()> {
+    let mut release = false;
+    let mut output = None;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--release" => release = true,
+            "--out" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| anyhow!("--out needs a destination directory"))?;
+                output = Some(PathBuf::from(path));
+            }
+            other => bail!("unknown package-demo argument '{other}'"),
+        }
+    }
+    if !release {
+        bail!("package-demo currently requires --release");
+    }
+    let output = output.ok_or_else(|| anyhow!("package-demo requires --out <directory>"))?;
+    package_demo(&output)
+}
+
+fn package_demo(requested_output: &Path) -> Result<()> {
+    let workspace = workspace_root()?;
+    let output = if requested_output.is_absolute() {
+        requested_output.to_path_buf()
+    } else {
+        workspace.join(requested_output)
+    };
+    if output.exists()
+        && fs::read_dir(&output)
+            .with_context(|| format!("failed to read package destination '{}'", output.display()))?
+            .next()
+            .is_some()
+    {
+        bail!(
+            "package destination '{}' already exists and is not empty; choose a new --out directory",
+            output.display()
+        );
+    }
+
+    let assets = workspace.join("assets");
+    validate_package_assets(&assets)?;
+
+    let status = Command::new("cargo")
+        .args(["build", "-p", "game", "--release", "--locked"])
+        .current_dir(&workspace)
+        .status()
+        .context("could not run cargo build for package-demo")?;
+    if !status.success() {
+        bail!("release build failed; shaders are not confirmed and no package was created");
+    }
+
+    let target = env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace.join("target"));
+    let executable_name = if cfg!(windows) { "game.exe" } else { "game" };
+    let executable = target.join("release").join(executable_name);
+    if !executable.is_file() {
+        bail!(
+            "release build completed but '{}' was not produced",
+            executable.display()
+        );
+    }
+
+    fs::create_dir_all(&output)
+        .with_context(|| format!("failed to create package output '{}'", output.display()))?;
+    fs::copy(&executable, output.join(executable_name)).with_context(|| {
+        format!(
+            "failed to copy packaged executable '{}'",
+            executable.display()
+        )
+    })?;
+    copy_directory(&assets, &output.join("assets"))?;
+    write_launchers(&output, executable_name)?;
+    write_package_readme(&output, executable_name)?;
+
+    println!("packaged release demo at {}", output.display());
+    println!("send the entire directory, including assets/, to a player");
+    Ok(())
+}
+
+fn validate_package_assets(assets: &Path) -> Result<()> {
+    if !assets.is_dir() {
+        bail!(
+            "package assets directory '{}' does not exist",
+            assets.display()
+        );
+    }
+    for required in ["fonts/DejaVuSans.ttf", "textures/test.png"] {
+        let path = assets.join(required);
+        if !path.is_file() {
+            bail!(
+                "required packaged asset '{}' does not exist",
+                path.display()
+            );
+        }
+    }
+
+    let mut checked = 0usize;
+    for entry in WalkDir::new(assets) {
+        let entry =
+            entry.with_context(|| format!("could not walk assets '{}'", assets.display()))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        checked += 1;
+        let path = entry.path();
+        match path.extension().and_then(|extension| extension.to_str()) {
+            Some(extension) if extension.eq_ignore_ascii_case("png") => {
+                ImageReader::open(path)
+                    .with_context(|| format!("could not open PNG '{}'", path.display()))?
+                    .with_guessed_format()
+                    .with_context(|| format!("could not identify PNG '{}'", path.display()))?
+                    .decode()
+                    .with_context(|| format!("could not decode PNG '{}'", path.display()))?;
+            }
+            Some(extension) if extension.eq_ignore_ascii_case("ttf") => {
+                let bytes = fs::read(path)
+                    .with_context(|| format!("could not read font '{}'", path.display()))?;
+                Font::from_bytes(bytes, FontSettings::default()).map_err(|error| {
+                    anyhow!("could not parse font '{}': {error}", path.display())
+                })?;
+            }
+            Some(extension)
+                if matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "wav" | "ogg" | "mp3"
+                ) =>
+            {
+                game_audio::validate_file_sound(path)
+                    .with_context(|| format!("could not decode sound '{}'", path.display()))?;
+            }
+            Some(extension) if extension.eq_ignore_ascii_case("txt") => {
+                validate_text_map(path)?;
+            }
+            Some(extension) if extension.eq_ignore_ascii_case("tmx") => {
+                game_map::load_tiled_map_file(path)
+                    .with_context(|| format!("could not validate TMX map '{}'", path.display()))?;
+            }
+            Some(extension) if extension.eq_ignore_ascii_case("ldtk") => {
+                let text = fs::read_to_string(path)
+                    .with_context(|| format!("could not read LDtk project '{}'", path.display()))?;
+                serde_json::from_str::<serde_json::Value>(&text).with_context(|| {
+                    format!("could not parse LDtk project '{}'", path.display())
+                })?;
+            }
+            _ => {}
+        }
+    }
+    if checked == 0 {
+        bail!("package assets directory '{}' is empty", assets.display());
+    }
+    Ok(())
+}
+
+fn validate_text_map(path: &Path) -> Result<()> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("could not read text map '{}'", path.display()))?;
+    let rows = text
+        .lines()
+        .map(|line| line.trim_end_matches('\r'))
+        .collect::<Vec<_>>();
+    let Some(first) = rows.first() else {
+        bail!("text map '{}' has no rows", path.display());
+    };
+    let width = first.chars().count();
+    if width == 0 {
+        bail!("text map '{}' has an empty first row", path.display());
+    }
+    for (index, row) in rows.iter().enumerate() {
+        if row.chars().count() != width {
+            bail!(
+                "text map '{}' row {} has width {}, expected {width}",
+                path.display(),
+                index + 1,
+                row.chars().count()
+            );
+        }
+        if row.chars().any(char::is_whitespace) {
+            bail!(
+                "text map '{}' row {} contains whitespace; use visible tile symbols only",
+                path.display(),
+                index + 1
+            );
+        }
+    }
+    Ok(())
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
+    for entry in WalkDir::new(source) {
+        let entry = entry.with_context(|| format!("could not walk '{}'", source.display()))?;
+        let relative = entry
+            .path()
+            .strip_prefix(source)
+            .expect("walk entry is under its source directory");
+        let target = destination.join(relative);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&target)
+                .with_context(|| format!("failed to create '{}'", target.display()))?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create '{}'", parent.display()))?;
+            }
+            fs::copy(entry.path(), &target).with_context(|| {
+                format!(
+                    "failed to copy asset '{}' to '{}'",
+                    entry.path().display(),
+                    target.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn write_launchers(output: &Path, executable_name: &str) -> Result<()> {
+    let shell = output.join("run.sh");
+    fs::write(
+        &shell,
+        format!("#!/usr/bin/env sh\ncd \"$(dirname \"$0\")\"\nexec ./{executable_name} \"$@\"\n"),
+    )
+    .with_context(|| format!("failed to write '{}'", shell.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("failed to mark '{}' executable", shell.display()))?;
+    }
+
+    let batch = output.join("run.bat");
+    fs::write(
+        &batch,
+        format!("@echo off\r\ncd /d \"%~dp0\"\r\n{executable_name}\r\n"),
+    )
+    .with_context(|| format!("failed to write '{}'", batch.display()))?;
+    Ok(())
+}
+
+fn write_package_readme(output: &Path, executable_name: &str) -> Result<()> {
+    let readme = output.join("README-RUN.txt");
+    fs::write(
+        &readme,
+        format!(
+            "Playable game package\n\nKeep this directory together: `{executable_name}` needs the adjacent `assets` folder.\n\nLinux: run ./run.sh from a terminal.\nWindows: double-click run.bat.\nmacOS: open Terminal in this folder and run ./run.sh; an app bundle is not created by this command.\n\nThe bundled binary defaults to the Arena demo. Set GAME_DEMO=simple or GAME_DEMO=testbed before launching to select those bundled demos.\n"
+        ),
+    )
+    .with_context(|| format!("failed to write '{}'", readme.display()))?;
+    Ok(())
 }
 
 fn doctor() {
@@ -114,7 +378,7 @@ fn executable_on_path(name: &str) -> bool {
     })
 }
 
-fn new_demo(name_or_path: &str) -> Result<()> {
+fn new_demo(name_or_path: &str, data_driven: bool) -> Result<()> {
     let workspace = workspace_root()?;
     let destination = demo_destination(&workspace, name_or_path)?;
     if destination.exists() {
@@ -126,7 +390,11 @@ fn new_demo(name_or_path: &str) -> Result<()> {
     let game_starter_dependency = format!("{{ path = \"{game_path}/crates/game-starter\" }}");
     let title = title_from_crate_name(&crate_name);
 
-    let template = workspace.join("templates/simple-demo");
+    let template = workspace.join(if data_driven {
+        "templates/data-driven-demo"
+    } else {
+        "templates/simple-demo"
+    });
     let mut values = HashMap::new();
     values.insert("crate_name", crate_name.as_str());
     values.insert("game_starter_dependency", game_starter_dependency.as_str());
@@ -136,6 +404,9 @@ fn new_demo(name_or_path: &str) -> Result<()> {
     seed_beginner_assets(&workspace, &destination)?;
 
     println!("created demo at {}", destination.display());
+    if data_driven {
+        println!("setup lives in assets/game.ron; src/main.rs is ready for optional custom rules");
+    }
     println!("run it with:");
     println!("    cd {}", destination.display());
     println!("    cargo run");
@@ -273,7 +544,7 @@ fn seed_beginner_assets(workspace: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(&maps).with_context(|| format!("failed to create '{}'", maps.display()))?;
 
     let placeholder_texture = assets.join("textures/test.png");
-    for name in ["player", "slime", "floor", "wall"] {
+    for name in ["player", "slime", "coin", "floor", "wall"] {
         copy_asset(&placeholder_texture, &textures.join(format!("{name}.png")))?;
     }
     copy_asset(&assets.join("sounds/hit.wav"), &sounds.join("hit.wav"))?;
@@ -288,4 +559,27 @@ fn copy_asset(src: &Path, dst: &Path) -> Result<()> {
     fs::copy(src, dst)
         .with_context(|| format!("failed to copy '{}' to '{}'", src.display(), dst.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_package_assets, validate_text_map, workspace_root};
+
+    #[test]
+    fn workspace_assets_pass_the_same_prepackage_validation_as_a_release() {
+        let workspace = workspace_root().unwrap();
+        validate_package_assets(&workspace.join("assets")).unwrap();
+    }
+
+    #[test]
+    fn text_map_validation_names_the_ragged_row() {
+        let path = std::env::temp_dir().join(format!(
+            "game-package-map-validation-{}.txt",
+            std::process::id()
+        ));
+        std::fs::write(&path, "####\n##\n").unwrap();
+        let error = validate_text_map(&path).unwrap_err().to_string();
+
+        assert!(error.contains("row 2 has width 2, expected 4"));
+    }
 }

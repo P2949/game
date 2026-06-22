@@ -571,6 +571,12 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         }
     }
 
+    /// Requests a reload of file-backed runtime assets. The renderer/audio
+    /// runtime performs the replacement after the current gameplay step.
+    pub fn reload_assets(&mut self) {
+        self.commands().reload_assets();
+    }
+
     /// Re-reads the tuning file registered with [`GameApp::tuning_from_file`](crate::GameApp::tuning_from_file).
     ///
     /// This updates the values used by future authoring/reload-aware spawns;
@@ -727,6 +733,10 @@ impl Commands<'_> {
 
     pub fn reload_map(&mut self, map: game_core::builder::MapId) {
         self.queue.reload_map(map);
+    }
+
+    pub fn reload_assets(&mut self) {
+        self.queue.reload_assets();
     }
 
     pub fn restart_map(&mut self) {

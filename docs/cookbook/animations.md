@@ -5,7 +5,8 @@ when you want idle, directional walk, flight, impact, attack, or death clips
 from a sprite sheet.
 
 Put clip names in `assets/animations/player.ron` so the Rust game setup stays
-about game behavior instead of frame numbers:
+about game behavior instead of frame numbers. The conventional
+`.animation_sheet_auto("player")` helper loads that path automatically:
 
 ```ron
 (
@@ -24,11 +25,12 @@ Load and use that sheet with no frame ranges in Rust:
 
 ```rust
 let assets = game.asset_bag()
-    .spritesheet_from_meta("player", "animations/player.ron")?
+    .animation_sheet_auto("player")?
     .build();
 
 game.player_prefab("player")
     .animation_sheet(assets.animation_sheet("player"))
+    .play("idle")
     .moves_with(controls.movement, 130.0)
     .build()?;
 ```

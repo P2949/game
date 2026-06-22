@@ -4,6 +4,7 @@ pub mod ldtk;
 pub mod nav;
 pub mod object;
 pub mod region;
+pub mod tiled;
 pub mod tilemap;
 pub mod validation;
 
@@ -48,4 +49,5 @@ pub use external::{GameMapFile, MapObjectFile, TileLayerFile, load_game_map_ron}
 pub use ldtk::{ImportedLdtkEntity, ImportedLdtkLevel, load_ldtk_level, load_ldtk_level_file};
 pub use object::MapObject;
 pub use region::{MapRegion, RegionShape, Tags};
+pub use tiled::{ImportedTiledMap, ImportedTiledObject, load_tiled_map, load_tiled_map_file};
 pub use validation::{MapValidator, validate_map, validate_map_prefabs};

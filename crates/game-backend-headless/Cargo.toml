@@ -1,0 +1,13 @@
+[package]
+name = "game-backend-headless"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless platform, renderer, and audio backends for game runtime tests"
+
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+game-core = { version = "0.1.0", path = "../game-core" }

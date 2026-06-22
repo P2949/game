@@ -9,3 +9,9 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+fontdue.workspace = true
+image.workspace = true
+serde_json.workspace = true
+walkdir.workspace = true
+game-audio = { version = "0.1.0", path = "../crates/game-audio" }
+game-map = { version = "0.1.0", path = "../crates/game-map" }

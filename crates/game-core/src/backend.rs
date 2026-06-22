@@ -1,12 +1,14 @@
-//! Backend-facing handles, load requests, commands, and future backend traits.
+//! Backend-facing handles, load requests, commands, and runtime backend traits.
 //!
-//! The runtime currently wires concrete SDL/audio/Vulkan crates directly. The
-//! `RenderBackend`, `AudioBackend`, and `PlatformBackend` traits below document a
-//! possible future seam for headless tests or alternate backends; they are not
-//! used to drive the current runtime, and `game-kit` does not expose them to
-//! content crates.
+//! The runtime loop is generic over the three traits in this module. Concrete
+//! SDL/Vulkan/audio implementations live in their respective backend crates,
+//! while a lightweight headless implementation can exercise the same loop in
+//! tests. Content crates do not need to name these traits.
+
+use std::path::Path;
 
 use crate::app::RenderFrame;
+use crate::input::InputState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureHandle(pub u32);
@@ -33,6 +35,11 @@ pub enum SoundLoadRequest {
     Generated { name: String },
     /// A sound loaded from a supported audio file under the asset root.
     File { path: String },
+    /// A long music track read in bounded chunks rather than decoded into memory
+    /// at startup. The current streaming backend supports 48 kHz stereo PCM16
+    /// WAV files; static `.music(...)` remains the simple path for all normal
+    /// supported file formats.
+    StreamedFile { path: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,24 +101,38 @@ pub struct PlatformEvents {
     pub should_quit: bool,
 }
 
-/// Future renderer abstraction. Current runtime uses `game-renderer-vulkan`
-/// directly.
+/// Rendering operations the runtime needs after a renderer has been created.
+///
+/// Asset registration assigns stable texture handles before the backend starts,
+/// so runtime reloads replace known handles instead of inventing backend-owned
+/// handles midway through a game.
 pub trait RenderBackend {
-    fn load_texture(&mut self, request: TextureLoadRequest) -> anyhow::Result<TextureHandle>;
-    fn render(&mut self, frame: RenderFrame) -> anyhow::Result<RenderOutcome>;
+    fn reload_textures(&mut self, textures: &[(TextureHandle, String)]) -> anyhow::Result<usize>;
+    fn request_resize(&mut self);
+    fn render(
+        &mut self,
+        drawable_size: glam::UVec2,
+        frame: RenderFrame,
+    ) -> anyhow::Result<RenderOutcome>;
 }
 
-/// Future audio abstraction. Current runtime uses `game-audio` directly.
+/// Audio operations the runtime performs after startup.
 pub trait AudioBackend {
-    fn load_sound(&mut self, request: SoundLoadRequest) -> anyhow::Result<SoundHandle>;
+    fn reload_sounds(
+        &mut self,
+        asset_root: &Path,
+        sounds: &[(SoundHandle, SoundLoadRequest)],
+    ) -> anyhow::Result<usize>;
     fn submit(&self, command: AudioCommand);
     fn poll_diagnostics(&self);
 }
 
-/// Future platform abstraction. Current runtime uses `game-platform-sdl`
-/// directly.
+/// Window/event/input operations the runtime loop needs from its platform.
 pub trait PlatformBackend {
     fn pump_events(&mut self) -> PlatformEvents;
+    fn input(&self) -> &InputState;
     fn drawable_size(&self) -> glam::UVec2;
+    fn take_stable_resize_request(&mut self) -> bool;
     fn should_quit(&self) -> bool;
+    fn request_quit(&mut self);
 }

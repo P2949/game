@@ -3,6 +3,7 @@ resolver = "3"
 default-members = ["bin/game"]
 members = [
     "crates/game-audio",
+    "crates/game-backend-headless",
     "crates/game-combat",
     "crates/game-core",
     "crates/game-ai",

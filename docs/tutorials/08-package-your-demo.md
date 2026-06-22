@@ -15,30 +15,18 @@ None.
 
 ## Final code
 
-Build the binary:
+Use the package task from a local checkout:
 
 ```bash
-cargo build -p game --release --locked
-```
-
-Create a package folder:
-
-```bash
-mkdir -p /tmp/game-package
-cp target/release/game /tmp/game-package/
-cp -r assets /tmp/game-package/
-```
-
-Run it from the package folder:
-
-```bash
-(cd /tmp/game-package && GAME_DEMO=simple ./game)
+cargo xtask package-demo --release --out dist/my-game
 ```
 
 ## Explanation
 
-Debug runs can find the workspace `assets/` directory automatically. Release
-packages should carry `assets/` next to the executable or set `GAME_ASSET_DIR`.
+The task validates assets and copies the release executable, `assets/`,
+`run.sh`, `run.bat`, and `README-RUN.txt` into `dist/my-game`. Send that whole
+folder. See the newer [Package your demo](10-package-your-demo.md) tutorial for
+platform launch details and common verification failures.
 
 The same binary can run multiple content crates. Use `GAME_DEMO=simple` for the
 beginner demo, `GAME_DEMO=testbed` only for the advanced testbed reference, or

@@ -4,6 +4,11 @@ Most games should begin with the [beginner authoring guide](beginner-authoring.m
 It uses names such as `"player"`, `"slime"`, and `"hit"` to describe a game
 without exposing engine plumbing.
 
+For a standalone game, start with `use game_starter::prelude::*;`. When the
+game becomes a workspace content crate, use
+`use game_kit::beginner::prelude::*;` instead. Both paths use the same
+beginner-facing assets, prefabs, maps, rules, UI, and audio vocabulary.
+
 Choose the guide that matches the job:
 
 - [Beginner authoring](beginner-authoring.md): make a small game using assets,
@@ -16,7 +21,11 @@ Choose the guide that matches the job:
 
 The repository examples follow the same split:
 
-- `simple-content`, `arena-content`, `examples/one-file-demo`, and
-  `templates/simple-demo` are beginner starting points.
-- `testbed-content` is intentionally advanced. It is an engine testbed for
-  manual systems and RON maps, not a template for a first game.
+- **Beginner / copy this first:** `examples/one-file-demo`,
+  `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
+  `simple-content`, and `templates/simple-demo`.
+- **Structured beginner Rust:** `arena-content`. It is the next organization
+  step when a beginner content crate needs typed assets and separate files.
+- **Advanced / do not copy first:** `testbed-content`. It is an engine testbed
+  for manual systems, RON maps, tuple prefabs, direct component composition,
+  custom state, and lower-level facade APIs—not a template for a first game.

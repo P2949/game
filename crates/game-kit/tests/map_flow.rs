@@ -1,3 +1,4 @@
+use game_core::commands::AssetReloadStatus;
 use game_kit::prelude::*;
 use game_kit::testing::GameTestHarness;
 use std::fs;
@@ -120,10 +121,15 @@ impl GamePlugin for TextMapPlugin {
         game.enemy_prefab("slime")
             .sprite(TextureHandle(2))
             .build()?;
+        game.pickup_prefab("coin")
+            .sprite(TextureHandle(3))
+            .score(1)
+            .build()?;
         game.map_from_text_auto("beginner_text_map")
             .simple_theme(TextureHandle(0), TextureHandle(0))
             .legend('P', "player")
             .legend('E', "slime")
+            .legend('C', "coin")
             .start();
         game.on_start(|game| game.spawn_start_map());
         Ok(())
@@ -136,6 +142,10 @@ struct ReloadableTextMapPlugin {
 
 struct LdtkMapPlugin {
     map_entities: bool,
+}
+
+struct TiledMapPlugin {
+    map_objects: bool,
 }
 
 impl GamePlugin for LdtkMapPlugin {
@@ -156,6 +166,31 @@ impl GamePlugin for LdtkMapPlugin {
             .entity("PlayerStart", "player");
         if self.map_entities {
             map = map.entity("Slime", "slime");
+        }
+        map.start();
+
+        game.use_top_down_game().controls(controls).build();
+        Ok(())
+    }
+}
+
+impl GamePlugin for TiledMapPlugin {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        let controls = game.input(|input| input.top_down_controls())?;
+        game.player_prefab("player")
+            .sprite(TextureHandle(1))
+            .moves_with(controls.movement, 120.0)
+            .build()?;
+        game.enemy_prefab("slime")
+            .sprite(TextureHandle(2))
+            .build()?;
+
+        let mut map = game
+            .map_from_tiled("tiled", "maps/tiled_demo.tmx")
+            .simple_theme(TextureHandle(0), TextureHandle(0))
+            .object("Player", "player");
+        if self.map_objects {
+            map = map.object("Slime", "slime");
         }
         map.start();
 
@@ -363,6 +398,13 @@ fn f5_reloads_the_current_text_map_without_restarting_rust_content() {
     assert_eq!(game.map().tilemap.width(), 5);
     assert_eq!(game.player_count(), 1);
     assert_eq!(game.enemy_count(), 1);
+    assert_eq!(
+        game.world()
+            .get_resource::<AssetReloadStatus>()
+            .unwrap()
+            .message,
+        "not applied in the headless game-kit harness"
+    );
 }
 
 #[test]
@@ -383,6 +425,27 @@ fn ldtk_level_reports_missing_entity_mappings() {
     };
     assert!(error.contains("entity 'Slime' with no prefab mapping"));
     assert!(error.contains(".entity(\"Slime\", \"some_prefab\")"));
+}
+
+#[test]
+fn tiled_map_spawns_mapped_objects_from_csv_collision_and_object_layers() {
+    let game = GameTestHarness::from_plugin(TiledMapPlugin { map_objects: true }).unwrap();
+
+    assert_eq!(game.map().tilemap.width(), 5);
+    assert_eq!(game.map().tilemap.height(), 3);
+    assert_eq!(game.count::<Player>(), 1);
+    assert_eq!(game.count::<Enemy>(), 1);
+}
+
+#[test]
+fn tiled_map_reports_missing_object_mappings() {
+    let error = GameTestHarness::from_plugin(TiledMapPlugin { map_objects: false })
+        .err()
+        .expect("missing object mapping must fail")
+        .to_string();
+
+    assert!(error.contains("Tiled map 'tiled' has object 'Slime' with no prefab mapping"));
+    assert!(error.contains(".object(\"Slime\", \"some_prefab\")"));
 }
 
 fn register_marker_prefab(game: &mut GameApp<'_>, name: &str) -> Result<()> {

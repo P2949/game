@@ -67,6 +67,21 @@ jobs:
       - name: Release build
         run: cargo build -p game --release --locked --features ci-build-sdl3
 
+  # This path deliberately has no SDL, Vulkan, or audio-device dependencies.
+  # It proves the trait-driven Runner can execute a complete content frame with
+  # the in-memory backends, complementing (rather than replacing) the lavapipe
+  # smoke job below.
+  headless-runtime:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the backend-neutral runtime loop
+        run: cargo test -p game-runtime --test headless_runner --no-default-features --locked
+
   audit:
     runs-on: ubuntu-latest
 

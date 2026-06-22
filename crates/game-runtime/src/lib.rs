@@ -1,4 +1,4 @@
 pub mod fixed_timestep;
 pub mod runner;
 
-pub use runner::{RuntimeConfig, run};
+pub use runner::{Runner, RuntimeConfig, run};

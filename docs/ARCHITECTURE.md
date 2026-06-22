@@ -4,8 +4,9 @@
 > only selects a content plugin. The engine lives in `game-core` /
 > `game-runtime` / `game-renderer-vulkan` / `game-platform-sdl` / `game-audio`,
 > gameplay building blocks in `game-map` / `game-ai` / `game-combat` /
-> `game-physics`, and demos in `arena-content` / `testbed-content` (see the
-> README "Workspace layout" section).
+> `game-physics`, and content examples in `simple-content` (pure beginner),
+> `arena-content` (beginner-style structured content), and `testbed-content`
+> (advanced lab; see the README "Workspace layout" section).
 
 ```text
 bin/game
@@ -24,7 +25,10 @@ runtime/backend crates
   game-runtime, game-renderer-vulkan, game-platform-sdl, game-audio
 ```
 
-Production content authors use `game_kit::prelude::*`; beginner tests use
+Beginner/default content authors use `game_kit::beginner::prelude::*`.
+Standalone demos use `game_starter::prelude::*`. Advanced content uses
+`game_kit::advanced::prelude::*`. `game_kit::prelude::*` is a compatibility
+prelude and should not appear in new beginner code. Beginner tests use
 `game_kit::beginner::testing::prelude::*`; tests that need raw inspection use
 `game_kit::advanced::testing::prelude::*`. Lower-level builder, schedule,
 registry, validator, raw world/query, and raw context APIs are for the runtime,
@@ -35,9 +39,11 @@ runtime/backend/registry/schedule internals.
 
 ## Main Loop
 
-`game-runtime`'s `runner.rs` owns platform event pumping, fixed-timestep
-simulation, rendering, audio command submission, resize handling, and smoke-test
-shutdown. Rendering is skipped while the drawable size is zero.
+`game-runtime`'s generic `Runner<P, R, A>` owns platform event pumping,
+fixed-timestep simulation, rendering, audio command submission, resize handling,
+and smoke-test shutdown. The production entry point supplies SDL, Vulkan, and
+the audio mixer; `game-backend-headless` supplies in-memory implementations for
+the same loop in tests. Rendering is skipped while the drawable size is zero.
 
 ## Fixed Timestep
 

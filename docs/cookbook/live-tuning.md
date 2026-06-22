@@ -55,5 +55,8 @@ new actors using the new values.
 
 `GAME_HOT_RELOAD=1` is reserved for the upcoming automatic watcher. It is not
 available in this build yet: until the runtime watcher is installed, save and
-press F5. Textures and sounds also still require a restart; their renderer
-replacement path is deliberately tracked separately as Phase 3b.
+press F5. Registered textures and sounds reload in the same development loop;
+texture replacement preserves its content handle, while sound replacement stops
+any old static-sound voice and uses the new file for later plays. A streamed
+music track restarts from its updated file. This manual F5 loop is deliberately
+separate from the future automatic watcher.

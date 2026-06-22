@@ -2,8 +2,10 @@
 //!
 //! This crate intentionally demonstrates the advanced `game-kit` surface:
 //! manual system wiring, RON maps, patrol setup, and custom state. Beginner
-//! examples should copy `simple-content`, `arena-content`,
-//! `examples/one-file-demo`, or `templates/simple-demo`, not this crate.
+//! examples should copy `examples/one-file-demo`,
+//! `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
+//! `simple-content`, or `templates/simple-demo`, not this crate.
+//! `arena-content` is the later structured beginner-Rust step.
 
 pub mod assets;
 pub mod combat;
