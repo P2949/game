@@ -161,6 +161,7 @@ fn game_starter_is_the_only_beginner_crate_that_depends_on_runtime() {
         "crates/game-kit/Cargo.toml",
         "examples/one-file-demo/Cargo.toml",
         "templates/simple-demo/Cargo.toml",
+        "templates/data-driven-demo/Cargo.toml",
     ] {
         let manifest = read_manifest_without_comments(relative);
         assert!(
@@ -175,6 +176,7 @@ fn beginner_demo_and_template_hide_runtime_boot_code() {
     for relative in [
         "examples/one-file-demo/src/main.rs",
         "templates/simple-demo/src/main.rs",
+        "templates/data-driven-demo/src/main.rs",
     ] {
         let source = read_code_without_comments(&workspace_root().join(relative));
         assert!(
@@ -224,8 +226,10 @@ fn beginner_demo_and_template_hide_runtime_boot_code() {
             );
         }
         assert!(
-            source.contains(".asset_bag()") || source.contains(".assets_from_folders()"),
-            "{relative} should use a beginner asset registration helper"
+            source.contains(".asset_bag()")
+                || source.contains(".assets_from_folders()")
+                || source.contains("load_beginner_file("),
+            "{relative} should use a beginner asset/data registration helper"
         );
     }
 }
@@ -257,6 +261,7 @@ fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
         "examples/audio-demo/src",
         "examples/trigger-area-demo/src",
         "templates/simple-demo/src",
+        "templates/data-driven-demo/src",
     ];
 
     for relative in paths {
@@ -275,8 +280,10 @@ fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
                 path.display()
             );
             assert!(
-                source.contains(".asset_bag()") || source.contains(".assets_from_folders()"),
-                "{} should use a beginner asset helper",
+                source.contains(".asset_bag()")
+                    || source.contains(".assets_from_folders()")
+                    || source.contains("load_beginner_file("),
+                "{} should use a beginner asset/data helper",
                 path.display()
             );
             for forbidden in BEGINNER_DEMO_FORBIDDEN {
@@ -305,6 +312,7 @@ fn beginner_facing_sources_hide_context_lifetime_annotations() {
         "examples/no-rust-shapes-demo",
         "examples/animation-demo",
         "templates/simple-demo",
+        "templates/data-driven-demo",
         "crates/simple-content/src",
         "crates/arena-content/src",
         "docs/tutorials",
@@ -640,6 +648,7 @@ fn beginner_docs_use_named_assets_before_typed_or_advanced_sections() {
         "docs/cookbook/enemy-waves.md",
         "docs/cookbook/menu-and-game-over.md",
         "templates/simple-demo/README.md",
+        "templates/data-driven-demo/README.md",
         "examples/one-file-demo/README.md",
     ];
 
@@ -703,6 +712,7 @@ fn all_beginner_docs_keep_advanced_details_after_their_boundary() {
         root.join("docs/content-authoring.md"),
         root.join("docs/beginner-authoring.md"),
         root.join("templates/simple-demo/README.md"),
+        root.join("templates/data-driven-demo/README.md"),
         root.join("examples/one-file-demo/README.md"),
     ];
     collect_markdown_files(&root.join("docs/tutorials"), &mut paths);
@@ -803,6 +813,7 @@ fn beginner_facing_docs_examples_and_templates_do_not_use_compatibility_prelude(
         "docs/tutorials",
         "docs/cookbook",
         "templates/simple-demo",
+        "templates/data-driven-demo",
         "examples/one-file-demo",
         "examples/beginner-mini-game",
     ];
