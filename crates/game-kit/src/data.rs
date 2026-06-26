@@ -37,6 +37,8 @@ pub fn load_beginner_game_file(
 /// The file-shaped data model used by `assets/game.ron`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct BeginnerGameFile {
+    #[serde(default = "default_beginner_game_version")]
+    pub version: u32,
     #[serde(default)]
     pub assets: BeginnerAssetsFile,
     #[serde(default = "default_controls")]
@@ -245,6 +247,12 @@ fn load_beginner_game_text(
 }
 
 fn validate_file(file: &BeginnerGameFile, label: &str) -> Result<()> {
+    if file.version != 1 {
+        anyhow::bail!(
+            "unsupported beginner game file version {}. Supported version: 1",
+            file.version
+        );
+    }
     let textures = file
         .assets
         .textures
@@ -364,6 +372,10 @@ fn default_controls() -> String {
     "top_down".to_owned()
 }
 
+const fn default_beginner_game_version() -> u32 {
+    1
+}
+
 const fn default_player_speed() -> f32 {
     130.0
 }
@@ -396,6 +408,7 @@ mod tests {
     use anyhow::Result;
 
     const GAME: &str = r#"(
+    version: 1,
     assets: (
         textures: ["player", "slime", "coin", "floor", "wall"],
         sounds: ["hit"],
@@ -470,5 +483,22 @@ mod tests {
 
         assert_eq!(game.current_map_name().as_deref(), Some("level_1"));
         assert_eq!(game.count::<crate::beginner::actors::Player>(), 1);
+    }
+
+    #[test]
+    fn missing_version_defaults_to_one_and_validates() {
+        let source = "(assets: (), prefabs: [], maps: [], rules: [])";
+        let file: BeginnerGameFile = ron::from_str(source).unwrap();
+        assert_eq!(file.version, 1);
+        validate_file(&file, "test.ron").unwrap();
+    }
+
+    #[test]
+    fn unsupported_version_rejects_with_helpful_error() {
+        let source = "(version: 2, assets: (), prefabs: [], maps: [], rules: [])";
+        let file: BeginnerGameFile = ron::from_str(source).unwrap();
+        let err = validate_file(&file, "test.ron").unwrap_err().to_string();
+        assert!(err.contains("unsupported beginner game file version 2"));
+        assert!(err.contains("Supported version: 1"));
     }
 }
