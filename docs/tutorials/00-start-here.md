@@ -24,6 +24,10 @@ equivalent command is `cargo xtask new-demo my-game`.
 
 Then edit `src/main.rs`.
 
+If you want the no-Rust path instead, use
+`cargo xtask new-demo my-game --template data-driven` from a local checkout and
+start with [13 - Data-driven first game](13-data-driven-demo.md).
+
 ## Full code
 
 ```rust

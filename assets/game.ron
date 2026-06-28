@@ -1,21 +1,21 @@
 (
     version: 1,
     assets: (
-        textures: ["player", "slime", "coin", "floor", "wall"],
+        textures: ["test"],
         sounds: ["hit"],
     ),
-    controls: "top_down",
+    controls: TopDown,
     prefabs: [
         Player((
             name: "player",
-            sprite: "player",
+            sprite: "test",
             speed: 130.0,
             health: 100,
             melee: Some((range: 30.0, damage: 25)),
         )),
         Enemy((
             name: "slime",
-            sprite: "slime",
+            sprite: "test",
             speed: 80.0,
             health: 30,
             chase_player: true,
@@ -23,7 +23,7 @@
         )),
         Pickup((
             name: "coin",
-            sprite: "coin",
+            sprite: "test",
             score: 1,
             sound: Some("hit"),
         )),
@@ -32,17 +32,17 @@
         TextMap((
             name: "level_1",
             path: "maps/beginner_text_map.txt",
-            theme: ("floor", "wall"),
+            theme: ("test", "test"),
             legend: {'P': "player", 'E': "slime", 'C': "coin"},
             start: true,
         )),
     ],
     rules: [
-        "top_down_controls",
-        "player_collects_pickups",
-        "enemies_damage_player",
-        "camera_follows_player",
-        "show_score",
-        "show_player_health",
+        TopDownControls,
+        PlayerCollectsPickups,
+        EnemiesDamagePlayer,
+        CameraFollowsPlayer,
+        ShowScore,
+        ShowPlayerHealth,
     ],
 )

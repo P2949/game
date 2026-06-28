@@ -57,6 +57,9 @@ gates that must continue to hold afterward.
 - Current roadmap: [Content Authoring API 0.1](content-authoring-api-roadmap.md).
   The workspace/content split is mechanically complete; content crates now use
   `game-kit` as the authoring facade and do not operate engine wiring directly.
+- The main architecture split is complete. Remaining beginner-facing work is
+  data-driven parity, authoring polish, validation, templates, docs, and runtime
+  proof around the no-Rust path.
 - Keep CI commands workspace/package-qualified so the virtual workspace does not
   rely on whichever package Cargo happens to infer.
 - Keep runtime/content tests on the schedule path now that the direct

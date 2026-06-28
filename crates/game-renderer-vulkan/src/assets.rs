@@ -41,7 +41,7 @@ pub fn load_textures(
     let mut handle_to_id = HashMap::new();
 
     let font_atlas_image =
-        text::build_ascii_atlas(asset_root.join("fonts/DejaVuSans.ttf"), FONT_TEXTURE_HANDLE)?;
+        text::build_ascii_atlas(builtin_font_path(&asset_root)?, FONT_TEXTURE_HANDLE)?;
     let font_id = registry_guard.create_and_register(
         descriptor_set_layout,
         "font atlas",
@@ -174,6 +174,15 @@ fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
         });
     }
 
+    let current_assets = std::env::current_dir()
+        .context("failed to resolve current directory")?
+        .join("assets");
+    candidates.push(AssetRootCandidate {
+        description: format!("current working directory {}", current_assets.display()),
+        path: current_assets,
+        is_debug_fallback: false,
+    });
+
     if cfg!(debug_assertions) {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
         candidates.push(AssetRootCandidate {
@@ -197,19 +206,43 @@ fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
 /// can load built-in textures. Content assets are validated separately by the
 /// runtime through `game_core::assets::AssetValidator`.
 pub fn validate_builtin_assets(root: &Path) -> anyhow::Result<()> {
-    let font = root.join("fonts/DejaVuSans.ttf");
-    if !font.is_file() {
-        anyhow::bail!(
-            "renderer built-in font asset '{}' does not exist",
-            font.display()
-        );
-    }
+    builtin_font_path(root)?;
     Ok(())
+}
+
+fn builtin_font_path(root: &Path) -> anyhow::Result<PathBuf> {
+    builtin_font_path_with_debug_fallback(root, cfg!(debug_assertions))
+}
+
+fn builtin_font_path_with_debug_fallback(
+    root: &Path,
+    allow_debug_fallback: bool,
+) -> anyhow::Result<PathBuf> {
+    let mut candidates = vec![root.join("fonts/DejaVuSans.ttf")];
+    if allow_debug_fallback {
+        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/DejaVuSans.ttf"));
+        candidates
+            .push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts/DejaVuSans.ttf"));
+    }
+
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return Ok(candidate.clone());
+        }
+    }
+
+    let mut message = String::from("renderer built-in font asset does not exist\ntried:");
+    for candidate in candidates {
+        message.push_str(&format!("\n- {}", candidate.display()));
+    }
+    anyhow::bail!(message)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{asset_root_from_override, validate_builtin_assets};
+    use super::{
+        asset_root_from_override, builtin_font_path_with_debug_fallback, validate_builtin_assets,
+    };
     use std::fs;
     use std::path::Path;
 
@@ -235,7 +268,7 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("fonts")).unwrap();
 
-        let err = validate_builtin_assets(&root).unwrap_err();
+        let err = builtin_font_path_with_debug_fallback(&root, false).unwrap_err();
         assert!(err.to_string().contains("fonts/DejaVuSans.ttf"));
 
         fs::remove_dir_all(root).unwrap();

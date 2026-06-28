@@ -24,6 +24,7 @@ use crate::assets::{
 };
 use crate::beginner::actors::{Door, PrefabName};
 use crate::beginner::animation::AnimationFinishedEvents;
+use crate::beginner::custom_rules::CustomRuleAuthor;
 use crate::beginner::debug::{DebugIterationInfo, DebugOverlay, draw_debug_overlay};
 use crate::beginner::defaults::TopDownGameAuthor;
 use crate::beginner::events::{
@@ -267,6 +268,11 @@ impl<'app> GameApp<'app> {
     /// Begins configuring declarative beginner rules.
     pub fn rules(&mut self) -> RulesAuthor<'_, 'app> {
         RulesAuthor::new(self)
+    }
+
+    /// Begins a concrete declarative custom rule.
+    pub fn custom_rule(&mut self, name: impl Into<String>) -> CustomRuleAuthor<'_, 'app> {
+        CustomRuleAuthor::new(self, name.into())
     }
 
     /// Begins declaring an in-code map.

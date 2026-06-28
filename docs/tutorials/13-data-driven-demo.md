@@ -10,7 +10,7 @@ your art instead of writing the usual setup code.
 From a local checkout:
 
 ```bash
-cargo xtask new-demo my-game --data-driven
+cargo xtask new-demo my-game --template data-driven
 cd my-game
 cargo run
 ```
@@ -44,6 +44,27 @@ assets: (
 `prefabs` defines the object kinds, while `maps` connects each map symbol to
 one of those names. The standard `rules` list supplies movement, combat,
 camera, pickup, and UI behavior.
+
+Use structured names in new files:
+
+```ron
+controls: TopDown,
+rules: [
+    TopDownControls,
+    PlayerCollectsPickups,
+    EnemiesDamagePlayer,
+    CameraFollowsPlayer,
+    ShowBasicUi,
+]
+```
+
+Old string rules such as `"top_down_controls"` still load for compatibility,
+but new examples use the structured names because they can grow to cover
+projectiles, spawners, drops, checkpoints, scene flow, UI, and win rules.
+
+For a larger no-Rust reference, see `examples/data-driven-full-demo`. Its
+`assets/game.ron` includes doors, projectiles, spawners, checkpoints, music,
+player shooting, enemy drops, and a countdown custom rule.
 
 ## Add small Rust behavior later
 

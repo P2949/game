@@ -15,19 +15,28 @@ fn main() -> Result<()> {
     match args.next().as_deref() {
         Some("new-demo") => {
             let name = args.next().ok_or_else(|| {
-                anyhow!("usage: cargo xtask new-demo <name-or-path> [--data-driven]")
+                anyhow!(
+                    "usage: cargo xtask new-demo <name-or-path> [--template simple|data-driven]"
+                )
             })?;
-            let data_driven = match args.next().as_deref() {
-                None => false,
-                Some("--data-driven") => true,
-                Some(extra) => {
-                    bail!("unexpected new-demo argument '{extra}'; expected --data-driven")
+            let mut template = DemoTemplate::Simple;
+            while let Some(argument) = args.next() {
+                match argument.as_str() {
+                    "--data-driven" => template = DemoTemplate::DataDriven,
+                    "--template" => {
+                        let value = args
+                            .next()
+                            .ok_or_else(|| anyhow!("--template needs simple or data-driven"))?;
+                        template = DemoTemplate::parse(&value)?;
+                    }
+                    extra => {
+                        bail!(
+                            "unexpected new-demo argument '{extra}'; expected --template simple|data-driven"
+                        )
+                    }
                 }
-            };
-            if let Some(extra) = args.next() {
-                bail!("unexpected extra argument '{extra}'");
             }
-            new_demo(&name, data_driven)
+            new_demo(&name, template)
         }
         Some("doctor") => {
             if let Some(extra) = args.next() {
@@ -39,7 +48,7 @@ fn main() -> Result<()> {
         Some("package-demo") => package_demo_command(args),
         _ => {
             bail!(
-                "usage:\n    cargo xtask new-demo <name-or-path> [--data-driven]\n    cargo xtask package-demo --release --out <directory>\n    cargo xtask doctor\n\nCreates an outside-workspace beginner demo, packages the bundled playable demo, or checks local graphics prerequisites."
+                "usage:\n    cargo xtask new-demo <name-or-path> [--template simple|data-driven]\n    cargo xtask new-demo <name-or-path> --data-driven\n    cargo xtask package-demo --release --out <directory>\n    cargo xtask doctor\n\nCreates an outside-workspace beginner demo, packages the bundled playable demo, or checks local graphics prerequisites."
             );
         }
     }
@@ -378,7 +387,27 @@ fn executable_on_path(name: &str) -> bool {
     })
 }
 
-fn new_demo(name_or_path: &str, data_driven: bool) -> Result<()> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DemoTemplate {
+    Simple,
+    DataDriven,
+}
+
+impl DemoTemplate {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "simple" => Ok(Self::Simple),
+            "data-driven" => Ok(Self::DataDriven),
+            other => bail!("unknown template '{other}'; expected simple or data-driven"),
+        }
+    }
+
+    fn is_data_driven(self) -> bool {
+        matches!(self, Self::DataDriven)
+    }
+}
+
+fn new_demo(name_or_path: &str, template: DemoTemplate) -> Result<()> {
     let workspace = workspace_root()?;
     let destination = demo_destination(&workspace, name_or_path)?;
     if destination.exists() {
@@ -390,7 +419,7 @@ fn new_demo(name_or_path: &str, data_driven: bool) -> Result<()> {
     let game_starter_dependency = format!("{{ path = \"{game_path}/crates/game-starter\" }}");
     let title = title_from_crate_name(&crate_name);
 
-    let template = workspace.join(if data_driven {
+    let template_path = workspace.join(if template.is_data_driven() {
         "templates/data-driven-demo"
     } else {
         "templates/simple-demo"
@@ -400,12 +429,14 @@ fn new_demo(name_or_path: &str, data_driven: bool) -> Result<()> {
     values.insert("game_starter_dependency", game_starter_dependency.as_str());
     values.insert("title", title.as_str());
 
-    copy_template(&template, &destination, &values)?;
+    copy_template(&template_path, &destination, &values)?;
     seed_beginner_assets(&workspace, &destination)?;
 
     println!("created demo at {}", destination.display());
-    if data_driven {
+    if template.is_data_driven() {
         println!("setup lives in assets/game.ron; src/main.rs is ready for optional custom rules");
+    } else {
+        println!("setup lives in src/main.rs with beginner Rust builder chains");
     }
     println!("run it with:");
     println!("    cd {}", destination.display());

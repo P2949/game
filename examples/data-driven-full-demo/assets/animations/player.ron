@@ -1,0 +1,10 @@
+(
+    texture: "textures/player.png",
+    columns: 1,
+    rows: 1,
+    clips: {
+        "idle": (frames: [0], fps: 6.0),
+        "walk": (frames: [0], fps: 8.0),
+        "attack": (frames: [0], fps: 10.0, looping: false),
+    },
+)

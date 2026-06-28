@@ -143,6 +143,7 @@ pub use beginner::collections::{
     ShootAuthor, TaggedActors,
 };
 pub use beginner::combat::MeleeCombatConfig;
+pub use beginner::custom_rules::{CountdownRuleAuthor, CustomRuleAuthor, TaggedCustomRuleAuthor};
 pub use beginner::debug::DebugOverlay;
 pub use beginner::defaults::TopDownGameAuthor;
 pub use beginner::defaults::{
@@ -180,8 +181,8 @@ pub use beginner::ui::{
 pub use bundle::{Bundle, vec2s};
 pub use context::{Commands, GameCtx, StartupGameCtx};
 pub use data::{
-    BeginnerAssetsFile, BeginnerGameFile, BeginnerMapFile, BeginnerPrefabFile,
-    load_beginner_game_file,
+    BeginnerAssetsFile, BeginnerControlsFile, BeginnerGameFile, BeginnerMapFile,
+    BeginnerPrefabFile, BeginnerRuleFile, load_beginner_game_file,
 };
 pub use helpers::{
     InputDriven, MovementSpeed, SimulationState, camera_follow_first, stop_all_velocity,

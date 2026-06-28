@@ -198,6 +198,20 @@ Use `set_master_volume`, `set_sfx_volume`, and `set_music_volume` for global
 mix levels. `fade_music_to`, `pause_music`, and `resume_music` control the
 current music track without touching raw audio handles.
 
+## Data-file errors
+
+New `assets/game.ron` files use structured, case-sensitive names:
+
+```ron
+controls: TopDown,
+rules: [TopDownControls, PlayerCollectsPickups, ShowBasicUi],
+```
+
+Old strings such as `"top_down"` and `"show_score"` still work, but the current
+templates use structured names. If a data file says an asset, prefab, map,
+scene, sound, music track, tag, or rule is unknown, fix the spelling in
+`game.ron`; the message lists known values and suggests close matches.
+
 ## Controller input
 
 `input.top_down_controls()` supports the first connected controller as well as

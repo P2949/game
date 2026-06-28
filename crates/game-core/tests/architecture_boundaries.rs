@@ -241,6 +241,7 @@ fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
         "examples/one-file-demo/src",
         "examples/beginner-mini-game/src",
         "examples/coin-collector/src",
+        "examples/data-driven-full-demo/src",
         "examples/projectile-demo/src",
         "examples/script-like-custom-rules/src",
         "examples/two-level-demo/src",
@@ -304,6 +305,7 @@ fn beginner_facing_sources_hide_context_lifetime_annotations() {
         "examples/one-file-demo",
         "examples/beginner-mini-game",
         "examples/coin-collector",
+        "examples/data-driven-full-demo",
         "examples/projectile-demo",
         "examples/script-like-custom-rules",
         "examples/two-level-demo",
@@ -417,6 +419,7 @@ fn script_like_custom_rules_demo_stays_ecs_free() {
         "spawner_prefab",
         "map(",
         "game.rules()",
+        "custom_rule",
         "on_action",
     ] {
         assert!(
@@ -446,6 +449,62 @@ fn script_like_custom_rules_demo_stays_ecs_free() {
         assert!(
             !source.contains(forbidden),
             "script-like demo must not expose {forbidden:?}"
+        );
+    }
+}
+
+#[test]
+fn full_data_driven_demo_stays_data_only() {
+    let root = workspace_root();
+    let source =
+        read_code_without_comments(&root.join("examples/data-driven-full-demo/src/main.rs"));
+
+    assert!(source.contains("use game_starter::prelude::*;"));
+    assert!(source.contains("load_beginner_file("));
+    assert!(source.contains("assets/game.ron"));
+    for forbidden in BEGINNER_DEMO_FORBIDDEN.iter().copied().chain([
+        ".asset_bag()",
+        ".assets_from_folders()",
+        "player_prefab",
+        "enemy_prefab",
+        "pickup_prefab",
+        "projectile_prefab",
+        "spawner_prefab",
+        "door_prefab",
+        "trigger_prefab",
+        "checkpoint_prefab",
+        "game.rules()",
+        "on_action",
+        "on_scene_enter",
+        "custom_rule",
+    ]) {
+        assert!(
+            !source.contains(forbidden),
+            "full data-driven demo main.rs must not expose {forbidden:?}"
+        );
+    }
+
+    let data = fs::read_to_string(root.join("examples/data-driven-full-demo/assets/game.ron"))
+        .expect("failed to read full data-driven demo game.ron");
+    for required in [
+        "controls: TopDown",
+        "Projectile(",
+        "Spawner(",
+        "Door(",
+        "Trigger(",
+        "Checkpoint(",
+        "animation_sheets:",
+        "scene_flow:",
+        "audio:",
+        "PlayerShoots",
+        "Countdown(",
+        "TopDownControls",
+        "EnemyDrops",
+        "WinWhenAllEnemiesDead",
+    ] {
+        assert!(
+            data.contains(required),
+            "full data-driven game.ron should demonstrate {required:?}"
         );
     }
 }
@@ -816,6 +875,7 @@ fn beginner_facing_docs_examples_and_templates_do_not_use_compatibility_prelude(
         "templates/data-driven-demo",
         "examples/one-file-demo",
         "examples/beginner-mini-game",
+        "examples/data-driven-full-demo",
     ];
 
     for relative in paths {

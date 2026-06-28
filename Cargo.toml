@@ -21,6 +21,7 @@ members = [
     "examples/audio-demo",
     "examples/beginner-mini-game",
     "examples/coin-collector",
+    "examples/data-driven-full-demo",
     "examples/menu-game-over",
     "examples/no-rust-shapes-demo",
     "examples/win-condition-demo",

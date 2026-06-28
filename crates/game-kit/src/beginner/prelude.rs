@@ -32,6 +32,9 @@ pub use crate::beginner::collections::{
 };
 pub use crate::beginner::combat::MeleeCombatConfig;
 pub use crate::beginner::context::{Game, Seconds, StartupGame};
+pub use crate::beginner::custom_rules::{
+    CountdownRuleAuthor, CustomRuleAuthor, TaggedCustomRuleAuthor,
+};
 pub use crate::beginner::debug::DebugOverlay;
 pub use crate::beginner::defaults::TopDownGameAuthor;
 pub use crate::beginner::defaults::{
@@ -69,7 +72,10 @@ pub use crate::beginner::ui::{
 pub use crate::bundle::vec2s;
 /// Defines a content plugin without requiring `GamePlugin` boilerplate.
 pub use crate::content_plugin;
-pub use crate::data::{BeginnerAssetsFile, BeginnerGameFile, BeginnerMapFile, BeginnerPrefabFile};
+pub use crate::data::{
+    BeginnerAssetsFile, BeginnerControlsFile, BeginnerGameFile, BeginnerMapFile,
+    BeginnerPrefabFile, BeginnerRuleFile,
+};
 pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
 pub use crate::map::MapAuthor;
 pub use crate::prefab::{IntoContentName, IntoMovementAxis};

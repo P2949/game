@@ -95,7 +95,7 @@ Start a project from anywhere with
 `cargo generate gh:P2949/game templates/simple-demo`; it creates a one-file
 beginner game with a git dependency on `game-starter`. From a local checkout,
 `cargo xtask new-demo my-game` creates the same starter with a local path
-dependency. Use `cargo xtask new-demo my-game --data-driven` when you want the
+dependency. Use `cargo xtask new-demo my-game --template data-driven` when you want the
 same first-game setup in editable `assets/game.ron` instead. `simple-content`,
 `arena-content`, and `examples/one-file-demo` remain useful examples to copy.
 `testbed-content` is intentionally advanced; see the [advanced authoring
@@ -106,18 +106,29 @@ are the normal starting points.
 
 ## Authoring levels
 
-- **Beginner / copy this first:** `examples/one-file-demo`,
+- **No-Rust data-driven:** edit `assets/game.ron` and text maps. Start with
+  `templates/data-driven-demo` or `examples/data-driven-full-demo` when the game
+  should be made mostly from data files.
+- **Beginner Rust builder chains:** use `game_starter::prelude::*` with
+  high-level builders for assets, prefabs, maps, actions, scenes, sound,
+  animation, and rules. Start with `examples/one-file-demo`,
   `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
-  `simple-content`, and `templates/simple-demo`. These use the high-level
-  beginner API for players, enemies, maps, actions, scenes, sound, animation,
-  and top-down rules.
-- **Structured beginner Rust:** `arena-content`. It uses the same high-level
-  beginner API but organizes assets, maps, and plugin setup across small files.
-- **Advanced / do not copy first:** `testbed-content`. It is an advanced lab
-  for custom prefabs, manual systems, queries, RON maps, and lower-level facade
-  APIs.
+  `simple-content`, and `templates/simple-demo`.
+- **Advanced game-kit/testbed content:** use explicit advanced APIs only when
+  you need custom systems, raw prefabs, queries, or lower-level engine-shaped
+  content. `testbed-content` is intentionally advanced and is not the beginner
+  sample.
 - **Engine/runtime API:** internal engine, runtime, renderer, platform, and
-  audio crates. Not for content.
+  audio crates. Not for beginner content.
+
+| Feature | No-Rust data-driven | Beginner Rust | Advanced |
+| --- | --- | --- | --- |
+| Player/enemy/pickups | yes | yes | yes |
+| Doors/maps/scenes | yes | yes | yes |
+| Projectiles/spawners | yes | yes | yes |
+| Custom countdown/explosion | yes/basic | yes | yes/manual |
+| Custom ECS systems | no | no | yes |
+| No Rust required | yes | no | no |
 
 ## What should I copy?
 
@@ -125,7 +136,8 @@ If you are new:
 
 1. Copy `examples/one-file-demo`.
 2. Then read `examples/no-rust-shapes-demo`.
-3. Then use `cargo xtask new-demo my-game` to create your own demo.
+3. Then use `cargo xtask new-demo my-game` to create your own Rust demo, or
+   `cargo xtask new-demo my-game --template data-driven` for a no-Rust demo.
 
 If you want a workspace content crate:
 

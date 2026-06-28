@@ -29,6 +29,11 @@ using it as a beginner starting point.
 14. [Fast iteration](12-fast-iteration.md)
 15. [Data-driven first game](13-data-driven-demo.md)
 
+Choose the no-Rust data-driven path when you want to edit `assets/game.ron` and
+text maps. Choose beginner Rust builder chains when you want custom behavior in
+`src/main.rs`. Advanced `testbed-content` remains available for lower-level
+engine-shaped experiments, but it is not the first path.
+
 Keep [common errors](common-errors.md) nearby while editing. The messages are
 written to point back to the builder call that fixes the problem.
 

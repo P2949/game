@@ -10,9 +10,11 @@
 The editable RON file is intentionally small:
 
 - `assets.textures`, `sounds`, and `music` can register conventional asset names.
-- `prefabs` define players, enemies, and pickups.
+- `controls: TopDown` selects the standard beginner controls.
+- `prefabs` define players, enemies, pickups, and other supported objects.
 - `maps` connects a text map and its `P`/`E`/`C` legend to prefabs.
-- `rules` selects the common first-game behaviors.
+- `rules` selects common first-game behaviors with names like
+  `TopDownControls`, `PlayerCollectsPickups`, and `ShowScore`.
 
 The map symbols are:
 
@@ -31,5 +33,5 @@ you outgrow the standard rules.
 From a local checkout, run:
 
 ```bash
-cargo xtask new-demo my-game --data-driven
+cargo xtask new-demo my-game --template data-driven
 ```

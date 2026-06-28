@@ -797,6 +797,22 @@ fn parse_animation_sheet_metadata(
     Ok((metadata.texture, metadata.columns, metadata.rows, clips))
 }
 
+fn resolve_metadata_texture_path(metadata_path: &str, texture: String) -> String {
+    let texture_path = Path::new(&texture);
+    if texture_path.is_absolute() {
+        return texture;
+    }
+
+    let metadata_path = Path::new(metadata_path);
+    if metadata_path.is_absolute()
+        && let Some(asset_root) = metadata_path.parent().and_then(Path::parent)
+    {
+        return asset_root.join(texture_path).to_string_lossy().into_owned();
+    }
+
+    texture
+}
+
 impl<'a> AssetAuthor<'a> {
     pub(crate) fn new(registry: &'a mut AssetRegistry) -> Self {
         Self { registry }
@@ -847,6 +863,7 @@ impl<'a> AssetAuthor<'a> {
             )
         })?;
         let (texture, columns, rows, clips) = parse_animation_sheet_metadata(&path, &source)?;
+        let texture = resolve_metadata_texture_path(&path, texture);
         let sheet = self.spritesheet(key, texture, columns, rows)?;
         Ok(AnimationSheet::new(sheet, clips))
     }

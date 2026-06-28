@@ -3,7 +3,7 @@
     assets: (
         textures: ["player", "slime", "coin", "floor", "wall"],
     ),
-    controls: "top_down",
+    controls: TopDown,
     prefabs: [
         Player((
             name: "player",
@@ -36,11 +36,11 @@
         )),
     ],
     rules: [
-        "top_down_controls",
-        "player_collects_pickups",
-        "enemies_damage_player",
-        "camera_follows_player",
-        "show_score",
-        "show_player_health",
+        TopDownControls,
+        PlayerCollectsPickups,
+        EnemiesDamagePlayer,
+        CameraFollowsPlayer,
+        ShowScore,
+        ShowPlayerHealth,
     ],
 )

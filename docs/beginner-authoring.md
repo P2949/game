@@ -1,11 +1,14 @@
 # Beginner authoring
 
 Start here when you want to make a small game rather than study engine internals.
-Use one of these two beginner paths:
+Use one of these beginner paths:
 
-1. **Standalone game (start here):** `use game_starter::prelude::*;` and
+1. **No-Rust data file:** edit `assets/game.ron` and `assets/maps/*.txt`.
+   Start with `templates/data-driven-demo` or
+   `examples/data-driven-full-demo`.
+2. **Standalone Rust game:** `use game_starter::prelude::*;` and
    `run_game("My Game", |game| { ... })` in one `main.rs` file.
-2. **Workspace content crate:** `use game_kit::beginner::prelude::*;` and
+3. **Workspace content crate:** `use game_kit::beginner::prelude::*;` and
    `content_plugin!(MyContent, plugin, |game| { ... });`. The macro gives the
    workspace a plugin without making you write the crate glue yourself.
 
@@ -14,7 +17,9 @@ content-crate files.
 
 ## Choose your starting point
 
-- **Beginner / copy this first:** `examples/one-file-demo`,
+- **No-Rust / edit data first:** `templates/data-driven-demo` and
+  `examples/data-driven-full-demo`.
+- **Beginner Rust / copy this first:** `examples/one-file-demo`,
   `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
   `simple-content`, and `templates/simple-demo`.
 - **Structured beginner Rust:** `arena-content`, which uses the same
@@ -23,6 +28,15 @@ content-crate files.
 - **Advanced / do not copy first:** `testbed-content`. It is a lab for manual
   systems, RON maps, tuple prefabs, direct component composition, custom
   state, and lower-level facade APIs.
+
+| Feature | No-Rust data-driven | Beginner Rust | Advanced |
+| --- | --- | --- | --- |
+| Player/enemy/pickups | yes | yes | yes |
+| Doors/maps/scenes | yes | yes | yes |
+| Projectiles/spawners | yes | yes | yes |
+| Custom countdown/explosion | yes/basic | yes | yes/manual |
+| Custom ECS systems | no | no | yes |
+| No Rust required | yes | no | no |
 
 ## When to use typed assets
 
@@ -88,6 +102,22 @@ Filename stems become names: `assets/textures/player.png` becomes `"player"`,
 files should stop setup with a direct diagnostic.
 
 The beginner helpers keep engine details out of your game code.
+
+## Data-driven files
+
+New data files use a version and structured names:
+
+```ron
+version: 1,
+controls: TopDown,
+rules: [TopDownControls, PlayerCollectsPickups, ShowBasicUi],
+```
+
+Legacy string controls and rules still load, but current templates use the
+structured form. The data path compiles through the same public beginner
+builders as Rust content, covering players, enemies, pickups, doors,
+projectiles, spawners, triggers, checkpoints, scene flow, music, player
+shooting, enemy drops, UI, win conditions, and a countdown custom-rule helper.
 
 ## Fast map iteration
 

@@ -5,9 +5,11 @@ const PLACEHOLDER_PNG: &str = include_str!("assets/template-placeholder.png.base
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/template-placeholder.png.base64");
+
     let textures = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/textures");
     fs::create_dir_all(&textures).expect("create template texture directory");
     let image = decode_base64(PLACEHOLDER_PNG.trim());
+
     for name in ["player", "slime", "coin", "floor", "wall"] {
         let path = textures.join(format!("{name}.png"));
         if !path.exists() {
@@ -27,17 +29,30 @@ fn decode_base64(input: &str) -> Vec<u8> {
             _ => panic!("template placeholder is not valid base64"),
         }
     }
+
     let mut output = Vec::with_capacity(input.len() * 3 / 4);
     let bytes = input
         .bytes()
         .filter(|byte| !byte.is_ascii_whitespace())
         .collect::<Vec<_>>();
-    assert!(bytes.len().is_multiple_of(4), "invalid base64 length");
+    assert!(
+        bytes.len().is_multiple_of(4),
+        "template placeholder has an invalid base64 length"
+    );
     for chunk in bytes.chunks(4) {
         let first = value(chunk[0]);
         let second = value(chunk[1]);
-        let third = chunk.get(2).copied().filter(|byte| *byte != b'=').map(value);
-        let fourth = chunk.get(3).copied().filter(|byte| *byte != b'=').map(value);
+        let third = chunk
+            .get(2)
+            .copied()
+            .filter(|byte| *byte != b'=')
+            .map(value);
+        let fourth = chunk
+            .get(3)
+            .copied()
+            .filter(|byte| *byte != b'=')
+            .map(value);
+
         output.push((first << 2) | (second >> 4));
         if let Some(third) = third {
             output.push((second << 4) | (third >> 2));

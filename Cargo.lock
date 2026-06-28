@@ -249,6 +249,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-driven-full-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
 name = "dialog-demo"
 version = "0.1.0"
 dependencies = [

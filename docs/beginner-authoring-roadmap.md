@@ -22,6 +22,10 @@ maps, rules, scene flow, sound, animation, and common gameplay events without ra
 tuple bundles or manual ECS traversal. Advanced content can still use those
 lower-level APIs deliberately.
 
+The main architecture split is complete. The remaining finish line is
+data-driven parity, authoring polish, validation, templates, docs, and runtime
+proof for the no-Rust `assets/game.ron` path.
+
 ## Target Beginner API
 
 Beginner content should mostly read in game terms:

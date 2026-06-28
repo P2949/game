@@ -50,3 +50,36 @@ fn headless_backends_drive_the_complete_content_runtime_loop() {
         "audio commands should flow through the runtime backend trait"
     );
 }
+
+#[test]
+fn headless_backends_drive_data_driven_beginner_file() {
+    let content = plugin_fn(|game| {
+        game.load_beginner_file("game.ron")?;
+        Ok(())
+    });
+    let mut runner = GameTestHarness::build_runtime(content, |builder| {
+        Runner::new(
+            RuntimeConfig::default(),
+            builder,
+            ".",
+            HeadlessPlatform::default(),
+            HeadlessRenderer::default(),
+            Some(HeadlessAudio::default()),
+        )
+    })
+    .unwrap();
+
+    runner
+        .step_frame(Duration::from_secs_f32(1.0 / 60.0))
+        .unwrap();
+
+    let frame = runner
+        .renderer()
+        .frames()
+        .last()
+        .expect("the runtime should submit a data-driven frame");
+    assert!(
+        !frame.world_sprites.is_empty(),
+        "data-driven content should produce world sprites through the runtime"
+    );
+}

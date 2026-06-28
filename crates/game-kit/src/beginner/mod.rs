@@ -11,6 +11,7 @@ pub mod camera;
 pub mod collections;
 pub mod combat;
 pub mod context;
+pub mod custom_rules;
 pub mod debug;
 pub mod defaults;
 pub mod events;

@@ -109,20 +109,14 @@ fn main() -> Result<()> {
             game.play_sound_named("shoot");
         });
 
-        game.every_active_tick::<SimpleGameState>(|game, dt| {
-            let mut explosions = Vec::new();
-            game.actors_tagged("explosive").for_each(|actor| {
-                let remaining = actor.data("fuse").unwrap_or(0.0) - dt;
-                actor.set_data("fuse", remaining);
-                if remaining <= 0.0 {
-                    explosions.push(actor.position());
-                }
-            });
-            for position in explosions.into_iter().flatten() {
-                game.actors_tagged("enemy").near(position, 48.0).damage(20);
-                game.player().damage_if_near(position, 48.0, 20);
-            }
-        });
+        game.custom_rule("explosive fuse")
+            .for_each_tag("explosive")
+            .countdown("fuse")
+            .when_zero()
+            .damage_tag("enemy", 20, 48.0)
+            .damage_player(20, 48.0)
+            .despawn_self()
+            .build();
 
         Ok(())
     })
