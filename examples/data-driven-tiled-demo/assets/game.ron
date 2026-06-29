@@ -1,0 +1,42 @@
+(
+    version: 1,
+    assets: (
+        textures: ["player", "slime", "floor", "wall"],
+    ),
+    controls: TopDown,
+    prefabs: [
+        Player((
+            name: "player",
+            sprite: "player",
+            speed: 130.0,
+            health: 100,
+        )),
+        Enemy((
+            name: "slime",
+            sprite: "slime",
+            speed: 70.0,
+            health: 40,
+            chase_player: true,
+            melee: Some((range: 26.0, damage: 6)),
+        )),
+    ],
+    maps: [
+        Tiled((
+            name: "level_1",
+            path: "maps/tiled_demo.tmx",
+            theme: ("floor", "wall"),
+            objects: {
+                "Player": "player",
+                "Slime": "slime",
+            },
+            start: true,
+        )),
+    ],
+    rules: [
+        TopDownControls,
+        EnemiesDamagePlayer,
+        CameraFollowsPlayer,
+        PauseAndReset,
+        ShowPlayerHealth,
+    ],
+)

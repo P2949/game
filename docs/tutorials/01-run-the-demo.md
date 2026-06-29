@@ -101,6 +101,16 @@ debug overlay.
 
 ## Common errors
 
+From a generated project, run the quick project check before chasing individual
+errors:
+
+```bash
+game-dev check
+```
+
+It runs the setup doctor, validates assets, validates `assets/game.ron` when
+present, and then runs `cargo check`.
+
 If startup reports a missing asset, check the path passed to
 `game.asset_bag().texture(...)` or `.sound(...)`. The path should not include
 the leading `assets/` directory.

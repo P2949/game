@@ -1,0 +1,15 @@
+[package]
+name = "data-driven-tiled-demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+build = "build.rs"
+
+[dependencies]
+game-starter = { version = "0.1.0", path = "../../crates/game-starter" }
+
+[features]
+ci-build-sdl3 = ["game-starter/ci-build-sdl3"]

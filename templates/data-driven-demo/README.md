@@ -49,8 +49,9 @@ respawns the current map. Future spawns from beginner rules use the updated
 prefab values too, and existing custom countdown rule details, scene text, and
 audio scene settings reload. Existing action settings reload when their input
 binding stays the same. Adding, removing, or reordering asset, prefab, map, or
-custom rule names requires a restart, as do changes to scene names, action
-input bindings, or the enabled rule list.
+custom rule names requires a restart, as do changes to scene names,
+adding/removing/reordering actions, action input bindings, or the enabled rule
+list.
 
 ## Project tools
 
@@ -64,6 +65,7 @@ Useful commands:
 
 ```bash
 game-dev doctor
+game-dev check
 game-dev run
 game-dev asset-check
 game-dev validate-data

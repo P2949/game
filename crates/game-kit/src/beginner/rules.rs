@@ -1228,8 +1228,8 @@ mod tests {
             .or_else(|| panic.downcast_ref::<&str>().copied())
             .unwrap_or("<non-string panic>");
 
-        assert!(message.contains("Rule ProjectilesDamageEnemies needs the Projectiles rule"));
-        assert!(message.contains("Add .projectiles()"));
+        assert!(message.contains("Rule `projectiles_damage_enemies` needs the `projectiles` rule"));
+        assert!(message.contains("Add `.projectiles()`"));
     }
 
     #[test]

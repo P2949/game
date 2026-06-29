@@ -1816,6 +1816,7 @@ fn validate_file_with_base(
         .iter()
         .flat_map(BeginnerPrefabFile::tags)
         .collect::<Vec<_>>();
+    let prefab_data = build_prefab_data_index(&file.prefabs);
     let scene_names = scene_names(file);
     let scene_name_refs = scene_names.iter().map(String::as_str).collect::<Vec<_>>();
 
@@ -1848,10 +1849,22 @@ fn validate_file_with_base(
 
     for map in &file.maps {
         for (owner, texture) in map.texture_refs() {
-            require_known(label, "texture", owner, texture, &textures)?;
+            require_known(
+                label,
+                "texture",
+                &format!("map '{owner}'"),
+                texture,
+                &textures,
+            )?;
         }
         for (owner, prefab) in map.prefab_refs() {
-            require_known(label, "prefab", owner, prefab, &prefab_names)?;
+            require_known(
+                label,
+                "prefab",
+                &format!("map '{owner}'"),
+                prefab,
+                &prefab_names,
+            )?;
         }
         validate_map_file(label, map, asset_base)?;
     }
@@ -1869,7 +1882,7 @@ fn validate_file_with_base(
         scenes: &scene_name_refs,
         tags: &tags,
     };
-    validate_custom_rules(label, &file.custom_rules, &names)?;
+    validate_custom_rules(label, &file.custom_rules, &names, &prefab_data)?;
 
     for rule in &file.rules {
         rule.identity(label)?;
@@ -2102,10 +2115,37 @@ struct ValidationNames<'a> {
     tags: &'a [&'a str],
 }
 
+#[derive(Default)]
+struct PrefabDataIndex {
+    tags: BTreeSet<String>,
+    tag_to_data_keys: BTreeMap<String, BTreeSet<String>>,
+    tag_to_prefabs: BTreeMap<String, Vec<String>>,
+}
+
+fn build_prefab_data_index(prefabs: &[BeginnerPrefabFile]) -> PrefabDataIndex {
+    let mut index = PrefabDataIndex::default();
+    for prefab in prefabs {
+        let name = prefab.name();
+        let data_keys = prefab.data_keys();
+        for tag in prefab.tags() {
+            index.tags.insert(tag.to_owned());
+            index
+                .tag_to_prefabs
+                .entry(tag.to_owned())
+                .or_default()
+                .push(name.to_owned());
+            let keys = index.tag_to_data_keys.entry(tag.to_owned()).or_default();
+            keys.extend(data_keys.iter().map(|key| (*key).to_owned()));
+        }
+    }
+    index
+}
+
 fn validate_custom_rules(
     label: &str,
     custom_rules: &[CustomRuleFile],
     names: &ValidationNames<'_>,
+    prefab_data: &PrefabDataIndex,
 ) -> Result<()> {
     for custom_rule in custom_rules {
         match custom_rule {
@@ -2129,6 +2169,7 @@ fn validate_custom_rules(
                     &rule.tag,
                     names.tags,
                 )?;
+                validate_countdown_key_for_tag(label, rule, prefab_data)?;
                 for effect in &rule.when_zero {
                     match effect {
                         RuleEffectFile::DamageTagged { tag, radius, .. } => {
@@ -2244,6 +2285,77 @@ fn validate_custom_rules(
         }
     }
     Ok(())
+}
+
+fn validate_countdown_key_for_tag(
+    label: &str,
+    rule: &CountdownRuleFile,
+    prefab_data: &PrefabDataIndex,
+) -> Result<()> {
+    if !prefab_data.tags.contains(&rule.tag) {
+        anyhow::bail!(
+            "beginner game file '{label}' custom rule '{}' counts down tag '{}', but no prefab declares that tag",
+            rule.name,
+            rule.tag
+        );
+    }
+
+    let keys = prefab_data
+        .tag_to_data_keys
+        .get(&rule.tag)
+        .cloned()
+        .unwrap_or_default();
+    if keys.contains(&rule.key) {
+        return Ok(());
+    }
+
+    let prefabs = prefab_data
+        .tag_to_prefabs
+        .get(&rule.tag)
+        .cloned()
+        .unwrap_or_default();
+    let known = keys.iter().map(String::as_str).collect::<Vec<_>>();
+    let suggestion = closest_name(&rule.key, known.iter().copied())
+        .map(|candidate| format!("\n\nDid you mean '{candidate}'?"))
+        .unwrap_or_default();
+    let empty_keys_note = if keys.is_empty() {
+        format!(
+            "\n\nNo prefab tagged '{}' declares any data keys.",
+            rule.tag
+        )
+    } else {
+        String::new()
+    };
+
+    anyhow::bail!(
+        "beginner game file '{label}' custom rule '{}' counts down key '{}' on tag '{}', but no prefab with that tag declares that data key.\n\nPrefabs with tag '{}': {}\nKnown data keys for tag '{}': {}{}{}\n\nFix: add data: {{\"{}\": 3.0}} to one of those prefabs, or change the rule key to one of the known data keys.",
+        rule.name,
+        rule.key,
+        rule.tag,
+        rule.tag,
+        joined_strings_or_none(&prefabs),
+        rule.tag,
+        joined_names_or_none(&known),
+        empty_keys_note,
+        suggestion,
+        rule.key,
+    );
+}
+
+fn joined_strings_or_none(values: &[String]) -> String {
+    if values.is_empty() {
+        "(none)".to_owned()
+    } else {
+        values.join(", ")
+    }
+}
+
+fn joined_names_or_none(values: &[&str]) -> String {
+    if values.is_empty() {
+        "(none)".to_owned()
+    } else {
+        values.join(", ")
+    }
 }
 
 fn validate_radius(label: &str, owner: &str, radius: f32) -> Result<()> {
@@ -2800,6 +2912,19 @@ impl BeginnerPrefabFile {
         }
     }
 
+    fn data_keys(&self) -> Vec<&str> {
+        match self {
+            Self::Player(prefab) => prefab.data.keys().map(String::as_str).collect(),
+            Self::Enemy(prefab) => prefab.data.keys().map(String::as_str).collect(),
+            Self::Pickup(prefab) => prefab.data.keys().map(String::as_str).collect(),
+            Self::Door(prefab) => prefab.data.keys().map(String::as_str).collect(),
+            Self::Projectile(prefab) => prefab.data.keys().map(String::as_str).collect(),
+            Self::Spawner(_) => Vec::new(),
+            Self::Trigger(prefab) => prefab.data.keys().map(String::as_str).collect(),
+            Self::Checkpoint(prefab) => prefab.data.keys().map(String::as_str).collect(),
+        }
+    }
+
     fn validate_numbers(&self, label: &str) -> Result<()> {
         match self {
             Self::Projectile(prefab) => {
@@ -3070,7 +3195,7 @@ mod tests {
         Projectile((name: "bolt", sprite: "bolt", damage: 2, speed: 260.0, lifetime: 0.8)),
         Spawner((name: "spawner", spawn: "slime", every_seconds: 2.0, max_alive: Some(4), placement: NearPlayer(96.0))),
         Door((name: "exit", sprite: "door", action: ChangeMap("level_2"))),
-        Trigger((name: "danger", size: (32.0, 32.0), visible_debug: Some("spawner_debug"), tags: ["danger"])),
+        Trigger((name: "danger", size: (32.0, 32.0), visible_debug: Some("spawner_debug"), tags: ["danger"], data: {"fuse": 0.01})),
         Checkpoint((name: "checkpoint", sprite: "checkpoint")),
     ],
     maps: [
@@ -3444,6 +3569,27 @@ mod tests {
         fs::write(dir.join("maps").join(name), contents).unwrap();
     }
 
+    fn assert_reload_error_contains(initial: String, updated: String, expected: &str) {
+        let dir = temp_data_project("reload-identity");
+        write_map(&dir, "level.txt", "#####\n#P..#\n#####\n");
+        write_map(&dir, "level_2.txt", "#####\n#P..#\n#####\n");
+        let game_file = dir.join("game.ron");
+        fs::write(&game_file, initial).unwrap();
+
+        let mut game = GameTestHarness::from_plugin(TempFileDataPlugin {
+            path: game_file.to_string_lossy().into_owned(),
+            debug: true,
+        })
+        .unwrap();
+
+        fs::write(&game_file, updated).unwrap();
+        game.tap_action("reload");
+
+        game.frame(1.0 / 60.0);
+        game.assert_ui_contains("game.ron reload: partial");
+        game.assert_ui_contains(expected);
+    }
+
     fn reload_game_ron(map_file: &str, extra_textures: &str) -> String {
         format!(
             r#"(
@@ -3685,6 +3831,47 @@ mod tests {
     }
 
     #[test]
+    fn f5_rejects_added_prefabs_with_restart_required_diagnostic() {
+        let initial = reload_game_ron("level.txt", "");
+        let updated = initial.replace(
+            "        Enemy((name: \"slime\", sprite: \"slime\", health: 30)),",
+            "        Enemy((name: \"slime\", sprite: \"slime\", health: 30)),\n        Enemy((name: \"bat\", sprite: \"slime\", health: 15)),",
+        );
+
+        assert_reload_error_contains(initial, updated, "changed its prefabs list");
+    }
+
+    #[test]
+    fn f5_rejects_added_maps_with_restart_required_diagnostic() {
+        let initial = reload_game_ron("level.txt", "");
+        let updated = initial.replace(
+            "            start: true,\n        )),\n    ],",
+            "            start: true,\n        )),\n        TextMap((\n            name: \"level_2\",\n            path: \"maps/level_2.txt\",\n            theme: (\"floor\", \"wall\"),\n            legend: {'P': \"player\", 'E': \"slime\"},\n            start: false,\n        )),\n    ],",
+        );
+
+        assert_reload_error_contains(initial, updated, "changed its maps list");
+    }
+
+    #[test]
+    fn f5_rejects_added_scene_flow_with_restart_required_diagnostic() {
+        let initial = reload_game_ron("level.txt", "");
+        let updated = initial.replace(
+            "    rules: [",
+            "    scene_flow: Some((menu: Some(\"menu\"), game: Some(\"level_1\"))),\n    rules: [",
+        );
+
+        assert_reload_error_contains(initial, updated, "changed its scene flow structure");
+    }
+
+    #[test]
+    fn f5_rejects_action_identity_changes_with_restart_required_diagnostic() {
+        let initial = action_reload_game_ron("level.txt", "Right");
+        let updated = initial.replace("action: Attack", "action: Reload");
+
+        assert_reload_error_contains(initial, updated, "changed its actions");
+    }
+
+    #[test]
     fn f5_reloads_existing_custom_countdown_rule_values() {
         let dir = temp_data_project("reload-countdown-rule");
         write_map(&dir, "level.txt", "#####\n#PD.#\n#####\n");
@@ -3839,6 +4026,22 @@ mod tests {
     }
 
     #[test]
+    fn validation_names_bad_map_symbols_with_row_and_column() {
+        let dir = temp_data_project("bad-map-symbol");
+        write_map(&dir, "beginner_text_map.txt", "#####\n#PZ.#\n#####\n");
+        write_map(&dir, "level_1.txt", "#####\n#P.E#\n#####\n");
+        let file: BeginnerGameFile = ron::from_str(GAME).unwrap();
+        let error = validate_file_with_base(&file, "game.ron", Some(&dir))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("map 'level_1' has an invalid symbol"));
+        assert!(error.contains("uses symbol 'Z'"));
+        assert!(error.contains("At row 2, col 3"));
+        assert!(error.contains(".legend('Z', \"some_prefab\")"));
+    }
+
+    #[test]
     fn validation_names_unknown_prefab_assets_and_lists_known_keys() {
         let source = GAME.replace("sprite: \"player\"", "sprite: \"plaeyr\"");
         let file: BeginnerGameFile = ron::from_str(&source).unwrap();
@@ -3857,6 +4060,50 @@ mod tests {
         let error = validate_file(&file, "game.ron").unwrap_err().to_string();
 
         assert!(error.contains("references unknown prefab 'slmie'"));
+        assert!(error.contains("Did you mean 'slime'?"));
+    }
+
+    #[test]
+    fn validation_names_unknown_tiled_object_prefabs() {
+        let dir = temp_data_project("tiled-object-prefab");
+        fs::write(
+            dir.join("maps/tiled_demo.tmx"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<map width="5" height="3" tilewidth="32" tileheight="32">
+  <layer name="Collision" width="5" height="3"><data encoding="csv">1,1,1,1,1,1,0,0,0,1,1,1,1,1,1</data></layer>
+</map>
+"#,
+        )
+        .unwrap();
+        let source = r#"(
+    version: 1,
+    assets: (
+        textures: ["player", "slime", "floor", "wall"],
+    ),
+    controls: TopDown,
+    prefabs: [
+        Player((name: "player", sprite: "player")),
+        Enemy((name: "slime", sprite: "slime")),
+    ],
+    maps: [
+        Tiled((
+            name: "level_1",
+            path: "maps/tiled_demo.tmx",
+            theme: ("floor", "wall"),
+            objects: {"Player": "player", "Slime": "slmie"},
+            start: true,
+        )),
+    ],
+    rules: [
+        TopDownControls,
+    ],
+)"#;
+        let file: BeginnerGameFile = ron::from_str(source).unwrap();
+        let error = validate_file_with_base(&file, "game.ron", Some(&dir))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("map 'level_1' references unknown prefab 'slmie'"));
         assert!(error.contains("Did you mean 'slime'?"));
     }
 
@@ -3937,6 +4184,38 @@ mod tests {
         assert!(error.contains("Known tags:"));
         assert!(error.contains("danger"));
         assert!(error.contains("Did you mean 'danger'?"));
+    }
+
+    #[test]
+    fn custom_countdown_accepts_declared_data_key_for_known_tag() {
+        let file: BeginnerGameFile = ron::from_str(GAME).unwrap();
+        validate_file(&file, "game.ron").unwrap();
+    }
+
+    #[test]
+    fn custom_countdown_rejects_unknown_data_key_for_known_tag() {
+        let source = GAME.replace("key: \"fuse\"", "key: \"fues\"");
+        let file: BeginnerGameFile = ron::from_str(&source).unwrap();
+        let error = validate_file(&file, "game.ron").unwrap_err().to_string();
+
+        assert!(error.contains("custom rule 'danger fuse' counts down key 'fues' on tag 'danger'"));
+        assert!(error.contains("but no prefab with that tag declares that data key"));
+        assert!(error.contains("Prefabs with tag 'danger': danger"));
+        assert!(error.contains("Known data keys for tag 'danger': fuse"));
+        assert!(error.contains("Did you mean 'fuse'?"));
+        assert!(error.contains("Fix: add data: {\"fues\": 3.0}"));
+    }
+
+    #[test]
+    fn custom_countdown_error_explains_tags_without_data_keys() {
+        let source = GAME.replace(", data: {\"fuse\": 0.01}", "");
+        let file: BeginnerGameFile = ron::from_str(&source).unwrap();
+        let error = validate_file(&file, "game.ron").unwrap_err().to_string();
+
+        assert!(error.contains("custom rule 'danger fuse' counts down key 'fuse' on tag 'danger'"));
+        assert!(error.contains("Prefabs with tag 'danger': danger"));
+        assert!(error.contains("Known data keys for tag 'danger': (none)"));
+        assert!(error.contains("No prefab tagged 'danger' declares any data keys."));
     }
 
     #[test]
@@ -4034,9 +4313,9 @@ mod tests {
         let file: BeginnerGameFile = ron::from_str(&source).unwrap();
         let error = validate_file(&file, "game.ron").unwrap_err().to_string();
 
-        assert!(error.contains("Rule ProjectilesDamageEnemies needs the Projectiles rule"));
-        assert!(error.contains("Add .projectiles()"));
-        assert!(error.contains(".projectiles_damage_enemies()"));
+        assert!(error.contains("Rule `projectiles_damage_enemies` needs the `projectiles` rule"));
+        assert!(error.contains("Add `.projectiles()`"));
+        assert!(error.contains("`.projectiles_damage_enemies()`"));
     }
 
     #[test]

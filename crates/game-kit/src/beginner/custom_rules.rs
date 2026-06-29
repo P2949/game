@@ -167,7 +167,13 @@ fn countdown_rule_system(
 
 fn tick_countdown(game: &mut GameCtx<'_, '_>, actor: EntityId, key: &str, dt: f32) -> Option<Vec2> {
     let values = game.component_mut::<NamedValues>(actor)?;
-    let remaining = values.get_f32(key).unwrap_or_default() - dt.max(0.0);
+    let Some(current) = values.get_f32(key) else {
+        log::warn!(
+            "custom countdown key '{key}' was missing on an actor; validation should have caught this"
+        );
+        return None;
+    };
+    let remaining = current - dt.max(0.0);
     values.set_f32(key, remaining);
     (remaining <= 0.0).then(|| game.position(actor)).flatten()
 }
@@ -355,6 +361,41 @@ mod tests {
         }
     }
 
+    struct MissingCountdownKeyPlugin;
+
+    impl GamePlugin for MissingCountdownKeyPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            let controls = game.input(|input| input.top_down_controls())?;
+            game.player_prefab("player")
+                .sprite(TextureHandle(1))
+                .moves_with(controls.movement, 130.0)
+                .health(100)
+                .build()?;
+            game.enemy_prefab("bomber")
+                .sprite(TextureHandle(2))
+                .tag("explosive")
+                .data("fuse", 0.01)
+                .health(10)
+                .build()?;
+            game.map("rules")
+                .tiles(["#####", "#PB.#", "#####"])
+                .simple_theme(TextureHandle(10), TextureHandle(11))
+                .legend('P', "player")
+                .legend('B', "bomber")
+                .start();
+            game.on_start(|game| game.spawn_start_map());
+            game.rules().top_down_controls(controls).build();
+            game.custom_rule("fuse")
+                .each_tag("explosive")
+                .countdown("fues")
+                .when_zero()
+                .damage_player(10, 80.0)
+                .despawn_self()
+                .build();
+            Ok(())
+        }
+    }
+
     #[test]
     fn countdown_rule_applies_effects_without_user_loop_code() {
         let mut game = GameTestHarness::from_plugin(CountdownPlugin).unwrap();
@@ -363,5 +404,15 @@ mod tests {
 
         assert!(game.player().health() < 100);
         assert!(game.enemy_count() < 2 || game.enemies().iter().any(|enemy| enemy.health() < 10));
+    }
+
+    #[test]
+    fn countdown_missing_key_does_not_expire_immediately() {
+        let mut game = GameTestHarness::from_plugin(MissingCountdownKeyPlugin).unwrap();
+
+        game.step_seconds(0.02);
+
+        assert_eq!(game.player().health(), 100);
+        assert_eq!(game.enemy_count(), 1);
     }
 }

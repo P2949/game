@@ -8,13 +8,18 @@ harder to misuse, and friendlier when something goes wrong.
 ## Current State
 
 - Architecture status: complete.
-- Productization status: in progress.
+- Beginner Productization 1.0 status: local release gate passes; release
+  workflow artifact publication still needs a pushed commit and workflow run.
 - Beginner entry points:
   - `game_starter::prelude::*` for standalone beginner projects.
   - `game_kit::beginner::prelude::*` for beginner content crates.
   - `game_kit::advanced::prelude::*` for advanced systems and testbed content.
 - Advanced content remains intentionally separate; `testbed-content` is an
   advanced lab and should not be the first thing beginners copy.
+- Remaining release-candidate items:
+  - run `.github/workflows/release.yml` manually or on a test tag to publish
+    Linux/Windows demo artifacts,
+  - update generated-template dependency pins when a release tag is published.
 
 ## Beginner Productization 1.0 Acceptance Criteria
 
@@ -46,24 +51,26 @@ GameCtx, StartupGameCtx, EntityId, Component, raw ECS traversal,
 renderer/runtime/backend types, commands/resources internals
 ```
 
-## Phase Checklist
+## Phase Status
 
-- Phase 0: Freeze current baseline and add this productization checklist.
-- Phase 1: Replace beginner context aliases with beginner-only wrapper types.
-- Phase 2: Stabilize public import surfaces.
-- Phase 3: Validate generated projects outside the workspace in CI.
-- Phase 4: Add a standalone `game-dev` beginner CLI.
-- Phase 5: Improve first-run setup and doctor diagnostics.
-- Phase 6: Package generated projects.
-- Phase 7: Improve no-Rust data validation and reload status.
-- Phase 8: Expand script-like events and rules.
-- Phase 9: Make beginner diagnostics systematic and teaching-oriented.
-- Phase 10: Polish starter assets and asset workflow.
-- Phase 11: Curate the beginner learning path.
-- Phase 12: Grow the data-file DSL toward beginner Rust parity.
-- Phase 13: Make packaging and distribution beginner-obvious.
-- Phase 14: Add prebuilt demo artifacts.
-- Phase 15: Document beginner API stability and migrations.
-- Phase 16: Keep advanced content useful and clearly separate.
-- Phase 17: Add a first-15-minutes acceptance test.
-- Phase 18: Run the final beginner-friendliness gate.
+| Phase | Status | Current note |
+| --- | --- | --- |
+| Phase 0: Baseline verification | Done | Core cargo checks, CLI checks, generated-project checks, packaging, and graphical smoke pass when run through the documented Xvfb/lavapipe path. |
+| Phase 1: Beginner-only context wrappers | Done | `beginner::Game` and `StartupGame` exist. |
+| Phase 2: Import surfaces | Done | Beginner/advanced preludes exist; compatibility prelude is deprecated. |
+| Phase 3: Generated-project CI | Done | CI checks templates outside the workspace. |
+| Phase 4: Standalone CLI | Done | `game-dev` exists. |
+| Phase 5: Doctor diagnostics | Done / polish | `doctor --explain` and `game-dev check` exist. |
+| Phase 6: Packaging | Done | `game-dev package --zip` creates shareable packages. |
+| Phase 7: Data reload | Partial by design | Existing values can reload; structural list changes require restart. |
+| Phase 8: Script-like events/rules | Done / expandable | Hooks, events, structured rules, and custom-rule builders exist. |
+| Phase 9: Diagnostics | Mostly done | Known-name checks and countdown key validation exist; keep expanding messages as users hit new mistakes. |
+| Phase 10: Starter assets | Done / polish | Templates generate starter assets and maps. |
+| Phase 11: Tutorial path | Done / polish | Keep no-Rust, beginner Rust, Tiled, and advanced paths clearly separated. |
+| Phase 12: Data DSL parity | Mostly done | Structured conditions/effects exist; expand only as examples need it. |
+| Phase 13: Packaging docs | Done / verify | Package flow exists; continue verifying on release targets. |
+| Phase 14: Prebuilt artifacts | Done in workflow | Verify artifacts on a release tag. |
+| Phase 15: Stability/migrations | Initial done | CHANGELOG and migration docs exist; update per release. |
+| Phase 16: Advanced separation | Done | `testbed-content` remains advanced. |
+| Phase 17: First-15-minutes test | Done | Script exists and CI calls it. |
+| Phase 18: Final gate | Partial | `cargo xtask release-check --features ci-build-sdl3` passes locally through Xvfb/lavapipe, generated project/package checks pass, and a Linux demo zip dry-run was produced. The GitHub release workflow still needs to run from a pushed commit or test tag to publish Linux/Windows artifacts. |

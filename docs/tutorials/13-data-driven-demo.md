@@ -73,6 +73,10 @@ For a larger no-Rust reference, see `examples/data-driven-full-demo`. Its
 `assets/game.ron` includes doors, projectiles, spawners, checkpoints, music,
 player shooting, enemy drops, and a countdown custom rule.
 
+For visual TMX maps without Rust setup code, run `cargo run -p
+data-driven-tiled-demo`. For the equivalent beginner Rust API, run `cargo run
+-p tiled-demo` and read the [Tiled cookbook](../cookbook/tiled.md).
+
 For smaller focused references, copy:
 
 - `examples/data-driven-events-demo` for `When` conditions, score gates, and
@@ -80,6 +84,8 @@ For smaller focused references, copy:
 - `examples/data-driven-waves-demo` for timed spawns and tag-count rules
 - `examples/data-driven-projectiles-demo` for player shooting, projectile
   rules, and enemy-death effects
+- `examples/data-driven-tiled-demo` for Tiled TMX object mapping through
+  `assets/game.ron`
 
 ## Script rules
 
@@ -167,6 +173,7 @@ audio scene settings also reload. Existing action settings such as prefab,
 cooldown, direction, and sound reload when the input binding stays the same.
 Adding, removing, or reordering asset names, prefab names, map names, or custom
 rule names still requires a restart. Changing scene names, scene input bindings,
-action input bindings, or the enabled rule list also still requires a restart.
+adding/removing/reordering actions, action input bindings, or the enabled rule
+list also still requires a restart.
 The F1 debug overlay reports `game.ron reload: partial` and shows the latest
 error if validation fails.

@@ -14,27 +14,30 @@ using it as a beginner starting point.
 
 ## Tracks
 
-- **Track A: No-Rust data file.** Start with
-  [Data-driven first game](13-data-driven-demo.md) when you want to edit
-  `assets/game.ron`, maps, textures, and sounds before writing Rust.
-- **Track B: Beginner Rust.** Follow the numbered course below when you want a
-  one-file Rust game with beginner builder chains.
-- **Track C: Cookbook recipes.** Use the [cookbook](../cookbook/README.md)
-  after the course when you need one focused feature.
-- **Track D: Advanced API.** Read
-  [Advanced when needed](advanced-when-needed.md) only after beginner hooks,
-  rules, and data files no longer describe the thing you need.
+- **Track A: No Rust.** Use `templates/data-driven-demo`, then edit
+  `assets/game.ron`, maps, textures, and sounds. Start with
+  [Data-driven first game](13-data-driven-demo.md).
+- **Track B: Beginner Rust.** Use `templates/simple-demo`; follow tutorials 00-12.
+  This is the one-file Rust game path with beginner builder chains.
+- **Track C: Advanced.** Use the advanced path only when beginner APIs are insufficient.
+  Read [Advanced when needed](advanced-when-needed.md) after beginner hooks,
+  rules, data files, and
+  [cookbook recipes](../cookbook/README.md) no longer describe the thing you
+  need.
 
 ## Which Example Should I Copy?
 
 - **No Rust:** `templates/data-driven-demo`,
   `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
-  `examples/data-driven-projectiles-demo`
+  `examples/data-driven-projectiles-demo`,
+  `examples/data-driven-tiled-demo`
 - **First Rust game:** `templates/simple-demo`
 - **One-file example:** `examples/one-file-demo`
 - **Full beginner feature sample:** `examples/no-rust-shapes-demo`
 - **Custom behavior:** `examples/script-like-custom-rules`
-- **Do not copy first:** `testbed-content`
+- **Events:** `examples/events-demo`
+- **Tiled:** `examples/tiled-demo`
+- **Advanced lab:** `crates/testbed-content` - do not copy first
 
 ## Beginner Rust Course
 

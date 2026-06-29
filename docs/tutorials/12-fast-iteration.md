@@ -49,8 +49,23 @@ reparses and validates `assets/game.ron`. Existing data can change and the
 current map respawns from the updated file. Future spawns from beginner rules
 use the updated prefab values too, and existing custom countdown rule details
 reload. Scene text/buttons, audio scene settings, and existing action settings
-also reload when their scene names and input bindings stay the same. Adding, removing, or reordering asset, prefab, map, or custom rule names still requires a restart
+also reload when their scene names and input bindings stay the same. Adding, removing, or
+reordering asset, prefab, map, action, scene, or custom rule names still requires a restart
 so the runtime registries stay stable.
+
+| Change | F5 reload? | Notes |
+| --- | --- | --- |
+| Edit existing text map file | Yes | Current map can respawn. |
+| Change map path for existing map | Yes | Uses the existing map identity. |
+| Change existing prefab values | Partial | Runtime config updates for respawns and future beginner-rule spawns. |
+| Change existing custom countdown rule values | Partial | Tag/key identity must stay the same. |
+| Change existing scene text/menu/audio settings | Partial | Scene identity and input bindings must stay the same. |
+| Replace PNG/WAV for existing key | Yes | Registered asset handles are reloaded in place. |
+| Add a new prefab | No | Restart required. |
+| Add a new map | No | Restart required. |
+| Add a new texture key | No | Restart required. |
+| Add a new action | No | Restart required because action IDs are build-time. |
+| Add/remove/reorder scenes or rules | No | Restart required because runtime systems are not rebuilt dynamically. |
 
 Debug builds enable this automatically. For a release build, explicitly opt in:
 

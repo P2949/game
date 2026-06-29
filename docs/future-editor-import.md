@@ -35,14 +35,16 @@ Use Tiled when you prefer its object-layer workflow. The supported contract is
 an orthogonal square-tile XML TMX map with an uncompressed CSV layer named
 `Collision` (`0` floor, non-zero wall) and objects identified by class, type,
 or name. Map each identifier to a prefab with `.object(...)`; see the
-[Tiled cookbook](cookbook/tiled.md). Tilesets, visual tile layers, object
-properties, infinite maps, templates, and compressed/base64 data are not part
-of this initial importer.
+[Tiled cookbook](cookbook/tiled.md) and run `cargo run -p tiled-demo` for a
+copyable example. Tilesets, visual tile layers, object properties, infinite
+maps, templates, and compressed/base64 data are not part of this initial
+importer.
 
 ## Future work
 
 - Sprite-sheet metadata reload.
 - Richer LDtk mapping.
+- Richer Tiled mapping.
 
 Rust code, LDtk projects, and Tiled projects still require a restart.
 Registered textures reload in place, including files whose dimensions changed.

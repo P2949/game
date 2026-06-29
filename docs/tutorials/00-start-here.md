@@ -16,11 +16,12 @@ cargo generate --git https://github.com/P2949/game templates/simple-demo --name 
 cd my-game
 cargo install --git https://github.com/P2949/game game-cli
 game-dev doctor
+game-dev check
 game-dev run
 ```
 
 The generator asks for a project name and game title. It gives the project a
-git dependency on the pinned `game-starter` release tag; the first build
+git dependency on the pinned `game-starter` release-candidate revision; the first build
 creates tiny starter textures and sounds you can replace later. If you already
 have a local checkout, the equivalent command is
 `cargo xtask new-demo my-game`.
@@ -63,7 +64,9 @@ prerequisites for your operating system:
 - [macOS setup](../setup/macos.md)
 - [Linux setup](../setup/linux.md)
 
-Then run `game-dev doctor` when you need a prerequisite check. If
+Then run `game-dev doctor` when you need a prerequisite check, and
+`game-dev check` when you want assets, optional `assets/game.ron`, and Rust
+types checked together. If
 `game_starter` cannot be fetched, first check your
 network connection and the generated `Cargo.toml` git dependency. If Cargo
 cannot run at all, install Rust from <https://rustup.rs> and restart your

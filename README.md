@@ -24,7 +24,17 @@ crates are identical for all demos.
 
 ## Project status
 
-This is a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
+The engine/content split and beginner authoring foundation are implemented. The
+project is in beginner-productization release-candidate polish.
+
+Start with one of three tracks:
+
+- **Track A: No Rust.** Use `templates/data-driven-demo` and edit
+  `assets/game.ron`.
+- **Track B: Beginner Rust.** Use `templates/simple-demo`; follow tutorials 00-12.
+- **Track C: Advanced.** Use the advanced path only when beginner APIs are insufficient.
+
+This is still a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 
 - explicit, RAII-driven Vulkan renderer lifetime handling
 - 2D sprite rendering with layered, texture-batched draws
@@ -99,17 +109,26 @@ cargo generate --git https://github.com/P2949/game templates/simple-demo --name 
 cd my-game
 cargo install --git https://github.com/P2949/game game-cli
 game-dev doctor
+game-dev check
 game-dev run
 ```
 
 That creates a one-file beginner game with a pinned git dependency on
-`game-starter`. From a local checkout, `cargo xtask new-demo my-game` creates
-the same starter with a local path dependency. Use
+`game-starter`. Generated projects are pinned to release tags after a tagged
+release exists; release-candidate templates pin a specific git revision instead.
+From a local checkout, `cargo xtask new-demo my-game` creates the same starter
+with a local path dependency. Use
 `cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
 when you want the same first-game setup in editable `assets/game.ron` instead.
-Generated projects can use `game-dev asset-check`, `game-dev validate-data`,
-and `game-dev package --release --out dist/my-game --zip` without cloning the
-engine repository.
+Generated projects can use the helper commands without cloning the engine
+repository:
+
+```bash
+game-dev check
+game-dev asset-check
+game-dev validate-data
+game-dev package --release --out dist/my-game --zip
+```
 
 Want to try before building? Download the latest demo package from
 [Releases](https://github.com/P2949/game/releases). The prebuilt
@@ -122,13 +141,15 @@ development path.
 
 - **No Rust:** `templates/data-driven-demo`,
   `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
-  `examples/data-driven-projectiles-demo`
+  `examples/data-driven-projectiles-demo`, `examples/data-driven-tiled-demo`
 - **First Rust game:** `templates/simple-demo`
 - **One-file example:** `examples/one-file-demo`
 - **Full beginner feature sample:** `examples/no-rust-shapes-demo`
 - **Custom behavior:** `examples/script-like-custom-rules`
+- **Events:** `examples/events-demo`
+- **Tiled:** `examples/tiled-demo`
 - **Structured beginner content:** `arena-content`
-- **Do not copy first:** `testbed-content`
+- **Advanced lab:** `crates/testbed-content` - do not copy first
 
 `testbed-content` is intentionally advanced; see
 [when to use the advanced API](docs/when-to-use-advanced-api.md) and the
@@ -142,17 +163,19 @@ are the normal starting points.
 - **No-Rust data-driven:** edit `assets/game.ron` and text maps. Start with
   `templates/data-driven-demo`, `examples/data-driven-events-demo`,
   `examples/data-driven-waves-demo`, `examples/data-driven-projectiles-demo`,
-  or `examples/data-driven-full-demo` when the game should be made mostly from
-  data files.
+  `examples/data-driven-tiled-demo`, or `examples/data-driven-full-demo` when
+  the game should be made mostly from data files.
 - **Beginner Rust builder chains:** use `game_starter::prelude::*` with
   high-level builders for assets, prefabs, maps, actions, scenes, sound,
   animation, and rules. Start with `examples/one-file-demo`,
   `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
-  `simple-content`, and `templates/simple-demo`.
-- **Advanced game-kit/testbed content:** use explicit advanced APIs only when
-  you need custom systems, raw prefabs, queries, or lower-level engine-shaped
-  content. `testbed-content` is intentionally advanced and is not the beginner
-  sample.
+  `examples/tiled-demo`, `simple-content`, and `templates/simple-demo`.
+### Advanced API
+
+- **Advanced game-kit/testbed content:** use
+  `game_kit::advanced::prelude::*` only when you need custom systems, raw
+  prefabs, queries, or lower-level engine-shaped content. `testbed-content` is
+  intentionally advanced and is not the beginner sample.
 - **Engine/runtime API:** internal engine, runtime, renderer, platform, and
   audio crates. Not for beginner content.
 
@@ -178,8 +201,11 @@ are the normal starting points.
 - **Engine internals:** unstable. Runtime, renderer, backend, and raw world
   details are not a beginner content API.
 
-Release templates pin `game-starter` to tagged git dependencies such as
-`v0.1.0`, so generated projects are not tied to a moving branch by default.
+Release-candidate templates pin `game-starter` to a specific git revision, so
+generated projects are not tied to a moving branch by default. Tagged
+dependencies replace the revision pin when a release tag is published. See the
+[distribution policy](docs/distribution-policy.md) for the current Git-based
+model and future crates.io/template-repository plan.
 
 ## What should I copy?
 
@@ -192,7 +218,7 @@ If you are new:
    to create your own Rust demo, or
    `cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
    for a no-Rust demo. From a local checkout, `cargo xtask new-demo my-game`
-   uses your local sources instead of the pinned release tag.
+   uses your local sources instead of the pinned release-candidate revision.
 
 If you want a workspace content crate:
 
@@ -318,6 +344,15 @@ required across textures.
 | Quit | `Esc` / close window | — |
 
 ## Development checks
+
+For the contributor release-candidate gate, run:
+
+```bash
+cargo xtask release-check --skip-smoke
+```
+
+Omit `--skip-smoke` on a machine with a working graphical backend when you want
+the full local smoke gate.
 
 ```bash
 cargo fmt --all -- --check

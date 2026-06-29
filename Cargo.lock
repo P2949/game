@@ -270,6 +270,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-driven-tiled-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
 name = "data-driven-waves-demo"
 version = "0.1.0"
 dependencies = [
@@ -1130,6 +1137,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tiled-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
 ]
 
 [[package]]

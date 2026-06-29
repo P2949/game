@@ -78,6 +78,56 @@ device, SDL3, audio development files, validation layers, and the generated
 project's `assets/` folder. Fix the first failed setup check before changing
 game code.
 
+`game-dev check` fails
+
+Run:
+
+```bash
+game-dev doctor --explain
+game-dev asset-check
+game-dev validate-data assets/game.ron
+```
+
+`game-dev check` is a quick generated-project check: it runs the setup doctor,
+validates assets, validates `assets/game.ron` when the file exists, and then
+runs `cargo check`. If the final compiler error mentions SDL3, Vulkan, or
+`glslc`, fix the first setup problem reported by the doctor before changing
+game code.
+
+`game-dev run` or `game-dev package` fails
+
+The helper prints this checklist:
+
+```text
+If this looks like a setup issue:
+    game-dev doctor --explain
+
+If this looks like an asset/data issue:
+    game-dev asset-check
+    game-dev validate-data assets/game.ron
+
+See:
+    docs/tutorials/common-errors.md
+```
+
+Run the setup command first for SDL3, Vulkan, shader compiler, or audio
+prerequisite errors. Run the asset/data commands first for missing files,
+unknown prefab names, bad map symbols, or `assets/game.ron` validation errors.
+
+Rule `projectiles_damage_enemies` needs the `projectiles` rule
+
+Add the projectile rules preset before the damage rule:
+
+```rust
+game.rules()
+    .projectiles()
+    .projectiles_damage_enemies()
+    .build();
+```
+
+If the data-file error says projectile rules need a `Projectile` prefab, also
+define a projectile prefab such as `"bolt"`.
+
 `player prefab 'player' has no sprite`
 
 Add:
@@ -259,6 +309,23 @@ top-down actions:
 ```ron
 start_on: Some(Attack),
 actions: [PlayerShoots((prefab: "bolt", action: Attack))],
+```
+
+`custom rule 'explode' counts down key 'fues' on tag 'explosive', but no prefab with that tag declares that data key`
+
+Countdown rules read numeric `data` from prefabs with the selected tag. This
+usually means the key is misspelled in either the prefab or the rule.
+
+Add the key to a tagged prefab:
+
+```ron
+Trigger((name: "bomb", tags: ["explosive"], data: {"fuse": 3.0}))
+```
+
+or change the countdown rule to use the existing key:
+
+```ron
+Countdown((name: "explode", tag: "explosive", key: "fuse", when_zero: [DespawnSelf]))
 ```
 
 `beginner game file 'game.ron' is not valid RON`

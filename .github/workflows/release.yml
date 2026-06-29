@@ -73,10 +73,44 @@ jobs:
           cd "dist/${{ matrix.package_name }}"
           zip -r "../${{ matrix.package_name }}.zip" .
 
+      - name: Verify Linux package archive
+        if: runner.os == 'Linux'
+        run: scripts/verify-release-artifact.sh "dist/${{ matrix.package_name }}.zip" linux
+
       - name: Archive Windows package
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path "dist/${{ matrix.package_name }}/*" -DestinationPath "dist/${{ matrix.package_name }}.zip" -Force
+
+      - name: Verify Windows package archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = "dist/${{ matrix.package_name }}.zip"
+          $expanded = Join-Path $env:RUNNER_TEMP "verify-${{ matrix.package_name }}"
+          Remove-Item -Recurse -Force $expanded -ErrorAction SilentlyContinue
+          Expand-Archive -Path $archive -DestinationPath $expanded -Force
+          $required = @(
+            "game.exe",
+            "SDL3.dll",
+            "run.sh",
+            "run.ps1",
+            "run.bat",
+            "README.txt",
+            "assets/fonts/DejaVuSans.ttf",
+            "assets/game.ron",
+            "assets/maps/level_1.txt",
+            "assets/maps/tiled_demo.tmx",
+            "assets/textures/test.png",
+            "assets/sounds/hit.wav"
+          )
+          foreach ($entry in $required) {
+            $path = Join-Path $expanded $entry
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "release archive $archive is missing $entry"
+            }
+          }
+          Write-Host "release archive $archive contains the expected Windows package layout"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

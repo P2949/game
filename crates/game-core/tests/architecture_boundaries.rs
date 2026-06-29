@@ -243,6 +243,7 @@ fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
         "examples/beginner-mini-game/src",
         "examples/coin-collector/src",
         "examples/data-driven-full-demo/src",
+        "examples/data-driven-tiled-demo/src",
         "examples/projectile-demo/src",
         "examples/script-like-custom-rules/src",
         "examples/two-level-demo/src",
@@ -259,6 +260,7 @@ fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
         "examples/title-menu-demo/src",
         "examples/damage-zone-demo/src",
         "examples/ldtk-demo/src",
+        "examples/tiled-demo/src",
         "examples/animation-demo/src",
         "examples/audio-demo/src",
         "examples/trigger-area-demo/src",
@@ -300,6 +302,37 @@ fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
 }
 
 #[test]
+fn tiled_demo_uses_the_beginner_tiled_import_path() {
+    let source =
+        read_code_without_comments(&workspace_root().join("examples/tiled-demo/src/main.rs"));
+    for required in [
+        "use game_starter::prelude::*;",
+        "map_from_tiled(",
+        ".object(",
+        ".simple_theme(",
+        ".use_top_down_game()",
+    ] {
+        assert!(
+            source.contains(required),
+            "tiled demo should contain {required:?}"
+        );
+    }
+    for forbidden in BEGINNER_DEMO_FORBIDDEN {
+        assert!(
+            !source.contains(forbidden),
+            "tiled demo must not expose beginner implementation detail {forbidden:?}"
+        );
+    }
+
+    let ci = fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
+        .expect("failed to read CI workflow");
+    assert!(
+        ci.contains("cargo run -p tiled-demo --locked --features ci-build-sdl3"),
+        "CI should smoke-run tiled-demo"
+    );
+}
+
+#[test]
 fn beginner_facing_sources_hide_context_lifetime_annotations() {
     let root = workspace_root();
     let paths = [
@@ -307,6 +340,7 @@ fn beginner_facing_sources_hide_context_lifetime_annotations() {
         "examples/beginner-mini-game",
         "examples/coin-collector",
         "examples/data-driven-full-demo",
+        "examples/data-driven-tiled-demo",
         "examples/projectile-demo",
         "examples/script-like-custom-rules",
         "examples/two-level-demo",
@@ -569,6 +603,57 @@ fn data_driven_reload_loop_is_validated_and_honest() {
 }
 
 #[test]
+fn data_driven_tiled_demo_stays_data_only_and_uses_tiled_maps() {
+    let root = workspace_root();
+    let source =
+        read_code_without_comments(&root.join("examples/data-driven-tiled-demo/src/main.rs"));
+
+    assert!(source.contains("use game_starter::prelude::*;"));
+    assert!(source.contains("load_beginner_file("));
+    assert!(source.contains("assets/game.ron"));
+    for forbidden in BEGINNER_DEMO_FORBIDDEN.iter().copied().chain([
+        "map_from_tiled",
+        ".object(",
+        "player_prefab",
+        "enemy_prefab",
+        "game.rules()",
+    ]) {
+        assert!(
+            !source.contains(forbidden),
+            "data-driven Tiled demo main.rs must not expose {forbidden:?}"
+        );
+    }
+
+    let data = fs::read_to_string(root.join("examples/data-driven-tiled-demo/assets/game.ron"))
+        .expect("failed to read data-driven Tiled demo game.ron");
+    for required in [
+        "Tiled((",
+        "path: \"maps/tiled_demo.tmx\"",
+        "objects:",
+        "\"Player\": \"player\"",
+        "\"Slime\": \"slime\"",
+        "TopDownControls",
+    ] {
+        assert!(
+            data.contains(required),
+            "data-driven Tiled game.ron should contain {required:?}"
+        );
+    }
+
+    let cookbook = fs::read_to_string(root.join("docs/cookbook/tiled.md"))
+        .expect("failed to read Tiled cookbook");
+    assert!(cookbook.contains("cargo run -p data-driven-tiled-demo"));
+    assert!(cookbook.contains("No-Rust Data File"));
+
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("failed to read CI workflow");
+    assert!(
+        ci.contains("cargo run -p data-driven-tiled-demo --locked --features ci-build-sdl3"),
+        "CI should smoke-run the data-driven Tiled demo"
+    );
+}
+
+#[test]
 fn flag_builders_delegate_to_independent_behaviors() {
     let root = workspace_root();
     let defaults = fs::read_to_string(root.join("crates/game-kit/src/beginner/defaults.rs"))
@@ -710,6 +795,7 @@ fn generated_templates_are_ci_checked_and_release_pinned() {
         "cargo check --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3",
         "Build game-dev helper",
         "cargo build -p game-cli --locked --features ci-build-sdl3",
+        "game-dev check --features ci-build-sdl3",
         "game-dev package --release --features ci-build-sdl3 --out /tmp/package-simple --zip",
         "game-dev package --release --features ci-build-sdl3 --out /tmp/package-data --zip",
         "cargo run --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3",
@@ -729,9 +815,9 @@ fn generated_templates_are_ci_checked_and_release_pinned() {
             .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
         assert!(
             source.contains(
-                r#"default = '{ git = "https://github.com/P2949/game", tag = "v0.1.0", package = "game-starter" }'"#
+                r#"default = '{ git = "https://github.com/P2949/game", rev = "b7fa6a3dc01d185312cf0e714b5efa10201578c6", package = "game-starter" }'"#
             ),
-            "{relative} should pin release-generated projects to the current release tag"
+            "{relative} should pin release-generated projects to a reproducible git revision"
         );
         assert!(
             !source.contains(
@@ -783,6 +869,62 @@ fn generated_templates_are_ci_checked_and_release_pinned() {
         assert!(
             source.contains(r#"ci-build-sdl3 = ["sdl3/build-from-source"]"#),
             "{relative} should source-build SDL3 for CI"
+        );
+    }
+}
+
+#[test]
+fn distribution_policy_keeps_release_candidate_model_explicit() {
+    let root = workspace_root();
+    let policy = fs::read_to_string(root.join("docs/distribution-policy.md"))
+        .expect("failed to read distribution policy");
+
+    for required in [
+        "Release-candidate templates pin",
+        "specific git revision",
+        "release tag",
+        "cargo xtask new-demo",
+        "Prebuilt demo zips",
+        "Vulkan-capable GPU/driver",
+        "publish crates.io packages after the beginner API stabilizes",
+        "dedicated `game-template` repository",
+        "version docs per release",
+        "platform installer for `game-dev`",
+    ] {
+        assert!(
+            policy.contains(required),
+            "distribution policy should document {required:?}"
+        );
+    }
+
+    let readme = fs::read_to_string(root.join("README.md")).expect("failed to read README");
+    for required in [
+        "Generated projects are pinned to release tags",
+        "release-candidate templates pin a specific git revision",
+        "cargo xtask new-demo",
+        "distribution policy",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README should link the distribution policy and explain {required:?}"
+        );
+    }
+
+    let checklist = fs::read_to_string(root.join("docs/release-checklist.md"))
+        .expect("failed to read release checklist");
+    for required in [
+        "generated-template dependency pins updated for this release tag",
+        "`CHANGELOG.md` updated",
+        "migration docs in `docs/migrations/` updated",
+        "generated-template CI is green",
+        "first-15-minutes CI is green",
+        "release artifacts generated",
+        "distribution policy",
+        "Status: intentionally deferred",
+    ] {
+        assert!(
+            checklist.contains(required),
+            "release checklist should document distribution gate {required:?}"
         );
     }
 }
@@ -939,6 +1081,30 @@ fn standalone_beginner_cli_is_documented_and_xtask_wrapped() {
         cli_manifest.contains(r#"ci-build-sdl3 = ["game-audio/ci-build-sdl3"]"#),
         "game-cli CI should be able to source-build SDL3 through game-audio"
     );
+    let cli =
+        fs::read_to_string(root.join("crates/game-cli/src/lib.rs")).expect("failed to read CLI");
+    for required in [
+        "game-dev check [--features feature-list]",
+        "fn check_project",
+        "validate_assets_dir(&assets, false)",
+        "validate_beginner_game_file",
+        "cargo check failed",
+        "fn beginner_failure_advice",
+        "If this looks like a setup issue:",
+        "If this looks like an asset/data issue:",
+        "docs/tutorials/common-errors.md",
+        "game-dev doctor --explain",
+        "cargo xtask release-check [--skip-smoke] [--skip-generated] [--features feature-list]",
+        "fn run_release_check",
+        "fn run_generated_release_checks",
+        "fn run_smoke_release_checks",
+        "fn run_command",
+    ] {
+        assert!(
+            cli.contains(required),
+            "game-cli should include {required:?}"
+        );
+    }
 
     let xtask_manifest =
         fs::read_to_string(root.join("xtask/Cargo.toml")).expect("failed to read xtask manifest");
@@ -962,6 +1128,7 @@ fn standalone_beginner_cli_is_documented_and_xtask_wrapped() {
         for required in [
             "cargo install --git https://github.com/P2949/game game-cli",
             "game-dev doctor",
+            "game-dev check",
             "game-dev run",
             "game-dev package --release --out dist/my-game --zip",
         ] {
@@ -970,6 +1137,34 @@ fn standalone_beginner_cli_is_documented_and_xtask_wrapped() {
                 "{relative} should document {required:?}"
             );
         }
+    }
+
+    let readme = fs::read_to_string(root.join("README.md")).expect("failed to read README");
+    assert!(
+        readme.contains("cargo xtask release-check --skip-smoke"),
+        "README should document the contributor release-check command"
+    );
+    let release_checklist = fs::read_to_string(root.join("docs/release-checklist.md"))
+        .expect("failed to read release checklist");
+    assert!(
+        release_checklist.contains("cargo xtask release-check")
+            && release_checklist.contains("--skip-smoke"),
+        "release checklist should document release-check and the local smoke escape hatch"
+    );
+    let common_errors = fs::read_to_string(root.join("docs/tutorials/common-errors.md"))
+        .expect("failed to read common errors guide");
+    for required in [
+        "If this looks like a setup issue:",
+        "game-dev doctor --explain",
+        "If this looks like an asset/data issue:",
+        "game-dev asset-check",
+        "game-dev validate-data assets/game.ron",
+        "Rule `projectiles_damage_enemies` needs the `projectiles` rule",
+    ] {
+        assert!(
+            common_errors.contains(required),
+            "common errors guide should mirror diagnostic wording {required:?}"
+        );
     }
 }
 
@@ -1026,12 +1221,59 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         "game-demo-linux-x86_64",
         "game-demo-windows-x86_64",
         "cargo xtask package-demo --release --features ci-build-sdl3",
+        "Verify Linux package archive",
+        "scripts/verify-release-artifact.sh",
+        "Verify Windows package archive",
+        "Expand-Archive",
         "actions/upload-artifact",
         "gh release upload",
     ] {
         assert!(
             workflow.contains(required),
             "release workflow should include {required:?}"
+        );
+    }
+
+    let verifier = fs::read_to_string(root.join("scripts/verify-release-artifact.sh"))
+        .expect("failed to read release artifact verifier");
+    for required in [
+        "usage: scripts/verify-release-artifact.sh <archive.zip> <linux|windows>",
+        "game",
+        "game.exe",
+        "libSDL3.so.0",
+        "SDL3.dll",
+        "run.sh",
+        "run.ps1",
+        "run.bat",
+        "README.txt",
+        "assets/fonts/DejaVuSans.ttf",
+        "assets/game.ron",
+        "assets/maps/tiled_demo.tmx",
+        "assets/textures/test.png",
+        "assets/sounds/hit.wav",
+    ] {
+        assert!(
+            verifier.contains(required),
+            "release artifact verifier should require {required:?}"
+        );
+    }
+
+    let github_verifier =
+        fs::read_to_string(root.join("scripts/verify-github-release-artifacts.sh"))
+            .expect("failed to read GitHub release artifact verifier");
+    for required in [
+        "usage: scripts/verify-github-release-artifacts.sh [run-id|latest]",
+        "GH_REPO",
+        "RELEASE_WORKFLOW",
+        "gh run list",
+        "gh run download",
+        "game-demo-linux-x86_64",
+        "game-demo-windows-x86_64",
+        "verify-release-artifact.sh",
+    ] {
+        assert!(
+            github_verifier.contains(required),
+            "GitHub release artifact verifier should include {required:?}"
         );
     }
 
@@ -1075,6 +1317,19 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         assert!(
             source.contains("Releases") && source.contains("Vulkan-capable GPU/driver"),
             "{relative} should link releases and keep Vulkan expectations honest"
+        );
+    }
+
+    let checklist = fs::read_to_string(root.join("docs/release-checklist.md"))
+        .expect("failed to read release checklist");
+    for required in [
+        "gh run list --workflow release.yml --limit 5",
+        "scripts/verify-github-release-artifacts.sh <run-id>",
+        "latest successful `release.yml` run",
+    ] {
+        assert!(
+            checklist.contains(required),
+            "release checklist should document {required:?}"
         );
     }
 }
@@ -1212,6 +1467,7 @@ fn beginner_docs_examples_and_templates_hide_raw_context_methods() {
         "examples/beginner-mini-game",
         "examples/coin-collector",
         "examples/data-driven-full-demo",
+        "examples/data-driven-tiled-demo",
         "examples/projectile-demo",
         "examples/script-like-custom-rules",
         "examples/two-level-demo",
@@ -1228,6 +1484,7 @@ fn beginner_docs_examples_and_templates_hide_raw_context_methods() {
         "examples/title-menu-demo",
         "examples/damage-zone-demo",
         "examples/ldtk-demo",
+        "examples/tiled-demo",
         "examples/animation-demo",
         "examples/audio-demo",
         "examples/trigger-area-demo",
@@ -1478,6 +1735,43 @@ fn no_rust_experience_tutorial_course_stays_complete_and_beginner_first() {
 }
 
 #[test]
+fn beginner_entry_docs_keep_three_tracks_and_copy_list_clear() {
+    let root = workspace_root();
+    for relative in ["README.md", "docs/tutorials/README.md"] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+
+        for required in [
+            "Track A: No Rust",
+            "templates/data-driven-demo",
+            "assets/game.ron",
+            "Track B: Beginner Rust",
+            "templates/simple-demo",
+            "tutorials 00-12",
+            "Track C: Advanced",
+            "advanced path",
+            "beginner APIs are insufficient",
+            "examples/one-file-demo",
+            "examples/script-like-custom-rules",
+            "examples/events-demo",
+            "examples/tiled-demo",
+            "crates/testbed-content",
+            "do not copy first",
+        ] {
+            assert!(
+                source.contains(required),
+                "{relative} should make the beginner path include {required:?}"
+            );
+        }
+
+        assert!(
+            !source.contains("Track D:"),
+            "{relative} should keep the entry path to three tracks"
+        );
+    }
+}
+
+#[test]
 fn tutorial_numbered_chapters_have_unique_prefixes() {
     let tutorials = workspace_root().join("docs/tutorials");
     let mut prefixes = BTreeMap::<String, Vec<String>>::new();
@@ -1519,6 +1813,9 @@ fn beginner_facing_docs_examples_and_templates_do_not_use_compatibility_prelude(
         "examples/one-file-demo",
         "examples/beginner-mini-game",
         "examples/data-driven-full-demo",
+        "examples/data-driven-tiled-demo",
+        "examples/ldtk-demo",
+        "examples/tiled-demo",
     ];
 
     for relative in paths {

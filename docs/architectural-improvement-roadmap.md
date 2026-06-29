@@ -1,5 +1,8 @@
 # Architectural Improvement Roadmap
 
+> Status: Historical. The work described here has been implemented.
+> Current release polish is tracked in `docs/beginner-productization-roadmap.md`.
+
 This document tracks the implementation status of the architectural improvement
 roadmap. Items are marked implemented, already satisfied by prior hardening, or
 deliberately deferred with a rationale.

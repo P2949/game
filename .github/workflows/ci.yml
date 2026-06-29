@@ -172,6 +172,20 @@ jobs:
           RUST_LOG: info
           SDL_VIDEODRIVER: x11
         run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run -p game --release --locked --features ci-build-sdl3
+      - name: Smoke Tiled demo
+        env:
+          GAME_SMOKE_FRAMES: "60"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: timeout -k 5s 120s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run -p tiled-demo --locked --features ci-build-sdl3
+      - name: Smoke data-driven Tiled demo
+        env:
+          GAME_SMOKE_FRAMES: "60"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: timeout -k 5s 120s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run -p data-driven-tiled-demo --locked --features ci-build-sdl3
 
   generated-templates:
     runs-on: ubuntu-latest
@@ -221,6 +235,12 @@ jobs:
           cargo check --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3
       - name: Build game-dev helper
         run: cargo build -p game-cli --locked --features ci-build-sdl3
+      - name: Run game-dev check for generated simple template
+        working-directory: /tmp/generated/smoke-simple
+        run: ${{ github.workspace }}/target/debug/game-dev check --features ci-build-sdl3
+      - name: Run game-dev check for generated data-driven template
+        working-directory: /tmp/generated/smoke-data
+        run: ${{ github.workspace }}/target/debug/game-dev check --features ci-build-sdl3
       - name: Package generated simple template
         working-directory: /tmp/generated/smoke-simple
         run: ${{ github.workspace }}/target/debug/game-dev package --release --features ci-build-sdl3 --out /tmp/package-simple --zip
