@@ -3954,10 +3954,10 @@ Phase 12 status note:
 - remaining caveats: The GitHub release workflow was not run from this
   environment because the current changes are local and unpushed; triggering
   `workflow_dispatch` on `master` would test the remote branch rather than this
-  worktree and would mutate remote Actions state. `gh workflow view` confirms
-  the `Release Artifacts` workflow is active but has zero runs. The Windows
-  prebuilt artifact and GitHub Release attachment still need a workflow run
-  from a pushed commit or test tag.
+  worktree and would mutate remote Actions state. At that point, `gh workflow
+  view` confirmed the `Release Artifacts` workflow was active but had not yet
+  run. The Windows prebuilt artifact and GitHub Release attachment still needed
+  a workflow run from a pushed commit or test tag.
 
 Phase 12 follow-up verification note:
 
@@ -4053,14 +4053,17 @@ Phase 12 final branch artifact verification note:
   `codex/beginner-release-polish-artifacts`; a successful branch run proves the
   Linux and Windows workflow artifacts can be produced and validated before a
   future tagged release attaches those same zips to GitHub Releases.
-- validation commands to run after pushing this status update:
+- validation commands run:
   `gh workflow run release.yml --repo P2949/game --ref codex/beginner-release-polish-artifacts`;
-  `gh run view <run-id> --repo P2949/game --json status,conclusion,jobs`;
-  `scripts/verify-github-release-artifacts.sh <run-id>`.
-- validation result: To be filled by command output rather than another plan
-  edit: the final branch workflow run must complete successfully and the
-  artifact verifier must pass for both `game-demo-linux-x86_64.zip` and
-  `game-demo-windows-x86_64.zip`.
+  `gh run view 28398236822 --repo P2949/game --json status,conclusion,url,headBranch,headSha,jobs`;
+  `scripts/verify-github-release-artifacts.sh 28398236822`.
+- validation result: Workflow run `28398236822` completed successfully on
+  branch `codex/beginner-release-polish-artifacts` at commit `08dd203`. The
+  Linux job packaged, archived, verified, and uploaded
+  `game-demo-linux-x86_64.zip`; the Windows job packaged, archived, verified,
+  and uploaded `game-demo-windows-x86_64.zip`.
+  `scripts/verify-github-release-artifacts.sh 28398236822` downloaded both
+  workflow artifacts and verified their expected package layouts.
 - remaining caveats: Release-tag attachment remains a tagged-release action,
   not a blocker for the branch verification path requested here.
 
@@ -4075,25 +4078,25 @@ Final plan summary:
   immediately; beginner Tiled Rust and data-driven demos added; compatibility
   prelude deprecation protected; partial `game.ron` reload policy documented
   and tested; `game-dev check` added; `cargo xtask release-check` added;
-  beginner diagnostics and CLI failure advice improved; GitHub release-artifact
+  beginner diagnostics and CLI failure advice improved; release workflow
+  source-built SDL3 packaging fixed; GitHub release-artifact
   download/verification helper added; distribution policy documented; tutorial
   entry paths narrowed to no-Rust, beginner Rust, and advanced tracks.
 - successful verification: `cargo xtask release-check --features ci-build-sdl3`
   under Xvfb/lavapipe; root `game-dev check`; focused countdown tests;
   generated simple/data project checks, smoke commands, and package zips;
   data-driven Tiled smoke; local Linux prebuilt demo package dry-run; focused
-  release-artifact helper syntax and architecture tests.
-- known external blockers: GitHub release artifacts need
-  `.github/workflows/release.yml` to pass from the final pushed branch commit.
-  Release-tag attachment remains a later tagged-release action.
+  release-artifact helper syntax and architecture tests; successful branch
+  release workflow run `28398236822`; downloaded Linux/Windows workflow
+  artifacts verified by `scripts/verify-github-release-artifacts.sh`.
+- known external blockers: None for the requested release-candidate branch
+  verification. Release-tag attachment remains a later tagged-release action.
 - remaining future work: crates.io publication, a dedicated template repo,
   versioned docs, and a `game-dev` installer remain future distribution tasks
   rather than missing 1.0 architecture.
 - Beginner Productization 1.0 completion: Complete for the requested
-  release-candidate branch verification once the final pushed branch workflow
-  run succeeds and `scripts/verify-github-release-artifacts.sh` passes. A real
-  release tag can later attach the already-verified package shape to GitHub
-  Releases.
+  release-candidate branch verification. A real release tag can later attach
+  the already-verified package shape to GitHub Releases.
 
 ---
 
