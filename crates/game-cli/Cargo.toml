@@ -24,3 +24,6 @@ walkdir.workspace = true
 game-audio = { version = "0.1.0", path = "../game-audio" }
 game-kit = { version = "0.1.0", path = "../game-kit" }
 game-map = { version = "0.1.0", path = "../game-map" }
+
+[features]
+ci-build-sdl3 = ["game-audio/ci-build-sdl3"]

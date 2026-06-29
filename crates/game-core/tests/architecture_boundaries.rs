@@ -709,6 +709,7 @@ fn generated_templates_are_ci_checked_and_release_pinned() {
         "cargo check --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3",
         "cargo check --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3",
         "Build game-dev helper",
+        "cargo build -p game-cli --locked --features ci-build-sdl3",
         "game-dev package --release --features ci-build-sdl3 --out /tmp/package-simple --zip",
         "game-dev package --release --features ci-build-sdl3 --out /tmp/package-data --zip",
         "cargo run --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3",
@@ -922,6 +923,10 @@ fn standalone_beginner_cli_is_documented_and_xtask_wrapped() {
         .expect("failed to read game-cli manifest");
     assert!(cli_manifest.contains("name = \"game-cli\""));
     assert!(cli_manifest.contains("name = \"game-dev\""));
+    assert!(
+        cli_manifest.contains(r#"ci-build-sdl3 = ["game-audio/ci-build-sdl3"]"#),
+        "game-cli CI should be able to source-build SDL3 through game-audio"
+    );
 
     let xtask_manifest =
         fs::read_to_string(root.join("xtask/Cargo.toml")).expect("failed to read xtask manifest");
@@ -1080,7 +1085,7 @@ fn doctor_diagnostics_cover_first_run_setup() {
     let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
         .expect("failed to read CI workflow");
     assert!(
-        ci.contains("cargo run -p game-cli -- doctor --explain"),
+        ci.contains("cargo run -p game-cli --features ci-build-sdl3 -- doctor --explain"),
         "CI should run doctor diagnostics"
     );
 

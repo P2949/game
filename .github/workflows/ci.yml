@@ -135,7 +135,7 @@ jobs:
             libxss-dev libxtst-dev wayland-protocols \
             mesa-vulkan-drivers vulkan-tools vulkan-validationlayers xvfb zip
       - name: Doctor diagnostics
-        run: cargo run -p game-cli -- doctor --explain
+        run: cargo run -p game-cli --features ci-build-sdl3 -- doctor --explain
       - name: Build (debug, validation layers on)
         run: cargo build -p game --locked --features ci-build-sdl3
       - name: Select lavapipe Vulkan ICD
@@ -220,7 +220,7 @@ jobs:
           cargo check --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3
           cargo check --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3
       - name: Build game-dev helper
-        run: cargo build -p game-cli --locked
+        run: cargo build -p game-cli --locked --features ci-build-sdl3
       - name: Package generated simple template
         working-directory: /tmp/generated/smoke-simple
         run: ${{ github.workspace }}/target/debug/game-dev package --release --features ci-build-sdl3 --out /tmp/package-simple --zip
