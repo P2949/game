@@ -44,6 +44,9 @@ All notable beginner-facing changes should be recorded here before release.
   validation and no longer treat missing runtime keys as zero.
 - Runtime teardown now drops the renderer before the platform/window owner,
   preventing swapchain destruction from touching a torn-down native display.
+- `cargo xtask package-demo --features ci-build-sdl3` now forwards the SDL3
+  source-build feature through `xtask` to `game-cli`, avoiding system SDL3
+  linker requirements in the release artifact workflow.
 
 ### Deprecated
 

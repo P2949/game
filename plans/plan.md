@@ -4004,6 +4004,34 @@ Phase 12 artifact-verification helper note:
   Artifacts` runs for `P2949/game`, so artifact publication itself remains the
   final external gate.
 
+Phase 12 release-workflow dispatch note:
+
+- status: Fix implemented; remote verification rerun required.
+- files changed: `xtask/Cargo.toml`,
+  `crates/game-core/tests/architecture_boundaries.rs`, `CHANGELOG.md`,
+  `plans/plan.md`.
+- implementation summary: Pushed branch
+  `codex/beginner-release-polish-artifacts` and dispatched
+  `.github/workflows/release.yml` as workflow run `28397228106`. Both Linux and
+  Windows jobs failed in `Package demo` because `cargo xtask package-demo
+  --features ci-build-sdl3` enabled the feature on `xtask` without forwarding it
+  to `game-cli`, so the `xtask` binary still linked against system SDL3. Added
+  `xtask` feature forwarding with `ci-build-sdl3 = ["game-cli/ci-build-sdl3"]`
+  and extended the release workflow architecture test to protect that wiring.
+- validation commands run: `gh workflow run release.yml --repo P2949/game --ref codex/beginner-release-polish-artifacts`;
+  `gh run watch 28397228106 --repo P2949/game --exit-status`;
+  `gh run view 28397228106 --repo P2949/game --log-failed`;
+  `cargo check -p xtask --features ci-build-sdl3 --locked`;
+  `cargo test -p game-core --test architecture_boundaries --locked release_workflow_publishes_prebuilt_demo_artifacts`;
+  `cargo fmt --all -- --check`.
+- validation result: The first remote release workflow run failed before
+  artifact upload, and the logs identified missing `SDL3`/`SDL3.lib` while
+  linking `xtask`. The local feature-forwarding fix now passes focused cargo
+  check, focused architecture test, and formatting.
+- remaining caveats: Push the feature-forwarding fix and rerun
+  `release.yml`; artifacts are not verified until a successful remote run
+  uploads both zips and `scripts/verify-github-release-artifacts.sh` passes.
+
 Final plan summary:
 
 - phase statuses: Phase 0 Done; Phase 1 Done; Phase 2 Done; Phase 3 Done;
@@ -4023,8 +4051,9 @@ Final plan summary:
   data-driven Tiled smoke; local Linux prebuilt demo package dry-run; focused
   release-artifact helper syntax and architecture tests.
 - known external blockers: GitHub release artifacts need
-  `.github/workflows/release.yml` to run from a pushed commit or test tag; the
-  active workflow currently has zero runs.
+  `.github/workflows/release.yml` to pass from a pushed commit or test tag. The
+  first branch workflow run failed before artifact upload and the local fix has
+  been implemented; a rerun is still required.
 - remaining future work: crates.io publication, a dedicated template repo,
   versioned docs, and a `game-dev` installer remain future distribution tasks
   rather than missing 1.0 architecture.

@@ -1286,6 +1286,15 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         "workspace demo packaging should document feature flags for release builds"
     );
 
+    let xtask_manifest =
+        fs::read_to_string(root.join("xtask/Cargo.toml")).expect("failed to read xtask manifest");
+    for required in ["[features]", "ci-build-sdl3 = [\"game-cli/ci-build-sdl3\"]"] {
+        assert!(
+            xtask_manifest.contains(required),
+            "xtask should forward release workflow features with {required:?}"
+        );
+    }
+
     let readme = fs::read_to_string(root.join("README.md")).expect("failed to read README.md");
     for required in [
         "Want to try before building? Download the latest demo package from",

@@ -10,3 +10,6 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 game-cli = { version = "0.1.0", path = "../crates/game-cli" }
+
+[features]
+ci-build-sdl3 = ["game-cli/ci-build-sdl3"]
