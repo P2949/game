@@ -99,9 +99,9 @@ fn decode_base64(input: &str) -> Vec<u8> {
             .map(value);
         output.push((first << 2) | (second >> 4));
         if let Some(third) = third {
-            output.push((second << 4) | (third >> 2));
+            output.push(((second & 0x0f) << 4) | (third >> 2));
             if let Some(fourth) = fourth {
-                output.push((third << 6) | fourth);
+                output.push(((third & 0x03) << 6) | fourth);
             }
         }
     }

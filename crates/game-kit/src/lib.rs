@@ -15,6 +15,14 @@
 //! The beginner API provides players, enemies, pickups, doors, projectiles,
 //! maps, assets, controls, scenes, rules, audio, and UI helpers.
 //!
+//! ## Stability
+//!
+//! Beginner APIs are stabilized first. When a beginner method is renamed, keep
+//! the old method for one release with a deprecation note, changelog entry, and
+//! migration note. Data-driven `assets/game.ron` files are versioned by their
+//! `version` field. Advanced APIs are allowed to evolve faster.
+//! Engine internals are unstable implementation details.
+//!
 //! ## First game
 //!
 //! ```ignore
@@ -87,10 +95,12 @@ pub mod beginner;
 pub mod bundle;
 pub mod context;
 pub mod data;
+mod diagnostics;
 mod harness;
 pub mod helpers;
 pub mod input;
 pub mod map;
+mod paths;
 pub mod prefab;
 pub mod system;
 
@@ -124,7 +134,8 @@ macro_rules! content_plugin {
 
 pub use app::{DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, Plugin, plugin, plugin_fn};
 pub use assets::{
-    AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, IntoTextureRef, SoundRef, TextureRef,
+    AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, IntoSoundRef, IntoTextureRef,
+    SoundRef, TextureRef,
 };
 pub use beginner::actors::{
     Area, AreaName, Checkpoint, CheckpointState, CollectSound, Collectible, DeathAnimationPolicy,
@@ -155,7 +166,8 @@ pub use beginner::defaults::{
     SimpleGameStartupBehavior,
 };
 pub use beginner::events::{
-    AnimationFinishedEvent, CollectEvent, CollisionEvent, EnemyDeathEvent, EventActor,
+    AnimationFinishedEvent, CollectEvent, CollisionEvent, DoorEvent, EnemyDeathEvent, EventActor,
+    MapChangedEvent, ProjectileHitEvent,
 };
 pub use beginner::prefabs::{
     AreaPrefabAuthor, DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
@@ -182,7 +194,8 @@ pub use bundle::{Bundle, vec2s};
 pub use context::{Commands, GameCtx, StartupGameCtx};
 pub use data::{
     BeginnerAssetsFile, BeginnerControlsFile, BeginnerGameFile, BeginnerMapFile,
-    BeginnerPrefabFile, BeginnerRuleFile, load_beginner_game_file,
+    BeginnerPrefabFile, BeginnerRuleFile, BeginnerScriptRuleFile, RuleEffectFile,
+    load_beginner_game_file,
 };
 pub use helpers::{
     InputDriven, MovementSpeed, SimulationState, camera_follow_first, stop_all_velocity,
@@ -200,6 +213,7 @@ pub use system::{GameSystem, StartupSystem};
 /// This broad prelude exists to avoid breaking older examples while the
 /// authoring facade stabilizes. Do not use it in new beginner code, docs, or
 /// templates.
+#[deprecated(note = "Use game_kit::beginner::prelude::* or game_kit::advanced::prelude::*")]
 pub mod prelude {
     pub use anyhow::{Context, Result};
     pub use glam::{Vec2, Vec4, vec2, vec4};
@@ -220,7 +234,8 @@ pub mod prelude {
         DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, plugin, plugin_fn,
     };
     pub use crate::assets::{
-        AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, SoundRef, TextureRef,
+        AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, IntoSoundRef, SoundRef,
+        TextureRef,
     };
     pub use crate::beginner::actors::{
         Area, AreaName, Checkpoint, CheckpointState, CollectSound, Collectible,
@@ -236,14 +251,15 @@ pub mod prelude {
     pub use crate::beginner::camera::CameraShake;
     pub use crate::beginner::collections::{
         CameraOps, EnemyCollection, FiredShot, PickupCollection, PlayerActor, Score, ScoreOps,
-        ShootAuthor,
+        ShootAuthor, TaggedActors,
     };
     pub use crate::beginner::combat::MeleeCombatConfig;
     pub use crate::beginner::context::{Game, Seconds, StartupGame};
     pub use crate::beginner::debug::DebugOverlay;
     pub use crate::beginner::defaults::TopDownGameAuthor;
     pub use crate::beginner::events::{
-        AnimationFinishedEvent, CollectEvent, CollisionEvent, EnemyDeathEvent, EventActor,
+        AnimationFinishedEvent, CollectEvent, CollisionEvent, DoorEvent, EnemyDeathEvent,
+        EventActor, MapChangedEvent, ProjectileHitEvent,
     };
     pub use crate::beginner::prefabs::{
         AreaPrefabAuthor, DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor,

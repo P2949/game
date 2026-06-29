@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow};
 use game_core::app::MapData;
-use game_core::builder::{MapId, PrefabId, PrefabRegistry};
+use game_core::builder::{MapId, PrefabId, PrefabRegistry, PropertyBag};
 use game_core::commands::CommandQueue;
 use game_core::nav::NavGrid;
 use game_core::world::World;
@@ -28,6 +28,7 @@ use crate::app::GameApp;
 use crate::assets::TextureRef;
 use crate::beginner::actors::{Door, Enemy, Player, TriggerArea};
 use crate::bundle::vec2s;
+use crate::diagnostics::bad_map_symbol_error;
 use crate::prefab::IntoContentName;
 
 /// Tile floor/wall sprites for a map. Re-exported from the engine so content can
@@ -334,27 +335,7 @@ fn validate_game_map(
 }
 
 pub(crate) fn beginner_asset_path(path: &str) -> PathBuf {
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        return path;
-    }
-    let root = std::env::var_os("GAME_ASSET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("assets"));
-    if root.is_absolute() {
-        return root.join(&path);
-    }
-    let relative = root.join(&path);
-    let Ok(current_dir) = std::env::current_dir() else {
-        return relative;
-    };
-    for directory in current_dir.ancestors() {
-        let candidate = directory.join(&relative);
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    current_dir.join(relative)
+    crate::paths::beginner_asset_file(path)
 }
 
 /// Builder for one map. Created by [`GameApp::map`] (in-code) or
@@ -673,11 +654,8 @@ fn expand_symbolic_tiles(
                 '#' | '.' => collision_row.push(symbol),
                 symbol => {
                     let prefab = legend_lookup.get(&symbol).ok_or_else(|| {
-                        anyhow!(
-                            "Map '{map_name}' uses symbol {symbol:?} but no legend maps it to a prefab.\n\nAt row {}, col {} add:\n    .legend({symbol:?}, \"some_prefab\")\n\nor replace the symbol with `.` or `#`.",
-                            row + 1,
-                            col + 1,
-                        )
+                        let known_symbols = legend_lookup.keys().copied().collect::<Vec<_>>();
+                        bad_map_symbol_error(map_name, symbol, row, col, &known_symbols)
                     })?;
                     collision_row.push('.');
                     *symbol_counts.entry(symbol).or_default() += 1;
@@ -747,6 +725,7 @@ pub struct ContentRuntime {
     prefabs: Rc<PrefabRegistry>,
     maps: HashMap<String, GameMap>,
     map_ids: HashMap<String, MapId>,
+    themes: HashMap<String, TileTheme>,
     text_maps: HashMap<String, TextMapReloadSource>,
     start_map: String,
     current_map: String,
@@ -757,12 +736,14 @@ impl ContentRuntime {
         prefabs: Rc<PrefabRegistry>,
         maps: HashMap<String, GameMap>,
         map_ids: HashMap<String, MapId>,
+        themes: HashMap<String, TileTheme>,
         text_maps: HashMap<String, TextMapReloadSource>,
         start_map: String,
     ) -> Self {
         Self {
             prefabs,
             map_ids,
+            themes,
             text_maps,
             current_map: start_map.clone(),
             start_map,
@@ -779,6 +760,19 @@ impl ContentRuntime {
         self.prefabs.id(name)
     }
 
+    pub(crate) fn spawn_prefab_by_name(
+        &self,
+        name: &str,
+        world: &mut World,
+        position: glam::Vec2,
+        properties: &PropertyBag,
+    ) -> Result<game_core::world::EntityId> {
+        let prefab = self
+            .prefab_id(name)
+            .ok_or_else(|| anyhow!("unknown prefab '{name}'"))?;
+        self.prefabs.spawn(prefab, world, position, properties)
+    }
+
     pub fn map_id(&self, name: &str) -> Option<MapId> {
         self.map_ids.get(name).copied()
     }
@@ -789,6 +783,29 @@ impl ContentRuntime {
 
     pub fn start_map_id(&self) -> Option<MapId> {
         self.map_id(&self.start_map)
+    }
+
+    pub(crate) fn map_data(&self, name: &str) -> Result<(MapId, MapData)> {
+        let map = self
+            .maps
+            .get(name)
+            .ok_or_else(|| anyhow!("unknown map '{name}'"))?;
+        let theme = *self
+            .themes
+            .get(name)
+            .ok_or_else(|| anyhow!("map '{name}' has no registered theme"))?;
+        let tilemap = map.collision_tilemap();
+        let map_id = self
+            .map_id(name)
+            .ok_or_else(|| anyhow!("map '{name}' is not registered"))?;
+        Ok((
+            map_id,
+            MapData {
+                nav: NavGrid::from_tilemap(&tilemap),
+                tilemap,
+                theme,
+            },
+        ))
     }
 
     /// Rebuilds the active text map from its original source path. Maps declared
@@ -811,6 +828,7 @@ impl ContentRuntime {
         let map_id = self
             .map_id(&name)
             .ok_or_else(|| anyhow!("map '{name}' is not registered"))?;
+        self.themes.insert(name.clone(), source.theme);
         self.maps.insert(name, map);
         Ok((
             map_id,

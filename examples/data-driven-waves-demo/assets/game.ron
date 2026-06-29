@@ -1,0 +1,39 @@
+(
+    version: 1,
+    assets: (
+        textures: ["player", "slime", "floor", "wall"],
+        sounds: ["hit"],
+    ),
+    controls: TopDown,
+    prefabs: [
+        Player((name: "player", sprite: "player", health: 30, melee: Some((range: 30.0, damage: 10)))),
+        Enemy((name: "slime", sprite: "slime", health: 10, chase_player: true, tags: ["enemy"])),
+    ],
+    maps: [
+        TextMap((
+            name: "arena",
+            path: "maps/arena.txt",
+            theme: ("floor", "wall"),
+            legend: {'P': "player", 'E': "slime"},
+            start: true,
+        )),
+    ],
+    rules: [
+        TopDownControls,
+        EnemiesDamagePlayer,
+        DeadEnemiesDespawn,
+        CameraFollowsPlayer,
+        ShowBasicUi,
+        ShowScore,
+        ShowEnemyCount,
+        ShowPlayerHealth,
+        EverySeconds(
+            seconds: 5.0,
+            effects: [SpawnNearPlayer(prefab: "slime", radius: 128.0), PlaySound("hit"), ShowUiText("Wave incoming")],
+        ),
+        When(
+            condition: TagCountZero("enemy"),
+            effects: [AddScore(10), ShowUiText("Wave cleared")],
+        ),
+    ],
+)

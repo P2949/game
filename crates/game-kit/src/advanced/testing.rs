@@ -16,7 +16,7 @@ pub mod prelude {
     pub use game_map::{MapCell, cell};
     pub use game_physics::{Collider, movement_system};
 
+    pub use crate::advanced::prelude::*;
     pub use crate::beginner::testing::TestEntity;
-    pub use crate::prelude::*;
     pub use crate::testing::GameTestHarness;
 }

@@ -1,4 +1,4 @@
-# 06 - Add Sound And UI
+# Optional - Add Sound And UI
 
 ## Goal
 
@@ -64,4 +64,4 @@ If the sound fails validation, the path should be `sounds/hit.wav`, not
 
 ## Next step
 
-Animate the player in [07 - Add animation](07-add-animation.md).
+Animate the player in [Optional - Add animation](optional-add-animation.md).

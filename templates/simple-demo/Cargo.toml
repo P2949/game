@@ -4,5 +4,12 @@ version = "0.1.0"
 edition = "2024"
 build = "build.rs"
 
+[package.metadata.game]
+title = "{{title}}"
+asset_dir = "assets"
+
 [dependencies]
 game-starter = {{game_starter_dependency}}
+
+[features]
+ci-build-sdl3 = ["game-starter/ci-build-sdl3"]

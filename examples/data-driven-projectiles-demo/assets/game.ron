@@ -1,0 +1,61 @@
+(
+    version: 1,
+    assets: (
+        textures: ["player", "slime", "coin", "bolt", "floor", "wall"],
+        sounds: ["hit", "coin", "shoot"],
+    ),
+    controls: TopDown,
+    prefabs: [
+        Player((name: "player", sprite: "player", health: 20)),
+        Enemy((name: "slime", sprite: "slime", health: 3, chase_player: true, tags: ["enemy"])),
+        Pickup((name: "coin", sprite: "coin", score: 1, sound: Some("coin"))),
+        Projectile((name: "bolt", sprite: "bolt", damage: 1, speed: 300.0, lifetime: 1.0)),
+    ],
+    maps: [
+        TextMap((
+            name: "range",
+            path: "maps/range.txt",
+            theme: ("floor", "wall"),
+            legend: {'P': "player", 'E': "slime"},
+            start: true,
+        )),
+        TextMap((
+            name: "win",
+            path: "maps/win.txt",
+            theme: ("floor", "wall"),
+            legend: {'P': "player"},
+        )),
+    ],
+    scene_flow: Some((
+        game: Some("range"),
+        win: Some("win"),
+        win_text: Some("Projectile score reached"),
+    )),
+    actions: [
+        PlayerShoots((prefab: "bolt", action: Attack, cooldown: 0.2, direction: TowardsMouse, sound: Some("shoot"))),
+    ],
+    rules: [
+        TopDownControls,
+        PlayerCollectsPickups,
+        EnemiesDamagePlayer,
+        DeadEnemiesDespawn,
+        Projectiles,
+        CameraFollowsPlayer,
+        ShowBasicUi,
+        ShowScore,
+        ShowEnemyCount,
+        ShowWinPanel,
+        OnEnemyDeath(
+            prefab: "slime",
+            effects: [AddScore(1), SpawnPrefab("coin"), PlaySound("hit"), DespawnSelf],
+        ),
+        When(
+            condition: ActionPressed(Attack),
+            effects: [ShowUiText("Bolt fired")],
+        ),
+        When(
+            condition: ScoreAtLeast(5),
+            effects: [ShowUiText("Target score reached"), ChangeScene("win")],
+        ),
+    ],
+)

@@ -66,7 +66,7 @@ impl RenderCamera {
         let half_w = width * 0.5 / self.zoom;
         let half_h = height * 0.5 / self.zoom;
 
-        glam::Mat4::orthographic_rh(
+        glam::camera::rh::proj::directx::orthographic(
             self.center.x - half_w,
             self.center.x + half_w,
             self.center.y - half_h,

@@ -67,7 +67,7 @@ fn main() -> Result<()> {
 
         game.every_active_tick::<SimpleGameState>(|game, dt| {
             let mut explosions = Vec::new();
-            game.actors_tagged("explosive").for_each(|actor| {
+            game.actors_tagged("explosive").each(|actor| {
                 let fuse = actor.data("fuse").unwrap_or(0.0) - dt;
                 actor.set_data("fuse", fuse);
                 if fuse <= 0.0 {
@@ -90,7 +90,7 @@ fn main() -> Result<()> {
 
 `.tag("explosive")` labels the bomber and `.data("fuse", 3.0)` gives it a
 number to count down. `actors_tagged("explosive")` finds only bombers, and its
-`for_each` callback gives each one a small actor-shaped handle. That handle can
+`each` callback gives each one a small actor-shaped handle. That handle can
 read its position and data, update the fuse, damage it, or play an animation.
 
 Tags are names you choose. A tag query only selects actors that you explicitly

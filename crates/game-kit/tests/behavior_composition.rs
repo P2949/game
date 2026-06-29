@@ -1,4 +1,4 @@
-use game_kit::advanced::prelude::{ChaseTarget, Velocity};
+use game_kit::advanced::prelude::{ChaseTarget, StartupGameCtx, Velocity};
 use game_kit::beginner::prelude::*;
 use game_kit::testing::GameTestHarness;
 
@@ -18,7 +18,7 @@ impl GamePlugin for MovementBehaviorPlugin {
             .simple_theme(TextureHandle(0), TextureHandle(0))
             .legend('P', "player")
             .start();
-        game.on_start(|game| {
+        game.startup(|game: &mut StartupGameCtx<'_, '_>| {
             game.init_resource::<SimpleGameState>();
             game.spawn_start_map()
         });

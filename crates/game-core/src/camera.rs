@@ -70,7 +70,7 @@ impl Camera2D {
         let half_w = width * 0.5 / zoom;
         let half_h = height * 0.5 / zoom;
 
-        glam::Mat4::orthographic_rh(
+        glam::camera::rh::proj::directx::orthographic(
             center.x - half_w,
             center.x + half_w,
             center.y - half_h,

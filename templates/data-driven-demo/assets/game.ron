@@ -1,7 +1,8 @@
 (
     version: 1,
     assets: (
-        textures: ["player", "slime", "coin", "floor", "wall"],
+        textures: ["player", "slime", "coin", "floor", "wall", "door", "bolt"],
+        sounds: ["hit", "coin", "shoot"],
     ),
     controls: TopDown,
     prefabs: [
@@ -24,6 +25,7 @@
             name: "coin",
             sprite: "coin",
             score: 1,
+            sound: Some("coin"),
         )),
     ],
     maps: [

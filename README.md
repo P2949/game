@@ -91,24 +91,59 @@ content_plugin!(MyContent, plugin, |game| {
 });
 ```
 
-Start a project from anywhere with
-`cargo generate gh:P2949/game templates/simple-demo`; it creates a one-file
-beginner game with a git dependency on `game-starter`. From a local checkout,
-`cargo xtask new-demo my-game` creates the same starter with a local path
-dependency. Use `cargo xtask new-demo my-game --template data-driven` when you want the
-same first-game setup in editable `assets/game.ron` instead. `simple-content`,
-`arena-content`, and `examples/one-file-demo` remain useful examples to copy.
-`testbed-content` is intentionally advanced; see the [advanced authoring
-guide](docs/advanced-content-authoring.md) only when you need that separate
-path. The [beginner guide](docs/beginner-authoring.md),
+Start a project from anywhere with:
+
+```bash
+cargo install cargo-generate
+cargo generate --git https://github.com/P2949/game templates/simple-demo --name my-game
+cd my-game
+cargo install --git https://github.com/P2949/game game-cli
+game-dev doctor
+game-dev run
+```
+
+That creates a one-file beginner game with a pinned git dependency on
+`game-starter`. From a local checkout, `cargo xtask new-demo my-game` creates
+the same starter with a local path dependency. Use
+`cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
+when you want the same first-game setup in editable `assets/game.ron` instead.
+Generated projects can use `game-dev asset-check`, `game-dev validate-data`,
+and `game-dev package --release --out dist/my-game --zip` without cloning the
+engine repository.
+
+Want to try before building? Download the latest demo package from
+[Releases](https://github.com/P2949/game/releases). The prebuilt
+`game-demo-linux-x86_64.zip` and `game-demo-windows-x86_64.zip` packages let
+you unzip and run the bundled demo before installing Rust or SDL3. They still
+require a Vulkan-capable GPU/driver, and source builds remain the main
+development path.
+
+## What Should I Copy First?
+
+- **No Rust:** `templates/data-driven-demo`,
+  `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
+  `examples/data-driven-projectiles-demo`
+- **First Rust game:** `templates/simple-demo`
+- **One-file example:** `examples/one-file-demo`
+- **Full beginner feature sample:** `examples/no-rust-shapes-demo`
+- **Custom behavior:** `examples/script-like-custom-rules`
+- **Structured beginner content:** `arena-content`
+- **Do not copy first:** `testbed-content`
+
+`testbed-content` is intentionally advanced; see
+[when to use the advanced API](docs/when-to-use-advanced-api.md) and the
+[advanced authoring guide](docs/advanced-content-authoring.md) only when you
+need that separate path. The [beginner guide](docs/beginner-authoring.md),
 [tutorials](docs/tutorials/README.md), and [cookbook](docs/cookbook/README.md)
 are the normal starting points.
 
 ## Authoring levels
 
 - **No-Rust data-driven:** edit `assets/game.ron` and text maps. Start with
-  `templates/data-driven-demo` or `examples/data-driven-full-demo` when the game
-  should be made mostly from data files.
+  `templates/data-driven-demo`, `examples/data-driven-events-demo`,
+  `examples/data-driven-waves-demo`, `examples/data-driven-projectiles-demo`,
+  or `examples/data-driven-full-demo` when the game should be made mostly from
+  data files.
 - **Beginner Rust builder chains:** use `game_starter::prelude::*` with
   high-level builders for assets, prefabs, maps, actions, scenes, sound,
   animation, and rules. Start with `examples/one-file-demo`,
@@ -130,14 +165,34 @@ are the normal starting points.
 | Custom ECS systems | no | no | yes |
 | No Rust required | yes | no | no |
 
+## API Stability
+
+- **Beginner API:** stabilized first. Renamed beginner methods should keep the
+  old method for one release with a deprecation note, a changelog entry, and a
+  migration note.
+- **Data file schema:** versioned through `assets/game.ron` and its `version`
+  field. The current schema is `version: 1`; future schema changes should get a
+  guide in [docs/migrations](docs/migrations/README.md).
+- **Advanced API:** allowed to evolve faster for custom systems, manual
+  prefabs, and low-level experiments.
+- **Engine internals:** unstable. Runtime, renderer, backend, and raw world
+  details are not a beginner content API.
+
+Release templates pin `game-starter` to tagged git dependencies such as
+`v0.1.0`, so generated projects are not tied to a moving branch by default.
+
 ## What should I copy?
 
 If you are new:
 
 1. Copy `examples/one-file-demo`.
 2. Then read `examples/no-rust-shapes-demo`.
-3. Then use `cargo xtask new-demo my-game` to create your own Rust demo, or
-   `cargo xtask new-demo my-game --template data-driven` for a no-Rust demo.
+3. Then use
+   `cargo generate --git https://github.com/P2949/game templates/simple-demo --name my-game`
+   to create your own Rust demo, or
+   `cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
+   for a no-Rust demo. From a local checkout, `cargo xtask new-demo my-game`
+   uses your local sources instead of the pinned release tag.
 
 If you want a workspace content crate:
 
@@ -148,6 +203,7 @@ If you want a workspace content crate:
 Do not copy `testbed-content` unless you want the advanced API.
 
 Further reading: [beginner authoring](docs/beginner-authoring.md),
+[when to use the advanced API](docs/when-to-use-advanced-api.md),
 [advanced content authoring](docs/advanced-content-authoring.md), and the
 [architecture guide](docs/architecture.md).
 
@@ -159,6 +215,9 @@ Further reading: [beginner authoring](docs/beginner-authoring.md),
 - `glslc` (from shaderc / the Vulkan SDK) on `PATH` — shaders are compiled at build time
 - Vulkan validation layers for debug builds unless disabled with
   `GAME_DISABLE_VALIDATION=1`
+
+In a generated project, run `game-dev doctor --explain` before the first
+windowed run for setup-specific fixes.
 
 ## Build and run
 

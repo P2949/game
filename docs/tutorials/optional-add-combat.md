@@ -1,4 +1,4 @@
-# 05 - Add Combat
+# Optional - Add Combat
 
 ## Goal
 
@@ -49,4 +49,4 @@ to the top-down preset with `.with_enemy_chase()` and `.with_collision()`.
 ## Next step
 
 Add the sound, reset, pause UI, and debug overlay in
-[06 - Add sound and UI](06-add-sound-and-ui.md).
+[Optional - Add sound and UI](optional-add-sound-and-ui.md).

@@ -249,7 +249,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-driven-events-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
 name = "data-driven-full-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
+name = "data-driven-projectiles-demo"
+version = "0.1.0"
+dependencies = [
+ "game-starter",
+]
+
+[[package]]
+name = "data-driven-waves-demo"
 version = "0.1.0"
 dependencies = [
  "game-starter",
@@ -297,6 +318,14 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "events-demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-starter",
+]
 
 [[package]]
 name = "fdeflate"
@@ -381,6 +410,20 @@ dependencies = [
  "anyhow",
  "game-core",
  "glam",
+]
+
+[[package]]
+name = "game-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fontdue",
+ "game-audio",
+ "game-kit",
+ "game-map",
+ "image",
+ "serde_json",
+ "walkdir",
 ]
 
 [[package]]
@@ -491,9 +534,9 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.33.1"
+version = "0.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "898f5a568a84989b6c0f8caa50a93074b97dbdc58fc6d9543157bb4562758933"
+checksum = "7f22fb22f065b308be0d8724e3706c7fa3fc2a6c7d6899df4cad7860e7a75436"
 
 [[package]]
 name = "gpu-allocator"
@@ -795,6 +838,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "projectile-hit-demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-starter",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -865,6 +916,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "score-gate-demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-starter",
 ]
 
 [[package]]
@@ -1071,6 +1130,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "timer-spawn-demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "game-starter",
 ]
 
 [[package]]
@@ -1296,12 +1363,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fontdue",
- "game-audio",
- "game-map",
- "image",
- "serde_json",
- "walkdir",
+ "game-cli",
 ]
 
 [[package]]

@@ -61,5 +61,5 @@ to learn more Rust before making a small game with this template.
 
 ## Next step
 
-Return to [Zero to a running demo](00-zero-to-demo.md), then edit a map or a
-number in `src/main.rs` and run the game again.
+Return to [Quickstart - Zero to a Running Demo](quickstart-zero-to-demo.md),
+then edit a map or a number in `src/main.rs` and run the game again.

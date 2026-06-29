@@ -13,7 +13,7 @@ use game_physics::{Collider, Trigger};
 use glam::{Vec2, Vec4, vec2};
 
 use crate::app::GameApp;
-use crate::assets::{IntoTextureRef, SoundRef, TextureRef};
+use crate::assets::{IntoSoundRef, IntoTextureRef, SoundRef, TextureRef};
 use crate::beginner::actors::{
     Area, AreaName, Checkpoint, CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect,
     DespawnOnHit, Door, DoorAction, DoorTarget, DropsPrefab, Enemy, ExitDoor, FacingDirection,
@@ -1208,8 +1208,8 @@ impl<'a, 'app> PickupPrefabAuthor<'a, 'app> {
         self
     }
 
-    pub fn play_sound(mut self, sound: impl Into<SoundRef>) -> Self {
-        self.sound = Some(sound.into());
+    pub fn play_sound(mut self, sound: impl IntoSoundRef) -> Self {
+        self.sound = Some(sound.into_sound_ref());
         self
     }
 
@@ -2020,7 +2020,6 @@ mod tests {
 
     use super::*;
     use crate::app::{GameApp, GamePlugin};
-    use crate::context::StartupGameCtx;
     use crate::harness::GameTestHarness;
 
     struct ObjectPrefabPlugin;
@@ -2063,7 +2062,7 @@ mod tests {
                 .legend('S', "spawner")
                 .start();
 
-            game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
+            game.on_start(|game| game.spawn_start_map());
             Ok(())
         }
     }
@@ -2103,7 +2102,7 @@ mod tests {
                 .legend('P', "patroller")
                 .start();
 
-            game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
+            game.on_start(|game| game.spawn_start_map());
             Ok(())
         }
     }
@@ -2152,7 +2151,7 @@ mod tests {
                 .simple_theme("floor", "wall")
                 .legend('P', "player")
                 .start();
-            game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
+            game.on_start(|game| game.spawn_start_map());
             game.on_action(controls.attack, |game| game.play_sound_named("coin"));
             Ok(())
         }

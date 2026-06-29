@@ -3,6 +3,7 @@
 use game_core::input::{ActionId, MouseButton};
 use glam::{Vec2, vec2, vec4};
 
+use crate::beginner::context::Game as BeginnerGame;
 use crate::context::GameCtx;
 
 const MARGIN: f32 = 24.0;
@@ -357,9 +358,10 @@ impl<'g, 'a, 'w> UiButton<'g, 'a, 'w> {
     }
 
     /// Draws the button and invokes `f` when it receives a left-click edge.
-    pub fn on_click(mut self, f: impl FnOnce(&mut GameCtx<'a, 'w>)) {
+    pub fn on_click(mut self, f: impl FnOnce(&mut BeginnerGame<'_, 'a, 'w>)) {
         if self.draw_and_hit_test() {
-            f(self.game);
+            let mut game = BeginnerGame::new(self.game);
+            f(&mut game);
         }
     }
 

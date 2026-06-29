@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -510,6 +511,64 @@ fn full_data_driven_demo_stays_data_only() {
 }
 
 #[test]
+fn data_driven_reload_loop_is_validated_and_honest() {
+    let root = workspace_root();
+    let cli = fs::read_to_string(root.join("crates/game-cli/src/lib.rs"))
+        .expect("failed to read game-cli");
+    assert!(
+        cli.contains("validate-data") && cli.contains("validate_beginner_game_file"),
+        "game-dev should expose validate-data through the same beginner data validator"
+    );
+
+    let data = fs::read_to_string(root.join("crates/game-kit/src/data.rs"))
+        .expect("failed to read data loader");
+    for required in [
+        "BeginnerFileRuntime",
+        "BeginnerReloadLevel",
+        "rebuild_beginner_content_runtime",
+        "changed its {kind} list",
+    ] {
+        assert!(
+            data.contains(required),
+            "data reload support should include {required:?}"
+        );
+    }
+
+    let defaults = fs::read_to_string(root.join("crates/game-kit/src/beginner/defaults.rs"))
+        .expect("failed to read beginner defaults");
+    assert!(
+        defaults.contains("reload_beginner_file_if_configured_or_log")
+            && defaults.contains("reload_current_map_or_log"),
+        "F5 should reload game.ron when configured and keep the text-map fallback"
+    );
+
+    let debug = fs::read_to_string(root.join("crates/game-kit/src/beginner/debug.rs"))
+        .expect("failed to read debug overlay");
+    for required in ["game.ron reload:", "loaded at startup", "game.ron error:"] {
+        assert!(
+            debug.contains(required),
+            "debug overlay should explain data reload status with {required:?}"
+        );
+    }
+
+    for relative in [
+        "docs/tutorials/12-fast-iteration.md",
+        "docs/tutorials/13-data-driven-demo.md",
+        "templates/data-driven-demo/README.md",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains("partial")
+                && source.contains("Adding, removing, or")
+                && source.contains("reordering")
+                && source.contains("requires a restart"),
+            "{relative} should describe the partial game.ron reload contract honestly"
+        );
+    }
+}
+
+#[test]
 fn flag_builders_delegate_to_independent_behaviors() {
     let root = workspace_root();
     let defaults = fs::read_to_string(root.join("crates/game-kit/src/beginner/defaults.rs"))
@@ -623,6 +682,425 @@ fn game_kit_normal_prelude_has_no_testing_or_raw_exports() {
 }
 
 #[test]
+fn game_kit_compatibility_prelude_is_visibly_deprecated() {
+    let source = fs::read_to_string(workspace_root().join("crates/game-kit/src/lib.rs"))
+        .expect("failed to read game-kit lib");
+
+    assert!(
+        source.contains("#[deprecated(note = \"Use game_kit::beginner::prelude::* or game_kit::advanced::prelude::*\")]"),
+        "game_kit::prelude should be marked as compatibility-only with a deprecation note"
+    );
+    assert!(source.contains("Compatibility prelude."));
+    assert!(source.contains("game_kit::beginner::prelude::*"));
+    assert!(source.contains("game_kit::advanced::prelude::*"));
+}
+
+#[test]
+fn generated_templates_are_ci_checked_and_release_pinned() {
+    let root = workspace_root();
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("failed to read CI workflow");
+
+    for required in [
+        "generated-templates:",
+        "cargo install cargo-generate --locked --force",
+        "cargo generate --path templates/simple-demo",
+        "cargo generate --path templates/data-driven-demo",
+        "cargo check --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3",
+        "cargo check --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3",
+        "Build game-dev helper",
+        "game-dev package --release --features ci-build-sdl3 --out /tmp/package-simple --zip",
+        "game-dev package --release --features ci-build-sdl3 --out /tmp/package-data --zip",
+        "cargo run --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3",
+        "cargo run --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3",
+    ] {
+        assert!(
+            ci.contains(required),
+            "generated-project CI must include {required:?}"
+        );
+    }
+
+    for relative in [
+        "templates/simple-demo/cargo-generate.toml",
+        "templates/data-driven-demo/cargo-generate.toml",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains(
+                r#"default = '{ git = "https://github.com/P2949/game", tag = "v0.1.0", package = "game-starter" }'"#
+            ),
+            "{relative} should pin release-generated projects to the current release tag"
+        );
+        assert!(
+            !source.contains(
+                r#"default = '{ git = "https://github.com/P2949/game", package = "game-starter" }'"#
+            ),
+            "{relative} must not default to the moving git branch"
+        );
+    }
+
+    for relative in [
+        "templates/simple-demo/Cargo.toml",
+        "templates/data-driven-demo/Cargo.toml",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains(r#"ci-build-sdl3 = ["game-starter/ci-build-sdl3"]"#),
+            "{relative} should let generated CI opt into source-built SDL3"
+        );
+        assert!(
+            source.contains("[package.metadata.game]")
+                && source.contains(r#"title = "{{title}}""#)
+                && source.contains(r#"asset_dir = "assets""#),
+            "{relative} should include beginner package metadata"
+        );
+    }
+
+    let starter_manifest = fs::read_to_string(root.join("crates/game-starter/Cargo.toml"))
+        .expect("failed to read game-starter manifest");
+    assert!(
+        starter_manifest.contains(r#"ci-build-sdl3 = ["game-runtime/ci-build-sdl3"]"#),
+        "game-starter should expose the generated-project CI SDL3 feature"
+    );
+
+    let runtime_manifest = fs::read_to_string(root.join("crates/game-runtime/Cargo.toml"))
+        .expect("failed to read game-runtime manifest");
+    assert!(
+        runtime_manifest.contains("game-platform-sdl/ci-build-sdl3")
+            && runtime_manifest.contains("game-audio/ci-build-sdl3"),
+        "game-runtime should forward the source-built SDL3 feature to backend crates"
+    );
+}
+
+#[test]
+fn first_15_minutes_acceptance_path_is_scripted_and_documented() {
+    let root = workspace_root();
+    let script = fs::read_to_string(root.join("scripts/first-15-minutes.sh"))
+        .expect("failed to read first 15 minutes script");
+    for required in [
+        "cargo generate --path \"$repo/templates/simple-demo\"",
+        "--name first-demo",
+        "cargo check",
+        "GAME_SMOKE_FRAMES=\"$smoke_frames\" run_smoke cargo run",
+        "assets/maps/level_1.txt",
+        "$game_dev\" asset-check",
+        "$game_dev\" package --release",
+        "--out dist/first-demo --zip",
+        "package_name=",
+        "packaged executable for $package_name was not found",
+        "dist/first-demo/run.sh",
+    ] {
+        assert!(
+            script.contains(required),
+            "first 15 minutes script should contain {required:?}"
+        );
+    }
+
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("failed to read CI workflow");
+    for required in [
+        "First 15 minutes acceptance test",
+        "FIRST15_FEATURES: ci-build-sdl3",
+        "FIRST15_USE_XVFB: \"1\"",
+        "scripts/first-15-minutes.sh",
+    ] {
+        assert!(
+            ci.contains(required),
+            "CI should run first 15 minutes acceptance with {required:?}"
+        );
+    }
+
+    let quickstart = fs::read_to_string(root.join("docs/tutorials/quickstart-zero-to-demo.md"))
+        .expect("failed to read quickstart tutorial");
+    for required in [
+        "first 15 minutes",
+        "cargo generate --path templates/simple-demo --name first-demo --destination /tmp",
+        "GAME_SMOKE_FRAMES=60 cargo run",
+        "assets/maps/level_1.txt",
+        "game-dev asset-check",
+        "game-dev package --release --out dist/first-demo --zip",
+    ] {
+        assert!(
+            quickstart.contains(required),
+            "quickstart should document first 15 minutes command {required:?}"
+        );
+    }
+}
+
+#[test]
+fn beginner_api_stability_policy_is_documented() {
+    let root = workspace_root();
+
+    let readme = fs::read_to_string(root.join("README.md")).expect("failed to read README.md");
+    for required in [
+        "## API Stability",
+        "Beginner API",
+        "stabilized first",
+        "old method for one release",
+        "Data file schema",
+        "versioned through `assets/game.ron`",
+        "Advanced API",
+        "allowed to evolve faster",
+        "Engine internals",
+        "unstable",
+        "not tied to a moving branch",
+        "docs/migrations",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README should document stability policy detail {required:?}"
+        );
+    }
+
+    let game_kit =
+        fs::read_to_string(root.join("crates/game-kit/src/lib.rs")).expect("failed to read lib.rs");
+    for required in [
+        "## Stability",
+        "Beginner APIs are stabilized first",
+        "old method for one release",
+        "Data-driven `assets/game.ron` files are versioned",
+        "Advanced APIs are allowed to evolve faster",
+        "Engine internals are unstable",
+    ] {
+        assert!(
+            game_kit.contains(required),
+            "game-kit rustdoc should document stability policy detail {required:?}"
+        );
+    }
+
+    let changelog =
+        fs::read_to_string(root.join("CHANGELOG.md")).expect("failed to read CHANGELOG.md");
+    for required in [
+        "### Added",
+        "### Changed",
+        "### Deprecated",
+        "### Removed",
+        "### Migration notes",
+        "docs/migrations/game-ron-v1-to-v2.md",
+    ] {
+        assert!(
+            changelog.contains(required),
+            "CHANGELOG should contain release-note section {required:?}"
+        );
+    }
+
+    let migrations = fs::read_to_string(root.join("docs/migrations/README.md"))
+        .expect("failed to read migrations README");
+    assert!(
+        migrations.contains("game-ron-v1-to-v2.md"),
+        "migration index should link the game.ron schema migration guide"
+    );
+
+    let game_ron_migration = fs::read_to_string(root.join("docs/migrations/game-ron-v1-to-v2.md"))
+        .expect("failed to read game.ron migration guide");
+    for required in [
+        "version: 1",
+        "version: 2",
+        "game-dev validate-data assets/game.ron",
+        "BeginnerGameFile.version",
+    ] {
+        assert!(
+            game_ron_migration.contains(required),
+            "game.ron migration guide should contain {required:?}"
+        );
+    }
+}
+
+#[test]
+fn standalone_beginner_cli_is_documented_and_xtask_wrapped() {
+    let root = workspace_root();
+    let workspace_manifest =
+        fs::read_to_string(root.join("Cargo.toml")).expect("failed to read workspace manifest");
+    assert!(
+        workspace_manifest.contains(r#""crates/game-cli""#),
+        "workspace should include the standalone beginner CLI crate"
+    );
+
+    let cli_manifest = fs::read_to_string(root.join("crates/game-cli/Cargo.toml"))
+        .expect("failed to read game-cli manifest");
+    assert!(cli_manifest.contains("name = \"game-cli\""));
+    assert!(cli_manifest.contains("name = \"game-dev\""));
+
+    let xtask_manifest =
+        fs::read_to_string(root.join("xtask/Cargo.toml")).expect("failed to read xtask manifest");
+    let xtask_main =
+        fs::read_to_string(root.join("xtask/src/main.rs")).expect("failed to read xtask main");
+    assert!(
+        xtask_manifest.contains("game-cli"),
+        "xtask should depend on the shared CLI implementation"
+    );
+    assert!(
+        xtask_main.contains("game_cli::run_xtask"),
+        "xtask should remain a thin wrapper around game-cli functions"
+    );
+
+    for relative in [
+        "templates/simple-demo/README.md",
+        "templates/data-driven-demo/README.md",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        for required in [
+            "cargo install --git https://github.com/P2949/game game-cli",
+            "game-dev doctor",
+            "game-dev run",
+            "game-dev package --release --out dist/my-game --zip",
+        ] {
+            assert!(
+                source.contains(required),
+                "{relative} should document {required:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn generated_project_package_flow_matches_beginner_contract() {
+    let root = workspace_root();
+    let cli =
+        fs::read_to_string(root.join("crates/game-cli/src/lib.rs")).expect("failed to read CLI");
+    for required in [
+        "cargo build",
+        "--release",
+        "validate_assets_dir(&assets, false)",
+        "validate_beginner_game_file",
+        "run.sh",
+        "run.ps1",
+        "README.txt",
+        "zip_package",
+    ] {
+        assert!(
+            cli.contains(required),
+            "game-dev package should include {required:?}"
+        );
+    }
+
+    let tutorial = fs::read_to_string(root.join("docs/tutorials/10-package-your-demo.md"))
+        .expect("failed to read package tutorial");
+    for required in [
+        "game-dev package --release --out dist/my-game --zip",
+        "run.ps1",
+        "README.txt",
+        "dist/my-game.zip",
+        "Send the whole dist/my-game.zip folder to a friend.",
+    ] {
+        assert!(
+            tutorial.contains(required),
+            "package tutorial should document {required:?}"
+        );
+    }
+}
+
+#[test]
+fn release_workflow_publishes_prebuilt_demo_artifacts() {
+    let root = workspace_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/release.yml"))
+        .expect("failed to read release workflow");
+    for required in [
+        "push:",
+        "tags:",
+        "\"v*\"",
+        "game-demo-linux-x86_64",
+        "game-demo-windows-x86_64",
+        "cargo xtask package-demo --release --features ci-build-sdl3",
+        "actions/upload-artifact",
+        "gh release upload",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "release workflow should include {required:?}"
+        );
+    }
+
+    let cli =
+        fs::read_to_string(root.join("crates/game-cli/src/lib.rs")).expect("failed to read CLI");
+    assert!(
+        cli.contains(
+            "cargo xtask package-demo --release --out <directory> [--features feature-list]"
+        ),
+        "workspace demo packaging should document feature flags for release builds"
+    );
+
+    let readme = fs::read_to_string(root.join("README.md")).expect("failed to read README.md");
+    for required in [
+        "Want to try before building? Download the latest demo package from",
+        "Releases",
+        "game-demo-linux-x86_64.zip",
+        "game-demo-windows-x86_64.zip",
+        "Vulkan-capable GPU/driver",
+        "source builds remain the main",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README should document prebuilt release artifacts with {required:?}"
+        );
+    }
+
+    for relative in [
+        "docs/setup/linux.md",
+        "docs/setup/windows.md",
+        "docs/setup/macos.md",
+        "docs/release-checklist.md",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains("Prebuilt demo package")
+                || source.contains("Prebuilt demo release artifacts"),
+            "{relative} should document the prebuilt demo path"
+        );
+        assert!(
+            source.contains("Releases") && source.contains("Vulkan-capable GPU/driver"),
+            "{relative} should link releases and keep Vulkan expectations honest"
+        );
+    }
+}
+
+#[test]
+fn doctor_diagnostics_cover_first_run_setup() {
+    let root = workspace_root();
+    let cli =
+        fs::read_to_string(root.join("crates/game-cli/src/lib.rs")).expect("failed to read CLI");
+    for required in [
+        "rustc 1.87 or newer",
+        "Vulkan 1.3+ physical device",
+        "SDL3 development files",
+        "audio backend prerequisites",
+        "assets/fonts/DejaVuSans.ttf",
+        "--explain",
+    ] {
+        assert!(
+            cli.contains(required),
+            "game-dev doctor should cover {required:?}"
+        );
+    }
+
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("failed to read CI workflow");
+    assert!(
+        ci.contains("cargo run -p game-cli -- doctor --explain"),
+        "CI should run doctor diagnostics"
+    );
+
+    for relative in [
+        "docs/setup/linux.md",
+        "docs/setup/macos.md",
+        "docs/setup/windows.md",
+        "docs/tutorials/common-errors.md",
+        "README.md",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains("game-dev doctor --explain"),
+            "{relative} should mention the explanatory doctor mode"
+        );
+    }
+}
+
+#[test]
 fn beginner_prelude_does_not_export_advanced_ecs_surface() {
     let path = workspace_root().join("crates/game-kit/src/beginner/prelude.rs");
     let source = read_code_without_comments(&path);
@@ -653,6 +1131,122 @@ fn beginner_prelude_does_not_export_advanced_ecs_surface() {
             contains_identifier(&source, forbidden)
         };
         assert!(!found, "beginner prelude must not export {forbidden}");
+    }
+}
+
+#[test]
+fn beginner_context_is_a_wrapper_not_an_advanced_alias() {
+    let source = read_code_without_comments(
+        &workspace_root().join("crates/game-kit/src/beginner/context.rs"),
+    );
+
+    for required in ["pub struct Game<", "pub struct StartupGame<"] {
+        assert!(
+            source.contains(required),
+            "beginner context should define wrapper {required:?}"
+        );
+    }
+
+    for forbidden in [
+        "pub use crate::context",
+        "pub type Game",
+        "pub type StartupGame",
+        "Commands",
+        "EntityId",
+        "Component",
+        "entities_with",
+        "component::<",
+        "commands(",
+        "resource::<",
+        "resource_mut::<",
+        "insert_resource",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "beginner context wrapper must not expose advanced surface {forbidden:?}"
+        );
+    }
+
+    let app = read_code_without_comments(&workspace_root().join("crates/game-kit/src/app.rs"));
+    for required in [
+        "FnMut(&mut BeginnerGame<'_, '_, '_>",
+        "FnMut(&mut BeginnerStartupGame<'_, '_, '_>",
+    ] {
+        assert!(
+            app.contains(required),
+            "beginner callback registration should use wrapper type {required:?}"
+        );
+    }
+}
+
+#[test]
+fn beginner_docs_examples_and_templates_hide_raw_context_methods() {
+    let root = workspace_root();
+    let paths = [
+        "README.md",
+        "docs/beginner-authoring.md",
+        "docs/tutorials",
+        "docs/cookbook",
+        "examples/one-file-demo",
+        "examples/beginner-mini-game",
+        "examples/coin-collector",
+        "examples/data-driven-full-demo",
+        "examples/projectile-demo",
+        "examples/script-like-custom-rules",
+        "examples/two-level-demo",
+        "examples/waves-demo",
+        "examples/menu-game-over",
+        "examples/no-rust-shapes-demo",
+        "examples/win-condition-demo",
+        "examples/enemy-drops-demo",
+        "examples/health-pickup-demo",
+        "examples/checkpoint-demo",
+        "examples/boss-demo",
+        "examples/dialog-demo",
+        "examples/inventory-demo",
+        "examples/title-menu-demo",
+        "examples/damage-zone-demo",
+        "examples/ldtk-demo",
+        "examples/animation-demo",
+        "examples/audio-demo",
+        "examples/trigger-area-demo",
+        "templates/simple-demo",
+        "templates/data-driven-demo",
+        "crates/simple-content/src",
+        "crates/arena-content/src",
+    ];
+
+    for relative in paths {
+        let path = root.join(relative);
+        let mut files = Vec::new();
+        if path.is_dir() {
+            collect_beginner_surface_files(&path, &mut files);
+        } else {
+            files.push(path);
+        }
+
+        for file in files {
+            let source = fs::read_to_string(&file)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", file.display()));
+            for forbidden in [
+                "entities_with",
+                "component::<",
+                "component_mut::<",
+                "commands()",
+                "resource::<",
+                "resource_mut::<",
+                "insert_resource",
+                "GameCtx",
+                "StartupGameCtx",
+                "EntityId",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must keep raw context method {forbidden:?} out of beginner-facing material",
+                    file.display()
+                );
+            }
+        }
     }
 }
 
@@ -698,8 +1292,8 @@ fn beginner_docs_use_named_assets_before_typed_or_advanced_sections() {
         "docs/tutorials/02-your-first-player.md",
         "docs/tutorials/03-add-a-map.md",
         "docs/tutorials/04-add-an-enemy.md",
-        "docs/tutorials/05-add-combat.md",
-        "docs/tutorials/06-add-sound-and-ui.md",
+        "docs/tutorials/optional-add-combat.md",
+        "docs/tutorials/optional-add-sound-and-ui.md",
         "docs/tutorials/common-errors.md",
         "docs/cookbook/coins-and-score.md",
         "docs/cookbook/projectiles.md",
@@ -859,6 +1453,34 @@ fn no_rust_experience_tutorial_course_stays_complete_and_beginner_first() {
     assert!(
         index.contains("content crate"),
         "tutorial index should explain the later content-crate graduation path"
+    );
+}
+
+#[test]
+fn tutorial_numbered_chapters_have_unique_prefixes() {
+    let tutorials = workspace_root().join("docs/tutorials");
+    let mut prefixes = BTreeMap::<String, Vec<String>>::new();
+    for entry in fs::read_dir(&tutorials).expect("failed to read tutorial directory") {
+        let entry = entry.expect("failed to read tutorial entry");
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        let Some((prefix, _)) = file_name.split_once('-') else {
+            continue;
+        };
+        if prefix.len() == 2 && prefix.chars().all(|ch| ch.is_ascii_digit()) {
+            prefixes
+                .entry(prefix.to_owned())
+                .or_default()
+                .push(file_name);
+        }
+    }
+
+    let duplicates = prefixes
+        .into_iter()
+        .filter(|(_, files)| files.len() > 1)
+        .collect::<Vec<_>>();
+    assert!(
+        duplicates.is_empty(),
+        "tutorial chapter numbers should be unique: {duplicates:#?}"
     );
 }
 
@@ -1242,6 +1864,7 @@ fn testbed_content_remains_an_explicit_advanced_lab() {
     for relative in [
         "README.md",
         "docs/content-authoring.md",
+        "docs/when-to-use-advanced-api.md",
         "docs/tutorials/README.md",
     ] {
         let source = fs::read_to_string(workspace_root().join(relative))
@@ -1249,6 +1872,42 @@ fn testbed_content_remains_an_explicit_advanced_lab() {
         assert!(
             source.contains("testbed-content") && source.contains("advanced"),
             "{relative} should direct beginners away from the advanced testbed"
+        );
+    }
+}
+
+#[test]
+fn advanced_transition_guide_names_the_boundary() {
+    let root = workspace_root();
+    let guide = fs::read_to_string(root.join("docs/when-to-use-advanced-api.md"))
+        .expect("failed to read advanced transition guide");
+    for required in [
+        "Most demos should stay with the beginner API",
+        "Stay beginner for normal demos",
+        "Use `game_kit::advanced::prelude::*`",
+        "custom ECS systems",
+        "GameCtx",
+        "Keep those concepts out of beginner templates",
+        "Do not copy `testbed-content` for a first game",
+        "advanced lab",
+    ] {
+        assert!(
+            guide.contains(required),
+            "advanced transition guide should contain {required:?}"
+        );
+    }
+
+    for relative in [
+        "README.md",
+        "docs/content-authoring.md",
+        "docs/advanced-content-authoring.md",
+        "docs/tutorials/advanced-when-needed.md",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains("when-to-use-advanced-api.md"),
+            "{relative} should link the advanced transition guide"
         );
     }
 }

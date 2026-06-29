@@ -1,4 +1,4 @@
-# 07 - Add Animation
+# Optional - Add Animation
 
 ## Goal
 
@@ -71,4 +71,4 @@ If only one frame appears, check the sprite sheet column and row counts.
 ## Next step
 
 Prepare the demo for another machine in
-[08 - Package your demo](08-package-your-demo.md).
+[Optional - Package your demo](optional-package-your-demo.md).

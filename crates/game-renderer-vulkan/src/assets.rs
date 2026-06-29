@@ -166,12 +166,14 @@ fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
 
     let exe = std::env::current_exe().context("failed to resolve current executable path")?;
     if let Some(exe_dir) = exe.parent() {
-        let path = exe_dir.join("assets");
-        candidates.push(AssetRootCandidate {
-            description: path.display().to_string(),
-            path,
-            is_debug_fallback: false,
-        });
+        for directory in exe_dir.ancestors() {
+            let path = directory.join("assets");
+            candidates.push(AssetRootCandidate {
+                description: format!("executable ancestor {}", path.display()),
+                path,
+                is_debug_fallback: false,
+            });
+        }
     }
 
     let current_assets = std::env::current_dir()

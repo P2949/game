@@ -18,6 +18,7 @@ use crate::beginner::defaults::{
 use crate::beginner::events::DEFAULT_PICKUP_COLLECT_RANGE;
 use crate::beginner::state::SimpleGameState;
 use crate::context::GameCtx;
+use crate::diagnostics::bad_rule_combo_error;
 use crate::input::TopDownControls;
 
 const DEFAULT_DOOR_TRIGGER_RANGE: f32 = 28.0;
@@ -295,6 +296,9 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
     }
 
     pub fn build(self) {
+        if let Some(error) = self.dependency_error() {
+            panic!("{error}");
+        }
         let app = self.app;
 
         if self.top_down.is_some()
@@ -450,6 +454,37 @@ impl<'a, 'app> RulesAuthor<'a, 'app> {
             app.use_behavior(SpawnerBehavior)
                 .expect("spawner behavior should register");
         }
+    }
+
+    fn dependency_error(&self) -> Option<anyhow::Error> {
+        if self.projectiles_damage_enemies && !self.projectiles_move && !self.projectiles_expire {
+            return Some(bad_rule_combo_error(
+                "ProjectilesDamageEnemies",
+                "Projectiles",
+            ));
+        }
+        if self.projectiles_despawn_on_hit && !self.projectiles_damage_enemies {
+            return Some(bad_rule_combo_error(
+                "ProjectilesDespawnOnHit",
+                "ProjectilesDamageEnemies",
+            ));
+        }
+        if self.projectile_impact_before_despawn
+            && !self.projectiles_despawn_on_hit
+            && !self.projectiles_damage_enemies
+        {
+            return Some(bad_rule_combo_error(
+                "ProjectileImpactAnimationBeforeDespawn",
+                "ProjectilesDespawnOnHit",
+            ));
+        }
+        if self.respawn_at_checkpoint && !self.player_activates_checkpoints {
+            return Some(bad_rule_combo_error(
+                "RespawnAtCheckpoint",
+                "PlayerActivatesCheckpoints",
+            ));
+        }
+        None
     }
 }
 
@@ -878,7 +913,7 @@ pub struct CollectPickupsBehavior;
 
 impl GamePlugin for CollectPickupsBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(|game, _dt| {
+        game.fixed(|game: &mut GameCtx<'_, '_>, _dt| {
             game.collect_pickups_near_player(DEFAULT_PICKUP_COLLECT_RANGE);
         });
         Ok(())
@@ -890,7 +925,9 @@ pub struct DoorsChangeMapsBehavior;
 
 impl GamePlugin for DoorsChangeMapsBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(|game, _dt| doors_change_maps_system(game));
+        game.fixed(|game: &mut GameCtx<'_, '_>, _dt| {
+            doors_change_maps_system(game);
+        });
         Ok(())
     }
 }
@@ -900,7 +937,7 @@ pub struct DeadEnemiesDespawnBehavior;
 
 impl GamePlugin for DeadEnemiesDespawnBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(|game, _dt| {
+        game.fixed(|game: &mut GameCtx<'_, '_>, _dt| {
             game.enemies().dead().despawn();
         });
         Ok(())
@@ -912,7 +949,7 @@ pub struct DeathAnimationBehavior;
 
 impl GamePlugin for DeathAnimationBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(dead_enemies_play_death_animation_system);
+        game.fixed(dead_enemies_play_death_animation_system);
         Ok(())
     }
 }
@@ -922,7 +959,7 @@ pub struct DeathAnimationDespawnBehavior;
 
 impl GamePlugin for DeathAnimationDespawnBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(dead_enemies_despawn_after_animation_system);
+        game.fixed(dead_enemies_despawn_after_animation_system);
         Ok(())
     }
 }
@@ -932,7 +969,7 @@ pub struct EnemyDropsBehavior;
 
 impl GamePlugin for EnemyDropsBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(enemy_drops_system);
+        game.fixed(enemy_drops_system);
         Ok(())
     }
 }
@@ -942,7 +979,7 @@ pub struct CheckpointActivationBehavior;
 
 impl GamePlugin for CheckpointActivationBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(checkpoint_activation_system);
+        game.fixed(checkpoint_activation_system);
         Ok(())
     }
 }
@@ -952,7 +989,7 @@ pub struct CheckpointRespawnBehavior;
 
 impl GamePlugin for CheckpointRespawnBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(checkpoint_respawn_system);
+        game.fixed(checkpoint_respawn_system);
         Ok(())
     }
 }
@@ -962,7 +999,7 @@ pub struct ProjectileMovementBehavior;
 
 impl GamePlugin for ProjectileMovementBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(projectiles_move_system);
+        game.fixed(projectiles_move_system);
         Ok(())
     }
 }
@@ -972,7 +1009,7 @@ pub struct ProjectileLifetimeBehavior;
 
 impl GamePlugin for ProjectileLifetimeBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(projectiles_expire_system);
+        game.fixed(projectiles_expire_system);
         Ok(())
     }
 }
@@ -987,7 +1024,7 @@ impl GamePlugin for ProjectileDamageBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
         let despawn_on_hit = self.despawn_on_hit;
         let impact_before_despawn = self.impact_before_despawn;
-        game.every_tick(move |game, _dt| {
+        game.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             projectiles_damage_enemies_system(game, despawn_on_hit, impact_before_despawn);
         });
         Ok(())
@@ -999,7 +1036,7 @@ pub struct ProjectileImpactDespawnBehavior;
 
 impl GamePlugin for ProjectileImpactDespawnBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(projectile_impact_despawn_system);
+        game.fixed(projectile_impact_despawn_system);
         Ok(())
     }
 }
@@ -1009,7 +1046,7 @@ pub struct SpawnerBehavior;
 
 impl GamePlugin for SpawnerBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(spawners_spawn_prefabs_system);
+        game.fixed(spawners_spawn_prefabs_system);
         Ok(())
     }
 }
@@ -1024,7 +1061,7 @@ impl GamePlugin for WinConditionBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
         let require_pickups = self.require_pickups;
         let require_enemies = self.require_enemies;
-        game.every_tick(move |game, _dt| {
+        game.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             let pickups_done = !require_pickups || game.pickups().count() == 0;
             let enemies_done = !require_enemies || game.enemies().alive().count() == 0;
             if pickups_done && enemies_done {
@@ -1057,7 +1094,9 @@ impl GamePlugin for HighLevelUiBehavior {
             show_game_over_panel: self.show_game_over_panel,
             show_win_panel: self.show_win_panel,
         };
-        game.draw_ui(move |game, _dt| high_level_ui_system(game, options));
+        game.ui(move |game: &mut GameCtx<'_, '_>, _dt| {
+            high_level_ui_system(game, options);
+        });
         Ok(())
     }
 }
@@ -1067,7 +1106,7 @@ pub struct RulesEnemyAnimationByMovementBehavior;
 
 impl GamePlugin for RulesEnemyAnimationByMovementBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_frame(enemy_animation_by_movement_system);
+        game.update(enemy_animation_by_movement_system);
         Ok(())
     }
 }
@@ -1077,7 +1116,7 @@ pub struct RulesPlayerDirectionalAnimationBehavior;
 
 impl GamePlugin for RulesPlayerDirectionalAnimationBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_frame(player_directional_animation_system);
+        game.update(player_directional_animation_system);
         Ok(())
     }
 }
@@ -1087,7 +1126,7 @@ pub struct RulesEnemyDirectionalAnimationBehavior;
 
 impl GamePlugin for RulesEnemyDirectionalAnimationBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_frame(enemy_directional_animation_system);
+        game.update(enemy_directional_animation_system);
         Ok(())
     }
 }
@@ -1097,7 +1136,7 @@ pub struct RulesAnimationUpdateBehavior;
 
 impl GamePlugin for RulesAnimationUpdateBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_frame(|game, dt| game.update_animations(dt));
+        game.update(|game: &mut GameCtx<'_, '_>, dt| game.update_animations(dt));
         Ok(())
     }
 }
@@ -1147,7 +1186,7 @@ mod tests {
                 .legend('E', "slime")
                 .start();
 
-            game.every_tick(|game: &mut GameCtx<'_, '_>, _dt| {
+            game.every_tick(|game, _dt| {
                 game.enemies().alive().damage(100);
             });
 
@@ -1168,7 +1207,30 @@ mod tests {
         }
     }
 
-    use crate::context::GameCtx;
+    struct InvalidRuleComboPlugin;
+
+    impl GamePlugin for InvalidRuleComboPlugin {
+        fn build(&self, game: &mut GameApp<'_>) -> anyhow::Result<()> {
+            game.rules().projectiles_damage_enemies().build();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn rules_builder_reports_missing_rule_dependencies() {
+        let panic = std::panic::catch_unwind(|| {
+            let _ = GameTestHarness::from_plugin(InvalidRuleComboPlugin);
+        })
+        .expect_err("invalid rule combination should panic with a beginner diagnostic");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic>");
+
+        assert!(message.contains("Rule ProjectilesDamageEnemies needs the Projectiles rule"));
+        assert!(message.contains("Add .projectiles()"));
+    }
 
     #[test]
     fn rules_builder_registers_common_beginner_rules() {

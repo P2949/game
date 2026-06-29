@@ -17,19 +17,21 @@ use game_core::query::ParamSystem;
 use game_core::world::{EntityId, Transform};
 use game_map::GameMap;
 use game_physics::Collider;
+use glam::Vec2;
 
 use crate::assets::{
     AssetAuthor, AssetBagAuthor, AssetFolderAuthor, AssetLookup, SoundRef, TextureRef,
     missing_asset_error,
 };
-use crate::beginner::actors::{Door, PrefabName};
+use crate::beginner::actors::{Door, DoorTarget, PrefabName};
 use crate::beginner::animation::AnimationFinishedEvents;
+use crate::beginner::context::{Game as BeginnerGame, Seconds, StartupGame as BeginnerStartupGame};
 use crate::beginner::custom_rules::CustomRuleAuthor;
 use crate::beginner::debug::{DebugIterationInfo, DebugOverlay, draw_debug_overlay};
 use crate::beginner::defaults::TopDownGameAuthor;
 use crate::beginner::events::{
     ActorToken, AnimationFinishedEvent, CollectEvent, CollisionEvent, DEFAULT_PICKUP_COLLECT_RANGE,
-    EnemyDeathEvent, OverlapTracker,
+    DoorEvent, EnemyDeathEvent, MapChangedEvent, OverlapTracker, ProjectileHitEvent,
 };
 use crate::beginner::prefabs::{
     AreaPrefabAuthor, DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
@@ -40,7 +42,7 @@ use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
 use crate::beginner::state::SimpleGameState;
 use crate::beginner::time::MIN_TIMER_SECONDS;
 use crate::beginner::tuning::TuningFile;
-use crate::context::{GameCtx, StartupGameCtx};
+use crate::context::{GameCtx, StartupGameCtx, drain_beginner_spawn_queue};
 use crate::helpers::SimulationState;
 use crate::input::InputAuthor;
 use crate::map::{ContentRuntime, MapAuthor, PendingMap};
@@ -50,6 +52,9 @@ use crate::system::{GameSystem, StartupSystem};
 /// A deferred prefab component requirement: applies one
 /// `validator.require_component::<T>(name)` call during [`GameApp::finish`].
 pub(crate) type PrefabRequirement = Box<dyn for<'v> FnOnce(&mut PrefabValidator<'v>)>;
+
+const DEFAULT_DOOR_TRIGGER_RANGE: f32 = 28.0;
+const DEFAULT_PROJECTILE_HIT_RANGE: f32 = 16.0;
 
 /// A game, expressed as content: assets, controls, prefabs, maps, and systems.
 ///
@@ -150,7 +155,7 @@ impl<'app> GameApp<'app> {
     pub fn tuning_from_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<TuningFile> {
         let tuning = TuningFile::from_file(path)?;
         let startup_tuning = tuning.clone();
-        self.on_start(move |game| {
+        self.startup(move |game: &mut StartupGameCtx<'_, '_>| {
             game.insert_resource(startup_tuning.clone());
             Ok(())
         });
@@ -390,10 +395,11 @@ impl<'app> GameApp<'app> {
     /// Registers a beginner startup callback with inferable arguments.
     pub fn on_start(
         &mut self,
-        mut start: impl FnMut(&mut StartupGameCtx<'_, '_>) -> Result<()> + 'static,
+        mut start: impl FnMut(&mut BeginnerStartupGame<'_, '_, '_>) -> Result<()> + 'static,
     ) {
         self.builder.schedule_mut().add_startup(move |ctx| {
-            let mut game = StartupGameCtx::new(ctx);
+            let mut ctx = StartupGameCtx::new(ctx);
+            let mut game = BeginnerStartupGame::new(&mut ctx);
             start(&mut game)
         });
     }
@@ -424,9 +430,13 @@ impl<'app> GameApp<'app> {
     /// Taking the callback's concrete signature, rather than only a trait
     /// bound, lets Rust infer `game` and `dt` for a closure such as
     /// `game.every_tick(|game, dt| { ... })`.
-    pub fn every_tick(&mut self, mut system: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static) {
+    pub fn every_tick(
+        &mut self,
+        mut system: impl FnMut(&mut BeginnerGame<'_, '_, '_>, Seconds) + 'static,
+    ) {
         self.builder.schedule_mut().add_fixed(move |ctx, dt| {
-            let mut game = GameCtx::new(ctx);
+            let mut ctx = GameCtx::new(ctx);
+            let mut game = BeginnerGame::new(&mut ctx);
             system(&mut game, dt);
         });
     }
@@ -450,13 +460,14 @@ impl<'app> GameApp<'app> {
     /// so content closures keep their arguments inferred.
     pub fn every_active_tick<S>(
         &mut self,
-        mut system: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static,
+        mut system: impl FnMut(&mut BeginnerGame<'_, '_, '_>, Seconds) + 'static,
     ) where
         S: SimulationState + 'static,
     {
-        self.every_tick(move |game, dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, dt| {
             if game.resource::<S>().is_some_and(SimulationState::active) {
-                system(game, dt);
+                let mut game = BeginnerGame::new(game);
+                system(&mut game, dt);
             }
         });
     }
@@ -479,9 +490,13 @@ impl<'app> GameApp<'app> {
     }
 
     /// Registers a beginner per-frame callback with inferred closure arguments.
-    pub fn every_frame(&mut self, mut system: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static) {
+    pub fn every_frame(
+        &mut self,
+        mut system: impl FnMut(&mut BeginnerGame<'_, '_, '_>, Seconds) + 'static,
+    ) {
         self.builder.schedule_mut().add_update(move |ctx, dt| {
-            let mut game = GameCtx::new(ctx);
+            let mut ctx = GameCtx::new(ctx);
+            let mut game = BeginnerGame::new(&mut ctx);
             system(&mut game, dt);
         });
     }
@@ -502,13 +517,14 @@ impl<'app> GameApp<'app> {
     /// Registers a beginner per-frame callback while state `S` is active.
     pub fn every_active_frame<S>(
         &mut self,
-        mut system: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static,
+        mut system: impl FnMut(&mut BeginnerGame<'_, '_, '_>, Seconds) + 'static,
     ) where
         S: SimulationState + 'static,
     {
-        self.every_frame(move |game, dt| {
+        self.update(move |game: &mut GameCtx<'_, '_>, dt| {
             if game.resource::<S>().is_some_and(SimulationState::active) {
-                system(game, dt);
+                let mut game = BeginnerGame::new(game);
+                system(&mut game, dt);
             }
         });
     }
@@ -538,9 +554,13 @@ impl<'app> GameApp<'app> {
     /// [`GameSystem`]. That keeps the callback arguments inferable, so beginner
     /// code can write `game.draw_ui(|game, dt| { ... })` without exposing context
     /// lifetime annotations.
-    pub fn draw_ui(&mut self, mut draw: impl FnMut(&mut GameCtx<'_, '_>, f32) + 'static) {
+    pub fn draw_ui(
+        &mut self,
+        mut draw: impl FnMut(&mut BeginnerGame<'_, '_, '_>, Seconds) + 'static,
+    ) {
         self.builder.schedule_mut().add_ui(move |ctx, dt| {
-            let mut game = GameCtx::new(ctx);
+            let mut ctx = GameCtx::new(ctx);
+            let mut game = BeginnerGame::new(&mut ctx);
             draw(&mut game, dt);
         });
     }
@@ -549,11 +569,12 @@ impl<'app> GameApp<'app> {
     pub fn on_action(
         &mut self,
         action: ActionId,
-        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
     ) {
         self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             if game.pressed(action) {
-                f(game);
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
             }
         });
     }
@@ -563,11 +584,12 @@ impl<'app> GameApp<'app> {
     pub fn on_action_when_playing(
         &mut self,
         action: ActionId,
-        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
     ) {
-        self.every_active_tick::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed_active::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, _dt| {
             if game.pressed(action) {
-                f(game);
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
             }
         });
     }
@@ -576,15 +598,16 @@ impl<'app> GameApp<'app> {
         &mut self,
         action: ActionId,
         seconds: f32,
-        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
     ) {
         let seconds = seconds.max(0.0);
         let mut cooldown: f32 = 0.0;
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, dt: f32| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, dt: f32| {
             cooldown = (cooldown - dt).max(0.0);
             if cooldown == 0.0 && game.pressed(action) {
                 cooldown = seconds;
-                f(game);
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
             }
         });
     }
@@ -599,7 +622,7 @@ impl<'app> GameApp<'app> {
     ) {
         let a_prefab = a_prefab.into();
         let b_prefab = b_prefab.into();
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             for (a, b) in matching_overlaps(game, &a_prefab, &b_prefab) {
                 let mut event = CollisionEvent::new(game, ActorToken::new(a), ActorToken::new(b));
                 f(&mut event);
@@ -618,7 +641,7 @@ impl<'app> GameApp<'app> {
         let area_prefab = area_prefab.into();
         let event_key = format!("{actor_prefab}:{area_prefab}");
         let mut tracker = OverlapTracker::default();
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             let current = matching_overlaps(game, &actor_prefab, &area_prefab)
                 .into_iter()
                 .collect::<HashSet<_>>();
@@ -646,7 +669,7 @@ impl<'app> GameApp<'app> {
         let area_prefab = area_prefab.into();
         let event_key = format!("{actor_prefab}:{area_prefab}");
         let mut tracker = OverlapTracker::default();
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             let current = matching_overlaps(game, &actor_prefab, &area_prefab)
                 .into_iter()
                 .collect::<HashSet<_>>();
@@ -673,15 +696,16 @@ impl<'app> GameApp<'app> {
     pub fn every_seconds(
         &mut self,
         seconds: f32,
-        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
     ) {
         let seconds = seconds.max(MIN_TIMER_SECONDS);
         let mut timer = 0.0;
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, dt| {
             timer += dt;
             while timer >= seconds {
                 timer -= seconds;
-                f(game);
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
             }
         });
     }
@@ -689,26 +713,126 @@ impl<'app> GameApp<'app> {
     pub fn after_seconds(
         &mut self,
         seconds: f32,
-        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
     ) {
         let seconds = seconds.max(0.0);
         let mut timer = 0.0;
         let mut done = false;
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, dt| {
             if done {
                 return;
             }
             timer += dt;
             if timer >= seconds {
                 done = true;
-                f(game);
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
             }
         });
     }
 
-    pub fn on_enemy_death(&mut self, mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static) {
+    pub fn on_player_death(&mut self, mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static) {
+        let mut was_dead = false;
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let is_dead = game.player_id().is_some_and(|id| game.is_dead(id));
+            if is_dead && !was_dead {
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
+            }
+            was_dead = is_dead;
+        });
+    }
+
+    pub fn on_player_respawn(
+        &mut self,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
+    ) {
+        let mut was_dead = false;
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let is_dead = game.player_id().is_some_and(|id| game.is_dead(id));
+            let is_alive = game.player_id().is_some_and(|id| !game.is_dead(id));
+            if was_dead && is_alive {
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
+            }
+            was_dead = is_dead;
+        });
+    }
+
+    pub fn on_score_reaches(
+        &mut self,
+        score: i32,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
+    ) {
+        let mut fired = false;
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            if fired {
+                return;
+            }
+            let current = game.score().value();
+            if current >= score {
+                fired = true;
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
+            }
+        });
+    }
+
+    pub fn on_wave_cleared(&mut self, mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static) {
+        let mut had_living_enemies = false;
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let has_living_enemies = !game.living_enemy_ids().is_empty();
+            if had_living_enemies && !has_living_enemies {
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
+            }
+            had_living_enemies = has_living_enemies;
+        });
+    }
+
+    pub fn on_timer(
+        &mut self,
+        name: impl Into<String>,
+        seconds: f32,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
+    ) {
+        let _timer_name = name.into();
+        let seconds = seconds.max(0.0);
+        let mut timer = 0.0;
+        let mut done = false;
+        self.fixed(move |game: &mut GameCtx<'_, '_>, dt| {
+            if done {
+                return;
+            }
+            timer += dt;
+            if timer >= seconds {
+                done = true;
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
+            }
+        });
+    }
+
+    pub fn every_seconds_while_playing(
+        &mut self,
+        seconds: f32,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
+    ) {
+        let seconds = seconds.max(MIN_TIMER_SECONDS);
+        let mut timer = 0.0;
+        self.fixed_active::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
+            timer += dt;
+            while timer >= seconds {
+                timer -= seconds;
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
+            }
+        });
+    }
+
+    pub fn on_enemy_death(&mut self, mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static) {
         let mut known_dead: Vec<EntityId> = Vec::new();
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             let dead = game
                 .enemy_ids()
                 .into_iter()
@@ -716,7 +840,8 @@ impl<'app> GameApp<'app> {
                 .collect::<Vec<_>>();
             for id in &dead {
                 if !known_dead.contains(id) {
-                    f(game);
+                    let mut game = BeginnerGame::new(game);
+                    f(&mut game);
                 }
             }
             known_dead = dead;
@@ -730,7 +855,7 @@ impl<'app> GameApp<'app> {
         mut f: impl FnMut(&mut EnemyDeathEvent<'_, '_, '_>) + 'static,
     ) {
         let mut known_dead: Vec<EntityId> = Vec::new();
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             let dead = game
                 .enemy_ids()
                 .into_iter()
@@ -746,6 +871,51 @@ impl<'app> GameApp<'app> {
         });
     }
 
+    pub fn on_projectile_hit(
+        &mut self,
+        projectile_prefab: impl Into<String>,
+        enemy_prefab: impl Into<String>,
+        mut f: impl FnMut(&mut ProjectileHitEvent<'_, '_, '_>) + 'static,
+    ) {
+        let projectile_prefab = projectile_prefab.into();
+        let enemy_prefab = enemy_prefab.into();
+        let event_key = format!("{projectile_prefab}:{enemy_prefab}");
+        let mut tracker = OverlapTracker::default();
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let current = matching_nearby_prefabs(
+                game,
+                &projectile_prefab,
+                &enemy_prefab,
+                DEFAULT_PROJECTILE_HIT_RANGE,
+            )
+            .into_iter()
+            .map(|(projectile, enemy, _)| (projectile, enemy))
+            .collect::<HashSet<_>>();
+
+            for &(projectile, enemy) in &current {
+                if tracker
+                    .active
+                    .insert((projectile, enemy, event_key.clone()))
+                {
+                    let position = game
+                        .position(projectile)
+                        .or_else(|| game.position(enemy))
+                        .unwrap_or(Vec2::ZERO);
+                    let mut event = ProjectileHitEvent::new(
+                        game,
+                        ActorToken::new(projectile),
+                        ActorToken::new(enemy),
+                        position,
+                    );
+                    f(&mut event);
+                }
+            }
+            tracker.active.retain(|entry| {
+                entry.2.as_str() != event_key.as_str() || current.contains(&(entry.0, entry.1))
+            });
+        });
+    }
+
     /// Runs for matching player/pickup collection interactions. Both filters are
     /// source prefab names registered by the beginner builders.
     pub fn on_collect(
@@ -756,7 +926,7 @@ impl<'app> GameApp<'app> {
     ) {
         let collector_prefab = collector_prefab.into();
         let pickup_prefab = pickup_prefab.into();
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             let Some(collector) = game.player_id() else {
                 return;
             };
@@ -782,7 +952,10 @@ impl<'app> GameApp<'app> {
         });
     }
 
-    pub fn on_player_collect_pickup(&mut self, f: impl FnMut(&mut GameCtx<'_, '_>) + 'static) {
+    pub fn on_player_collect_pickup(
+        &mut self,
+        f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
+    ) {
         self.on_player_collect_pickup_within(DEFAULT_PICKUP_COLLECT_RANGE, f);
     }
 
@@ -793,7 +966,7 @@ impl<'app> GameApp<'app> {
         &mut self,
         mut f: impl FnMut(&mut CollisionEvent<'_, '_, '_>) + 'static,
     ) {
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             let Some(player) = game.player_id() else {
                 return;
             };
@@ -808,12 +981,60 @@ impl<'app> GameApp<'app> {
     pub fn on_player_collect_pickup_within(
         &mut self,
         range: f32,
-        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
     ) {
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             if game.collect_pickups_near_player(range) > 0 {
-                f(game);
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
             }
+        });
+    }
+
+    pub fn on_door_open(
+        &mut self,
+        door_prefab: impl Into<String>,
+        mut f: impl FnMut(&mut DoorEvent<'_, '_, '_>) + 'static,
+    ) {
+        let door_prefab = door_prefab.into();
+        let event_key = format!("door:{door_prefab}");
+        let mut tracker = OverlapTracker::default();
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let Some(player) = game.player_id() else {
+                return;
+            };
+            let Some(player_pos) = game.position(player) else {
+                return;
+            };
+            let living_enemies = game.living_enemy_ids().len();
+            let current = game
+                .entities_with::<Door>()
+                .into_iter()
+                .filter(|door| prefab_matches(game, *door, &door_prefab))
+                .filter(|door| {
+                    let Some(door_pos) = game.position(*door) else {
+                        return false;
+                    };
+                    if door_pos.distance(player_pos) > DEFAULT_DOOR_TRIGGER_RANGE {
+                        return false;
+                    }
+                    game.component::<DoorTarget>(*door).is_none_or(|target| {
+                        !target.requires_all_enemies_dead || living_enemies == 0
+                    })
+                })
+                .map(|door| (player, door))
+                .collect::<HashSet<_>>();
+
+            for &(player, door) in &current {
+                if tracker.active.insert((player, door, event_key.clone())) {
+                    let mut event =
+                        DoorEvent::new(game, ActorToken::new(player), ActorToken::new(door));
+                    f(&mut event);
+                }
+            }
+            tracker.active.retain(|entry| {
+                entry.2.as_str() != event_key.as_str() || current.contains(&(entry.0, entry.1))
+            });
         });
     }
 
@@ -825,7 +1046,7 @@ impl<'app> GameApp<'app> {
         mut f: impl FnMut(&mut CollisionEvent<'_, '_, '_>) + 'static,
     ) {
         const DOOR_TOUCH_RANGE: f32 = 28.0;
-        self.every_tick(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
             let Some(player) = game.player_id() else {
                 return;
             };
@@ -857,7 +1078,7 @@ impl<'app> GameApp<'app> {
     ) {
         let name = name.into();
         let mut last_seen = 0u64;
-        self.every_frame(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.update(move |game: &mut GameCtx<'_, '_>, _dt| {
             let records = game
                 .resource::<AnimationFinishedEvents>()
                 .map(|events| {
@@ -881,25 +1102,82 @@ impl<'app> GameApp<'app> {
     pub fn on_scene_enter(
         &mut self,
         scene: impl Into<String>,
-        mut f: impl FnMut(&mut GameCtx<'_, '_>) + 'static,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
     ) {
         let scene = scene.into();
         let mut was_in_scene = false;
-        self.every_frame(move |game: &mut GameCtx<'_, '_>, _dt| {
+        self.update(move |game: &mut GameCtx<'_, '_>, _dt| {
             let is_in_scene = game.current_scene_name().as_deref() == Some(scene.as_str());
             if is_in_scene && !was_in_scene {
-                f(game);
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
             }
             was_in_scene = is_in_scene;
         });
     }
 
-    pub fn on_scene(&mut self, scene: impl Into<String>, mut system: impl GameSystem) {
+    pub fn on_scene(
+        &mut self,
+        scene: impl Into<String>,
+        mut system: impl FnMut(&mut BeginnerGame<'_, '_, '_>, Seconds) + 'static,
+    ) {
         let scene = scene.into();
-        self.every_frame(move |game: &mut GameCtx<'_, '_>, dt| {
+        self.update(move |game: &mut GameCtx<'_, '_>, dt| {
             if game.current_scene_name().as_deref() == Some(scene.as_str()) {
-                system.run(game, dt);
+                let mut game = BeginnerGame::new(game);
+                system(&mut game, dt);
             }
+        });
+    }
+
+    pub fn on_map_enter(
+        &mut self,
+        map: impl Into<String>,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
+    ) {
+        let map = map.into();
+        let mut was_in_map = false;
+        self.update(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let is_in_map = game.current_map_name().as_deref() == Some(map.as_str());
+            if is_in_map && !was_in_map {
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
+            }
+            was_in_map = is_in_map;
+        });
+    }
+
+    pub fn on_map_exit(
+        &mut self,
+        map: impl Into<String>,
+        mut f: impl FnMut(&mut BeginnerGame<'_, '_, '_>) + 'static,
+    ) {
+        let map = map.into();
+        let mut was_in_map = false;
+        self.update(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let is_in_map = game.current_map_name().as_deref() == Some(map.as_str());
+            if was_in_map && !is_in_map {
+                let mut game = BeginnerGame::new(game);
+                f(&mut game);
+            }
+            was_in_map = is_in_map;
+        });
+    }
+
+    pub fn on_map_changed(
+        &mut self,
+        mut f: impl FnMut(&mut MapChangedEvent<'_, '_, '_>) + 'static,
+    ) {
+        let mut initialized = false;
+        let mut previous: Option<String> = None;
+        self.update(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let current = game.current_map_name();
+            if initialized && current != previous {
+                let mut event = MapChangedEvent::new(game, previous.clone(), current.clone());
+                f(&mut event);
+            }
+            initialized = true;
+            previous = current;
         });
     }
 
@@ -913,9 +1191,19 @@ impl<'app> GameApp<'app> {
     /// tilemaps + themes, validates prefab requirements, and records the content
     /// runtime for startup. Called by the [`Plugin`] adapter after the plugin's
     /// `build`, so failures surface before any backend is created.
+    pub(crate) fn finish_for_reload(self) -> Result<ContentRuntime> {
+        let content = Rc::clone(&self.content);
+        self.finish()?;
+        content
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| anyhow!("beginner file reload did not produce content runtime"))
+    }
+
     pub(crate) fn finish(mut self) -> Result<()> {
         let mut maps: HashMap<String, GameMap> = HashMap::new();
         let mut map_ids: HashMap<String, game_core::builder::MapId> = HashMap::new();
+        let mut themes: HashMap<String, game_core::app::TileTheme> = HashMap::new();
         let mut start_map_name: Option<String> = None;
         let mut text_maps = HashMap::new();
 
@@ -943,6 +1231,7 @@ impl<'app> GameApp<'app> {
             if let Some(reload_source) = reload_source {
                 text_maps.insert(game_map.name.clone(), reload_source);
             }
+            themes.insert(game_map.name.clone(), theme);
             maps.insert(game_map.name.clone(), game_map);
         }
 
@@ -961,12 +1250,21 @@ impl<'app> GameApp<'app> {
         })?;
         let prefabs = self.builder.prefabs_shared();
         *self.content.borrow_mut() = Some(ContentRuntime::new(
-            prefabs, maps, map_ids, text_maps, start_map,
+            prefabs, maps, map_ids, themes, text_maps, start_map,
         ));
         let asset_count = self.builder.assets().texture_keys().count()
             + self.builder.assets().sound_keys().count()
             + self.builder.assets().font_keys().count();
         *self.asset_lookup.borrow_mut() = Some(AssetLookup::from_registry(self.builder.assets()));
+
+        if self.builder.schedule().has_fixed_systems() {
+            self.builder
+                .schedule_mut()
+                .add_fixed(|ctx, _dt| drain_beginner_spawn_queue(ctx.world));
+        }
+        self.builder
+            .schedule_mut()
+            .add_update(|ctx, _dt| drain_beginner_spawn_queue(ctx.world));
 
         if !self.scenes.is_empty() {
             let registry = SceneRegistry::new(self.scenes.clone());
@@ -1028,6 +1326,38 @@ fn matching_overlaps(
         }
     }
     overlaps
+}
+
+fn matching_nearby_prefabs(
+    game: &GameCtx<'_, '_>,
+    a_prefab: &str,
+    b_prefab: &str,
+    range: f32,
+) -> Vec<(EntityId, EntityId, Vec2)> {
+    let range = range.max(0.0);
+    let range_squared = range * range;
+    let a_entities = game
+        .entities_with::<PrefabName>()
+        .into_iter()
+        .filter(|entity| prefab_matches(game, *entity, a_prefab))
+        .filter_map(|entity| game.position(entity).map(|position| (entity, position)))
+        .collect::<Vec<_>>();
+    let b_entities = game
+        .entities_with::<PrefabName>()
+        .into_iter()
+        .filter(|entity| prefab_matches(game, *entity, b_prefab))
+        .filter_map(|entity| game.position(entity).map(|position| (entity, position)))
+        .collect::<Vec<_>>();
+    let mut matches = Vec::new();
+
+    for (a, a_position) in a_entities {
+        for &(b, b_position) in &b_entities {
+            if a != b && a_position.distance_squared(b_position) <= range_squared {
+                matches.push((a, b, a_position));
+            }
+        }
+    }
+    matches
 }
 
 fn colliders_overlap(game: &GameCtx<'_, '_>, a: EntityId, b: EntityId) -> bool {

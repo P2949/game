@@ -13,7 +13,8 @@ pub use game_map::{MapCell, cell};
 
 pub use crate::app::{GameApp, GamePlugin, Plugin, plugin, plugin_fn};
 pub use crate::assets::{
-    AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, IntoTextureRef, SoundRef, TextureRef,
+    AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, IntoSoundRef, IntoTextureRef,
+    SoundRef, TextureRef,
 };
 pub use crate::beginner::actors::{
     Area, AreaName, Checkpoint, CheckpointState, DeathAnimationPolicy, Door, DropsPrefab, Enemy,
@@ -46,7 +47,8 @@ pub use crate::beginner::defaults::{
     SimpleGameStartupBehavior,
 };
 pub use crate::beginner::events::{
-    AnimationFinishedEvent, CollectEvent, CollisionEvent, EnemyDeathEvent, EventActor,
+    AnimationFinishedEvent, CollectEvent, CollisionEvent, DoorEvent, EnemyDeathEvent, EventActor,
+    MapChangedEvent, ProjectileHitEvent,
 };
 pub use crate::beginner::prefabs::{
     AreaPrefabAuthor, DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
@@ -74,7 +76,7 @@ pub use crate::bundle::vec2s;
 pub use crate::content_plugin;
 pub use crate::data::{
     BeginnerAssetsFile, BeginnerControlsFile, BeginnerGameFile, BeginnerMapFile,
-    BeginnerPrefabFile, BeginnerRuleFile,
+    BeginnerPrefabFile, BeginnerRuleFile, BeginnerScriptRuleFile, RuleEffectFile,
 };
 pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
 pub use crate::map::MapAuthor;

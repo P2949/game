@@ -65,6 +65,19 @@ disappear once the first missing builder call is restored.
 
 ## Common errors
 
+`game-dev doctor` reports a failed setup check
+
+Run the longer explanation:
+
+```bash
+game-dev doctor --explain
+```
+
+The doctor checks Rust/Cargo, shader compiler, Vulkan loader and Vulkan 1.3
+device, SDL3, audio development files, validation layers, and the generated
+project's `assets/` folder. Fix the first failed setup check before changing
+game code.
+
 `player prefab 'player' has no sprite`
 
 Add:
@@ -119,6 +132,22 @@ is the file present:
 game.assets_from_folders()
     .texture("player")?
     .sound("hit")?
+    .build();
+```
+
+`Missing texture asset 'player'`
+
+The folder helper looked for the conventional file, usually:
+
+```text
+assets/textures/player.png
+```
+
+Either add that file or register the path explicitly:
+
+```rust
+game.asset_bag()
+    .texture("player", "textures/my_player.png")?
     .build();
 ```
 
@@ -212,6 +241,49 @@ templates use structured names. If a data file says an asset, prefab, map,
 scene, sound, music track, tag, or rule is unknown, fix the spelling in
 `game.ron`; the message lists known values and suggests close matches.
 
+`references unknown music 'theem'. Known music: theme. Did you mean 'theme'?`
+
+Use the same key in `audio.music_on_scene` that you listed in
+`assets.music`:
+
+```ron
+assets: (music: ["theme"]),
+audio: (music_on_scene: {"level_1": (track: "theme")}),
+```
+
+`unknown action 'Attak'. Known actions: Attack, Pause, Reset, Reload, MenuAccept`
+
+Action names in `game.ron` are case-sensitive. Use one of the standard
+top-down actions:
+
+```ron
+start_on: Some(Attack),
+actions: [PlayerShoots((prefab: "bolt", action: Attack))],
+```
+
+`beginner game file 'game.ron' is not valid RON`
+
+Check enum spelling and commas first. Names are case-sensitive:
+
+```ron
+controls: TopDown,
+rules: [TopDownControls, Projectiles, ShowScore],
+```
+
+`Rule ProjectilesDamageEnemies needs the Projectiles rule`
+
+Use the combined rule unless you are intentionally composing projectile pieces:
+
+```ron
+rules: [TopDownControls, Projectiles]
+```
+
+In Rust, the matching beginner call is:
+
+```rust
+game.rules().projectiles().build();
+```
+
 ## Controller input
 
 `input.top_down_controls()` supports the first connected controller as well as
@@ -256,16 +328,79 @@ game.rules().doors_change_maps().build();
 
 ## Rust compiler errors from advanced code
 
-**Populate after the first round of outside playtesting.** This guide will add
-two or three real compiler diagnostics beside plain-English translations once
-new players have shown which errors they actually encounter—most likely a
-borrow-checker error after copying advanced code, or a missing `?` on a
-fallible builder call.
+`the ? operator can only be used`
 
-We intentionally do not invent raw `rustc` output here. Compiler wording and
-the mistakes beginners actually make are both evidence-sensitive; until that
-playtest data exists, the tailored compiler messages for common sprite, name,
-and movement-type mistakes are the trustworthy guidance.
+The closure passed to `run_game` must return `Result<()>`, and fallible builder
+calls need `?`:
+
+```rust
+run_game("My Game", |game| {
+    game.asset_bag().texture("player", "textures/player.png")?.build();
+    Ok(())
+})
+```
+
+`expected Result<(), Error>, found ()`
+
+Add the final success line:
+
+```rust
+Ok(())
+```
+
+`this is not a texture reference`
+
+`.sprite(...)` expects a registered texture name:
+
+```rust
+.sprite("player")
+```
+
+`this is not a movement axis`
+
+Use the movement axis from top-down controls:
+
+```rust
+let controls = game.input(|input| input.top_down_controls())?;
+.moves_with(controls.movement, 130.0)
+```
+
+`cannot borrow ... as mutable`
+
+In custom callbacks, read values before starting a chain that mutably borrows
+the event or actor:
+
+```rust
+game.on_projectile_hit("bolt", "slime", |event| {
+    let position = event.position();
+    event.spawn("spark").at_world(position);
+});
+```
+
+Avoid copying advanced examples that mention raw world access. Beginner custom
+behavior should use handles such as `event.enemy()`, `game.enemies()`, and
+`game.actors_tagged("tag")`.
+
+## Setup and Runtime Errors
+
+`glslc` is missing
+
+Install the Vulkan shader compiler package for your OS, then rerun:
+
+```bash
+game-dev doctor --explain
+```
+
+`SDL3` or `Vulkan` setup failed
+
+Run:
+
+```bash
+game-dev doctor --explain
+```
+
+Fix the first failed check. The doctor explains missing SDL3 libraries, Vulkan
+loader/device issues, validation layers, and asset-folder problems.
 
 ## Next step
 

@@ -14,5 +14,6 @@ game-kit = { version = "0.1.0", path = "../game-kit" }
 game-runtime = { version = "0.1.0", path = "../game-runtime" }
 
 [features]
+ci-build-sdl3 = ["game-runtime/ci-build-sdl3"]
 ogg = ["game-runtime/ogg"]
 mp3 = ["game-runtime/mp3"]

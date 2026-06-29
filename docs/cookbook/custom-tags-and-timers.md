@@ -15,7 +15,7 @@ game.enemy_prefab("bomber")
     .build()?;
 
 game.every_active_tick::<SimpleGameState>(|game, dt| {
-    game.actors_tagged("explosive").for_each(|actor| {
+    game.actors_tagged("explosive").each(|actor| {
         let fuse = actor.data("fuse").unwrap_or(0.0) - dt;
         actor.set_data("fuse", fuse);
     });
@@ -31,7 +31,7 @@ Give affected enemies a `slowed` tag and a time remaining value when your spell
 hits them. Then clear the effect when its timer ends:
 
 ```rust
-game.actors_tagged("slowed").for_each(|actor| {
+game.actors_tagged("slowed").each(|actor| {
     let remaining = actor.data("slow_seconds").unwrap_or(0.0) - dt;
     actor.set_data("slow_seconds", remaining);
     if remaining <= 0.0 {
@@ -50,7 +50,7 @@ fade. Your damage rule can set `.data("glow", 1.0)`, then a tick rule can ease
 it back down:
 
 ```rust
-game.actors_tagged("glowing").for_each(|actor| {
+game.actors_tagged("glowing").each(|actor| {
     let glow = (actor.data("glow").unwrap_or(0.0) - dt * 2.0).max(0.0);
     actor.set_data("glow", glow);
 });

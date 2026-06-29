@@ -3,6 +3,8 @@
 This document is intentionally second, not the starting point. Begin with the
 [beginner authoring guide](beginner-authoring.md) unless you specifically need
 custom ECS-shaped prefabs, systems, queries, RON maps, or engine pressure tests.
+If you are deciding whether to cross that boundary, read
+[when to use the advanced API](when-to-use-advanced-api.md) first.
 
 The repository's `testbed-content` crate uses the advanced surface on purpose:
 it is an engine testbed, not a template for first projects.

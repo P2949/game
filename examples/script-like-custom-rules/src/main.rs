@@ -110,7 +110,7 @@ fn main() -> Result<()> {
         });
 
         game.custom_rule("explosive fuse")
-            .for_each_tag("explosive")
+            .each_tag("explosive")
             .countdown("fuse")
             .when_zero()
             .damage_tag("enemy", 20, 48.0)

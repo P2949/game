@@ -8,12 +8,12 @@
 use anyhow::Result;
 use game_combat::{Faction, FactionId, Health, MeleeAttack};
 use game_core::app::{Ctx, StartCtx};
-use game_core::backend::SoundHandle;
+use game_core::backend::{SoundHandle, TextureHandle};
 use game_core::builder::{PrefabId, PropertyBag};
 use game_core::camera::Camera2D;
 use game_core::commands::{CommandQueue, MapReload};
 use game_core::input::{ActionId, Axis2dId, Input, MouseButton};
-use game_core::world::{Component, EntityId, Transform, Velocity};
+use game_core::world::{Component, EntityId, Transform, Velocity, World};
 use game_map::MapCell;
 use glam::{Vec2, Vec4};
 
@@ -21,11 +21,64 @@ use crate::assets::AssetLookup;
 use crate::beginner::audio::AudioOps;
 use crate::beginner::debug::DebugIterationInfo;
 use crate::beginner::tuning::TuningFile;
+use crate::data::{BeginnerFileRuntime, rebuild_beginner_content_runtime};
 use crate::helpers::{InputDriven, MovementSpeed};
 use crate::map::{
     ContentRuntime, change_to_map_world, reset_to_start_map_world, restart_current_map_world,
     restart_start_map_world,
 };
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BeginnerSpawnRequest {
+    prefab: String,
+    position: Vec2,
+    properties: PropertyBag,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct BeginnerSpawnQueue {
+    requests: Vec<BeginnerSpawnRequest>,
+}
+
+impl BeginnerSpawnQueue {
+    fn push(&mut self, prefab: &str, position: Vec2, properties: PropertyBag) {
+        self.requests.push(BeginnerSpawnRequest {
+            prefab: prefab.to_owned(),
+            position,
+            properties,
+        });
+    }
+}
+
+pub(crate) fn drain_beginner_spawn_queue(world: &mut World) {
+    let Some(mut queue) = world.remove_resource::<BeginnerSpawnQueue>() else {
+        return;
+    };
+    if queue.requests.is_empty() {
+        return;
+    }
+
+    let Some(content) = world.remove_resource::<ContentRuntime>() else {
+        log::error!("failed to run beginner spawn queue: content runtime is missing");
+        return;
+    };
+
+    for request in queue.requests.drain(..) {
+        if let Err(error) = content.spawn_prefab_by_name(
+            &request.prefab,
+            world,
+            request.position,
+            &request.properties,
+        ) {
+            log::error!(
+                "failed to spawn beginner prefab '{}': {error:?}",
+                request.prefab
+            );
+        }
+    }
+
+    world.insert_resource(content);
+}
 
 /// Per-step context handed to fixed/update/render/ui systems.
 pub struct GameCtx<'a, 'w> {
@@ -214,6 +267,19 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub(crate) fn report_missing_named_sound(&self, key: &str) {
         self.report_missing_sound(key);
+    }
+
+    pub(crate) fn named_texture(&self, key: &str) -> Option<TextureHandle> {
+        self.resource::<AssetLookup>()
+            .and_then(|lookup| lookup.texture(key))
+    }
+
+    pub(crate) fn report_missing_named_texture(&self, key: &str) {
+        if let Some(lookup) = self.resource::<AssetLookup>() {
+            eprintln!("{}", lookup.texture_error(key));
+        } else {
+            eprintln!("Unknown texture asset '{key}'.\n\nNo asset lookup is installed.");
+        }
     }
 
     /// Deferred runtime commands applied after the current step: despawn, play
@@ -571,6 +637,68 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         }
     }
 
+    pub fn reload_beginner_file(&mut self) -> Result<()> {
+        let mut file = self
+            .inner
+            .world
+            .remove_resource::<BeginnerFileRuntime>()
+            .ok_or_else(|| anyhow::anyhow!("no beginner data file is registered"))?;
+        let path = file.path().to_path_buf();
+        let current_map = self
+            .inner
+            .world
+            .get_resource::<ContentRuntime>()
+            .map(|runtime| runtime.current_map_name().to_owned());
+
+        let rebuilt = match rebuild_beginner_content_runtime(&path, file.identity()) {
+            Ok(rebuilt) => rebuilt,
+            Err(error) => {
+                let message = error.to_string();
+                file.last_error = Some(message.clone());
+                self.inner.world.insert_resource(file);
+                if let Some(iteration) = self.inner.world.get_resource_mut::<DebugIterationInfo>() {
+                    iteration.last_reload = format!(
+                        "game.ron failed: {}",
+                        message.lines().next().unwrap_or("unknown error")
+                    );
+                }
+                return Err(error);
+            }
+        };
+        let new_runtime = rebuilt.runtime;
+
+        let target_map = current_map
+            .filter(|name| new_runtime.map_id(name).is_some())
+            .unwrap_or_else(|| new_runtime.current_map_name().to_owned());
+        let (_map, data) = new_runtime.map_data(&target_map)?;
+        self.inner.world.insert_resource(new_runtime);
+        let switched = change_to_map_world(self.inner.world, &target_map)?;
+        self.inner.world.insert_resource(MapReload {
+            map: switched,
+            data,
+        });
+        self.inner.world.insert_resource(rebuilt.config);
+        self.commands().reload_map(switched);
+
+        file.last_loaded_version = file.last_loaded_version.saturating_add(1);
+        file.last_error = None;
+        self.inner.world.insert_resource(file);
+        if let Some(iteration) = self.inner.world.get_resource_mut::<DebugIterationInfo>() {
+            iteration.last_reload = format!("game.ron ok ({target_map})");
+        }
+        Ok(())
+    }
+
+    pub fn reload_beginner_file_if_configured_or_log(&mut self) -> bool {
+        if self.resource::<BeginnerFileRuntime>().is_none() {
+            return false;
+        }
+        if let Err(error) = self.reload_beginner_file() {
+            log::error!("failed to reload beginner data file: {error:#}");
+        }
+        true
+    }
+
     /// Requests a reload of file-backed runtime assets. The renderer/audio
     /// runtime performs the replacement after the current gameplay step.
     pub fn reload_assets(&mut self) {
@@ -658,14 +786,15 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         position: Vec2,
         properties: PropertyBag,
     ) -> Result<()> {
-        let prefab_id = self
-            .inner
+        self.inner
             .world
             .get_resource::<ContentRuntime>()
             .and_then(|runtime| runtime.prefab_id(prefab))
             .ok_or_else(|| anyhow::anyhow!("unknown prefab '{prefab}'"))?;
-        self.commands()
-            .spawn_prefab(prefab_id, position, properties);
+        self.inner
+            .world
+            .resource_or_insert_with(BeginnerSpawnQueue::default)
+            .push(prefab, position, properties);
         Ok(())
     }
 
@@ -790,22 +919,22 @@ mod tests {
     use std::fs;
     use std::rc::Rc;
 
-    use game_core::app::{Ctx, RenderFrame};
+    use game_core::app::{Ctx, RenderFrame, TileTheme};
     use game_core::assets::AssetRegistry;
     use game_core::audio::{Audio, AudioCommands};
-    use game_core::backend::AudioCommand;
-    use game_core::builder::{MapId, PrefabRegistry, PropertyBag};
+    use game_core::backend::{AudioCommand, TextureHandle};
+    use game_core::builder::{MapId, PrefabRegistry};
     use game_core::camera::Camera2D;
     use game_core::commands::{Command, CommandQueue};
     use game_core::gfx::Gfx;
     use game_core::input::Input;
     use game_core::nav::NavGrid;
     use game_core::tilemap::TileMap;
-    use game_core::world::{Entity, Velocity, World};
+    use game_core::world::{Entity, Sprite, Velocity, World};
     use game_map::MapBuilder;
     use glam::{Vec2, vec2};
 
-    use super::GameCtx;
+    use super::{GameCtx, drain_beginner_spawn_queue};
     use crate::assets::AssetLookup;
     use crate::beginner::tuning::TuningFile;
     use crate::map::ContentRuntime;
@@ -869,6 +998,13 @@ mod tests {
             .finish()
     }
 
+    fn empty_theme() -> TileTheme {
+        TileTheme {
+            floor: Sprite::new(TextureHandle(0), vec2(16.0, 16.0)),
+            wall: Sprite::new(TextureHandle(1), vec2(16.0, 16.0)),
+        }
+    }
+
     #[test]
     fn first_position_returns_marker_entity_transform_position() {
         let mut world = World::new();
@@ -908,15 +1044,16 @@ mod tests {
     }
 
     #[test]
-    fn spawn_prefab_at_queues_resolved_prefab() {
+    fn spawn_prefab_at_defers_until_beginner_spawn_queue_drains() {
         let mut prefabs = PrefabRegistry::new();
-        let prefab = prefabs.register("marker", |world, position, _| {
+        prefabs.register("marker", |world, position, _| {
             Ok(world.spawn(Entity::new(position)))
         });
 
         let mut world = World::new();
         world.insert_resource(ContentRuntime::new(
             Rc::new(prefabs),
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
@@ -927,18 +1064,17 @@ mod tests {
             game.spawn_prefab_at("marker", vec2(5.0, 6.0)).unwrap();
         });
 
-        let commands = world
-            .get_resource_mut::<CommandQueue>()
-            .unwrap()
-            .drain()
-            .collect::<Vec<_>>();
+        assert_eq!(world.ids().count(), 0);
+
+        drain_beginner_spawn_queue(&mut world);
+
+        let marker = world.ids().next().expect("marker should spawn");
         assert_eq!(
-            commands,
-            vec![Command::SpawnPrefab {
-                prefab,
-                position: vec2(5.0, 6.0),
-                properties: PropertyBag::default(),
-            }]
+            world
+                .get::<game_core::world::Transform>(marker)
+                .unwrap()
+                .pos,
+            vec2(5.0, 6.0)
         );
     }
 
@@ -951,12 +1087,17 @@ mod tests {
             ("first".to_owned(), MapId(0)),
             ("second".to_owned(), MapId(1)),
         ]);
+        let themes = HashMap::from([
+            ("first".to_owned(), empty_theme()),
+            ("second".to_owned(), empty_theme()),
+        ]);
 
         let mut world = World::new();
         world.insert_resource(ContentRuntime::new(
             Rc::new(PrefabRegistry::new()),
             maps,
             map_ids,
+            themes,
             HashMap::new(),
             "first".to_owned(),
         ));

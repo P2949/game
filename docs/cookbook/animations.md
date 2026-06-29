@@ -4,13 +4,20 @@ Copy [examples/animation-demo/src/main.rs](../../examples/animation-demo/src/mai
 when you want idle, directional walk, flight, impact, attack, or death clips
 from a sprite sheet.
 
-Put clip names in `assets/animations/player.ron` so the Rust game setup stays
-about game behavior instead of frame numbers. The conventional
-`.animation_sheet_auto("player")` helper loads that path automatically:
+Put the sheet image and clip names in conventional folders so the Rust game
+setup stays about game behavior instead of frame numbers:
+
+```text
+assets/textures/player_sheet.png
+assets/animations/player.ron
+```
+
+The conventional `.animation_sheet_auto("player")` helper loads the metadata
+path automatically. The `texture` field is relative to `assets/`:
 
 ```ron
 (
-    texture: "textures/player.png",
+    texture: "textures/player_sheet.png",
     columns: 4,
     rows: 1,
     clips: {
@@ -24,7 +31,8 @@ about game behavior instead of frame numbers. The conventional
 Load and use that sheet with no frame ranges in Rust:
 
 ```rust
-let assets = game.asset_bag()
+let assets = game.assets_from_folders()
+    .required_textures(["player_sheet"])?
     .animation_sheet_auto("player")?
     .build();
 
@@ -34,6 +42,9 @@ game.player_prefab("player")
     .moves_with(controls.movement, 130.0)
     .build()?;
 ```
+
+Run `game-dev asset-check` after editing animation metadata. It validates the
+RON shape and checks that the `texture` field points at an existing sheet PNG.
 
 Then let the rule choose the walk clip from velocity. It falls back to `walk`
 when a prefab intentionally omits a direction, and uses `idle` when stopped:

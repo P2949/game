@@ -81,10 +81,10 @@ fn main() -> Result<()> {
 }
 ```
 
-Create the package from a local checkout:
+Create the package from your generated project:
 
 ```bash
-cargo xtask package-demo --release --out dist/my-game
+game-dev package --release --out dist/my-game --zip
 ```
 
 The result is:
@@ -95,7 +95,9 @@ dist/my-game/
 ├── assets/
 ├── run.sh
 ├── run.bat
-└── README-RUN.txt
+├── run.ps1
+└── README.txt
+dist/my-game.zip
 ```
 
 ## What changed
@@ -105,9 +107,17 @@ sound decoding, rectangular text maps, TMX maps, and LDtk JSON. Its release
 build also confirms the shaders compile. It then copies the executable and the
 entire `assets/` folder together.
 
-Send the whole `dist/my-game` directory, not just the executable. On Linux run
-`./run.sh`; on Windows double-click `run.bat`; on macOS run `./run.sh` in a
-Terminal. `README-RUN.txt` inside the package repeats these instructions.
+Send the whole `dist/my-game.zip` folder to a friend. If you are sharing the
+unzipped folder instead, send the whole `dist/my-game` directory, not just the
+executable. On Linux run `./run.sh`; on Windows run `run.ps1` from PowerShell
+or double-click `run.bat`; on macOS run `./run.sh` in a Terminal. `README.txt`
+inside the package repeats these instructions.
+
+The package still needs a Vulkan-capable GPU and driver. If it fails to start
+on someone else's machine, have them install or update their Vulkan
+runtime/driver: Linux users usually need the Vulkan loader/tools package plus
+their GPU vendor driver, Windows users usually get Vulkan with current graphics
+drivers, and macOS users need MoltenVK/Vulkan SDK support.
 
 When your single file grows uncomfortable, graduate to a content crate: copy
 the structure of `simple-content` or `arena-content`, put your setup inside
@@ -128,3 +138,5 @@ For a fast startup check without drawing frames, use `GAME_SMOKE_FRAMES=0`.
 Use [common errors](common-errors.md) while changing your game, then browse the
 [cookbook](../cookbook/README.md) for focused features such as animation,
 triggers, waves, and gamepad controls.
+
+Send the whole dist/my-game.zip folder to a friend.

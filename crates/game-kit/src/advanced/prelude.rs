@@ -20,12 +20,12 @@ pub use game_physics::Collider;
 
 pub use crate::app::{DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, plugin, plugin_fn};
 pub use crate::assets::{
-    AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, SoundRef, TextureRef,
+    AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, IntoSoundRef, SoundRef, TextureRef,
 };
 pub use crate::beginner::actors::{
     CollectSound, Collectible, DeathAnimationPolicy, DespawnOnCollect, DespawnOnHit, Door,
     DoorAction, DoorTarget, Enemy, ExitDoor, Lifetime, Name, Npc, Pickup, Player, PlayerMovement,
-    Projectile, ProjectileDamage, ScoreValue, Solid, Spawner, Speed,
+    Projectile, ProjectileDamage, ProjectileImpact, ScoreValue, Solid, Spawner, Speed,
 };
 pub use crate::beginner::animation::{
     Animation, AnimationClip, AnimationSet, SpriteSheet, attack_frames, die_frames, frames,
@@ -34,14 +34,15 @@ pub use crate::beginner::animation::{
 pub use crate::beginner::camera::CameraShake;
 pub use crate::beginner::collections::{
     CameraOps, EnemyCollection, FiredShot, PickupCollection, PlayerActor, Score, ScoreOps,
-    ShootAuthor,
+    ShootAuthor, TaggedActors,
 };
 pub use crate::beginner::combat::MeleeCombatConfig;
 pub use crate::beginner::context::{Game, Seconds, StartupGame};
 pub use crate::beginner::debug::DebugOverlay;
 pub use crate::beginner::defaults::TopDownGameAuthor;
 pub use crate::beginner::events::{
-    AnimationFinishedEvent, CollectEvent, CollisionEvent, EnemyDeathEvent, EventActor,
+    AnimationFinishedEvent, CollectEvent, CollisionEvent, DoorEvent, EnemyDeathEvent, EventActor,
+    MapChangedEvent, ProjectileHitEvent,
 };
 pub use crate::beginner::prefabs::{
     DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,

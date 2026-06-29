@@ -1,0 +1,98 @@
+name: Release Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  demo-packages:
+    name: Build ${{ matrix.package_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            package_name: game-demo-linux-x86_64
+          - os: windows-latest
+            package_name: game-demo-windows-x86_64
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake glslc ninja-build pkg-config \
+            libasound2-dev libdbus-1-dev libegl1-mesa-dev libudev-dev \
+            libvulkan-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev \
+            libxfixes-dev libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev \
+            libxss-dev libxtst-dev wayland-protocols zip
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install vulkan-sdk ninja -y --no-progress
+          $vkBin = Get-ChildItem "C:\VulkanSDK" -Directory |
+            Sort-Object Name -Descending |
+            Select-Object -First 1 |
+            ForEach-Object { Join-Path $_.FullName "Bin" }
+          if (-not $vkBin -or -not (Test-Path (Join-Path $vkBin "glslc.exe"))) {
+            throw "Vulkan SDK glslc.exe was not found after installation"
+          }
+          $vkBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Package demo
+        run: cargo xtask package-demo --release --features ci-build-sdl3 --out "dist/${{ matrix.package_name }}"
+
+      - name: Archive Linux package
+        if: runner.os == 'Linux'
+        run: |
+          cd "dist/${{ matrix.package_name }}"
+          zip -r "../${{ matrix.package_name }}.zip" .
+
+      - name: Archive Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/${{ matrix.package_name }}/*" -DestinationPath "dist/${{ matrix.package_name }}.zip" -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package_name }}
+          path: dist/${{ matrix.package_name }}.zip
+          if-no-files-found: error
+
+      - name: Attach package to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "$tag" --generate-notes || gh release view "$tag" >/dev/null
+          fi
+          gh release upload "$tag" "dist/${{ matrix.package_name }}.zip" --clobber

@@ -51,7 +51,6 @@ mod tests {
     use game_map::cell;
 
     use crate::app::{GameApp, GamePlugin};
-    use crate::context::{GameCtx, StartupGameCtx};
     use crate::harness::GameTestHarness;
 
     struct SpawnPlugin;
@@ -75,8 +74,8 @@ mod tests {
                 .legend('P', "player")
                 .start();
 
-            game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
-            game.every_tick(|game: &mut GameCtx<'_, '_>, _dt| {
+            game.on_start(|game| game.spawn_start_map());
+            game.every_tick(|game, _dt| {
                 game.spawn("slime").at(cell(2, 1));
                 game.spawn("slime").near_player(64.0);
                 game.spawn("slime").at_first_floor();

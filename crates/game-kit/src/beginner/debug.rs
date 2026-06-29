@@ -5,6 +5,7 @@ use glam::{vec2, vec4};
 
 use crate::beginner::actors::{Enemy, Name, Player};
 use crate::context::GameCtx;
+use crate::data::BeginnerFileRuntime;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DebugOverlay {
@@ -72,6 +73,24 @@ pub fn draw_debug_overlay(game: &mut GameCtx<'_, '_>, dt: f32) {
     if let Some(iteration) = game.resource::<DebugIterationInfo>() {
         lines.push(format!("assets: {} loaded", iteration.asset_count));
         lines.push(format!("last reload: {}", iteration.last_reload));
+    }
+    if let Some(file) = game.resource::<BeginnerFileRuntime>() {
+        let name = file
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("game.ron");
+        lines.push(format!(
+            "{name}: loaded at startup (v{})",
+            file.last_loaded_version
+        ));
+        lines.push(format!("game.ron reload: {}", file.reload_level.label()));
+        if let Some(error) = &file.last_error {
+            lines.push(format!(
+                "game.ron error: {}",
+                error.lines().next().unwrap_or("unknown error")
+            ));
+        }
     }
     if let Some(status) = game.resource::<AssetReloadStatus>() {
         lines.push(format!("asset reload: {}", status.message));

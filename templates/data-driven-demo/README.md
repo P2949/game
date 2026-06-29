@@ -2,10 +2,11 @@
 
 ## Start here
 
-1. Run `cargo run`.
+1. Run `cargo run` or `game-dev run`.
 2. Edit `assets/game.ron` to change player/enemy/pickup numbers and rules.
 3. Edit `assets/maps/level_1.txt` to change the level.
-4. Replace PNG files in `assets/textures/` with your own art.
+4. Replace files in `assets/textures/` and `assets/sounds/` with your own art
+   and sound effects.
 
 The editable RON file is intentionally small:
 
@@ -16,6 +17,24 @@ The editable RON file is intentionally small:
 - `rules` selects common first-game behaviors with names like
   `TopDownControls`, `PlayerCollectsPickups`, and `ShowScore`.
 
+For larger no-Rust examples, copy `examples/data-driven-events-demo`,
+`examples/data-driven-waves-demo`, or `examples/data-driven-projectiles-demo`.
+
+The first build makes small starter assets if they do not already exist:
+
+```text
+assets/textures/player.png -> assets.textures: ["player"]
+assets/textures/slime.png  -> assets.textures: ["slime"]
+assets/textures/coin.png   -> assets.textures: ["coin"]
+assets/textures/floor.png  -> theme: ("floor", "wall")
+assets/textures/wall.png   -> theme: ("floor", "wall")
+assets/textures/door.png   -> assets.textures: ["door"]
+assets/textures/bolt.png   -> assets.textures: ["bolt"]
+assets/sounds/hit.wav      -> assets.sounds: ["hit"]
+assets/sounds/coin.wav     -> assets.sounds: ["coin"]
+assets/sounds/shoot.wav    -> assets.sounds: ["shoot"]
+```
+
 The map symbols are:
 
 - `#` wall
@@ -24,11 +43,41 @@ The map symbols are:
 - `E` enemy
 - `C` coin
 
-Press <kbd>F5</kbd> in a debug build after changing the map. The RON setup is
-read on startup; use the small `src/main.rs` to add custom Rust behavior when
-you outgrow the standard rules.
+Press <kbd>F5</kbd> in a debug build after changing the map or existing values
+in `assets/game.ron`. F5 validates and partially reloads the data file, then
+respawns the current map. Future spawns from beginner rules use the updated
+prefab values too, and existing custom countdown rule details, scene text, and
+audio scene settings reload. Existing action settings reload when their input
+binding stays the same. Adding, removing, or reordering asset, prefab, map, or
+custom rule names requires a restart, as do changes to scene names, action
+input bindings, or the enabled rule list.
+
+## Project tools
+
+Install the beginner helper once:
+
+```bash
+cargo install --git https://github.com/P2949/game game-cli
+```
+
+Useful commands:
+
+```bash
+game-dev doctor
+game-dev run
+game-dev asset-check
+game-dev validate-data
+game-dev package --release --out dist/my-game --zip
+```
 
 ## Need a fresh copy?
+
+From anywhere, generate the template with:
+
+```bash
+cargo install cargo-generate
+cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game
+```
 
 From a local checkout, run:
 

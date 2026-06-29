@@ -133,7 +133,9 @@ jobs:
             libvulkan-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev \
             libxfixes-dev libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev \
             libxss-dev libxtst-dev wayland-protocols \
-            mesa-vulkan-drivers vulkan-tools vulkan-validationlayers xvfb
+            mesa-vulkan-drivers vulkan-tools vulkan-validationlayers xvfb zip
+      - name: Doctor diagnostics
+        run: cargo run -p game-cli -- doctor --explain
       - name: Build (debug, validation layers on)
         run: cargo build -p game --locked --features ci-build-sdl3
       - name: Select lavapipe Vulkan ICD
@@ -170,6 +172,108 @@ jobs:
           RUST_LOG: info
           SDL_VIDEODRIVER: x11
         run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run -p game --release --locked --features ci-build-sdl3
+
+  generated-templates:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            target
+          key: ${{ runner.os }}-cargo-generated-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install runtime + software Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake glslc ninja-build pkg-config \
+            libasound2-dev libdbus-1-dev libegl1-mesa-dev libudev-dev \
+            libvulkan-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev \
+            libxfixes-dev libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev \
+            libxss-dev libxtst-dev wayland-protocols zip \
+            mesa-vulkan-drivers vulkan-tools vulkan-validationlayers xvfb
+      - name: Install cargo-generate
+        run: cargo install cargo-generate --locked --force
+      - name: Generate simple template
+        run: |
+          mkdir -p /tmp/generated
+          cargo generate --path templates/simple-demo \
+            --name smoke-simple \
+            --destination /tmp/generated \
+            --define title="Smoke Simple" \
+            --define game_starter_dependency='{ path = "${{ github.workspace }}/crates/game-starter" }'
+      - name: Generate data-driven template
+        run: |
+          cargo generate --path templates/data-driven-demo \
+            --name smoke-data \
+            --destination /tmp/generated \
+            --define title="Smoke Data" \
+            --define game_starter_dependency='{ path = "${{ github.workspace }}/crates/game-starter" }'
+      - name: Check generated templates
+        run: |
+          cargo check --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3
+          cargo check --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3
+      - name: Build game-dev helper
+        run: cargo build -p game-cli --locked
+      - name: Package generated simple template
+        working-directory: /tmp/generated/smoke-simple
+        run: ${{ github.workspace }}/target/debug/game-dev package --release --features ci-build-sdl3 --out /tmp/package-simple --zip
+      - name: Package generated data-driven template
+        working-directory: /tmp/generated/smoke-data
+        run: ${{ github.workspace }}/target/debug/game-dev package --release --features ci-build-sdl3 --out /tmp/package-data --zip
+      - name: Select lavapipe Vulkan ICD
+        run: |
+          lvp_icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          if [ -z "$lvp_icd" ]; then
+            echo "No lavapipe ICD found in /usr/share/vulkan/icd.d"
+            find /usr/share/vulkan/icd.d -maxdepth 1 -type f -print || true
+            exit 1
+          fi
+          echo "Selected lavapipe ICD: $lvp_icd"
+          echo "VK_DRIVER_FILES=$lvp_icd" >> "$GITHUB_ENV"
+      - name: Smoke run packaged simple template
+        env:
+          GAME_SMOKE_FRAMES: "60"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" /tmp/package-simple/run.sh
+      - name: Smoke run packaged data-driven template
+        env:
+          GAME_SMOKE_FRAMES: "60"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" /tmp/package-data/run.sh
+      - name: First 15 minutes acceptance test
+        env:
+          FIRST15_FEATURES: ci-build-sdl3
+          FIRST15_USE_XVFB: "1"
+          GAME_DEV: ${{ github.workspace }}/target/debug/game-dev
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: scripts/first-15-minutes.sh
+      - name: Smoke run generated simple template
+        env:
+          GAME_SMOKE_FRAMES: "60"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3
+      - name: Smoke run generated data-driven template
+        env:
+          GAME_SMOKE_FRAMES: "60"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3
 
   # Minimum-supported-Rust-version gate. Cargo.toml declares rust-version = 1.87
   # (the floor is set by a dependency: sdl3 0.18.4 uses `is_multiple_of`, stable

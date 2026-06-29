@@ -1,4 +1,4 @@
-use game_kit::prelude::*;
+use game_kit::beginner::prelude::*;
 use game_kit::testing::GameTestHarness;
 
 struct ResetPlugin;

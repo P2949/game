@@ -4,6 +4,7 @@ use crate::app::GameApp;
 use crate::beginner::actors::{Enemy, Pickup};
 use crate::beginner::state::SimpleGameState;
 use crate::context::{GameCtx, StartupGameCtx};
+use crate::data::{BeginnerRuntimeConfig, SceneFlowFile, WinConditionFile};
 use anyhow::Result;
 use game_core::input::ActionId;
 
@@ -190,7 +191,7 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
             app.scene(win_scene.clone());
         }
 
-        app.on_start(|game: &mut StartupGameCtx<'_, '_>| {
+        app.startup(|game: &mut StartupGameCtx<'_, '_>| {
             game.init_resource::<SimpleGameState>();
             game.spawn_start_map()
         });
@@ -198,7 +199,11 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
         if let Some(start_on) = self.start_on {
             let target_scene = game_scene.clone();
             let target_map = game_scene.clone();
-            app.on_scene(menu.clone(), move |game: &mut GameCtx<'_, '_>, _dt| {
+            let scene_filter = menu.clone();
+            app.update(move |game: &mut GameCtx<'_, '_>, _dt| {
+                if game.current_scene_name().as_deref() != Some(scene_filter.as_str()) {
+                    return;
+                }
                 if game.pressed(start_on) {
                     start_scene_map(game, &target_scene, &target_map);
                 }
@@ -208,14 +213,15 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
         {
             let game_over_scene = game_over.clone();
             let game_over_map = game_over.clone();
-            app.on_scene(
-                game_scene.clone(),
-                move |game: &mut GameCtx<'_, '_>, _dt| {
-                    if game.player_is_dead() {
-                        start_scene_map(game, &game_over_scene, &game_over_map);
-                    }
-                },
-            );
+            let scene_filter = game_scene.clone();
+            app.update(move |game: &mut GameCtx<'_, '_>, _dt| {
+                if game.current_scene_name().as_deref() != Some(scene_filter.as_str()) {
+                    return;
+                }
+                if game.player_is_dead() {
+                    start_scene_map(game, &game_over_scene, &game_over_map);
+                }
+            });
         }
 
         if let Some(restart_on) = self.restart_on {
@@ -223,7 +229,7 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
             let target_map = game_scene.clone();
             let game_scene_filter = game_scene.clone();
             let game_over_filter = game_over.clone();
-            app.every_frame(move |game: &mut GameCtx<'_, '_>, _dt| {
+            app.update(move |game: &mut GameCtx<'_, '_>, _dt| {
                 let current = game.current_scene_name();
                 let can_restart = current.as_deref() == Some(game_scene_filter.as_str())
                     || current.as_deref() == Some(game_over_filter.as_str());
@@ -235,72 +241,101 @@ impl<'a, 'app> SimpleSceneFlowAuthor<'a, 'app> {
 
         if let Some(win_scene) = win.clone() {
             let win_map = win_scene.clone();
-            let require_pickups = self.win_when_all_pickups_collected;
-            let require_enemies = self.win_when_all_enemies_dead;
-            if require_pickups || require_enemies {
-                app.on_scene(
-                    game_scene.clone(),
-                    move |game: &mut GameCtx<'_, '_>, _dt| {
-                        let pickups_done =
-                            !require_pickups || game.entities_with::<Pickup>().is_empty();
-                        let enemies_done = !require_enemies
-                            || game
-                                .entities_with::<Enemy>()
-                                .into_iter()
-                                .all(|enemy| game.is_dead(enemy));
-                        if pickups_done && enemies_done {
-                            start_scene_map(game, &win_scene, &win_map);
-                        }
-                    },
-                );
-            }
+            let initial_require_pickups = self.win_when_all_pickups_collected;
+            let initial_require_enemies = self.win_when_all_enemies_dead;
+            let scene_filter = game_scene.clone();
+            app.update(move |game: &mut GameCtx<'_, '_>, _dt| {
+                if game.current_scene_name().as_deref() != Some(scene_filter.as_str()) {
+                    return;
+                }
+                let (require_pickups, require_enemies) = runtime_win_conditions(game)
+                    .unwrap_or((initial_require_pickups, initial_require_enemies));
+                if !require_pickups && !require_enemies {
+                    return;
+                }
+                let pickups_done = !require_pickups || game.entities_with::<Pickup>().is_empty();
+                let enemies_done = !require_enemies
+                    || game
+                        .entities_with::<Enemy>()
+                        .into_iter()
+                        .all(|enemy| game.is_dead(enemy));
+                if pickups_done && enemies_done {
+                    start_scene_map(game, &win_scene, &win_map);
+                }
+            });
         }
 
-        app.draw_ui(move |game: &mut GameCtx<'_, '_>, _dt| {
+        app.ui(move |game: &mut GameCtx<'_, '_>, _dt| {
+            let runtime_flow = game
+                .resource::<BeginnerRuntimeConfig>()
+                .and_then(|config| config.scene_flow())
+                .cloned();
             let current = game.current_scene_name();
             if current.as_deref() == Some(menu.as_str()) {
                 let panel_position = scene_panel_position(game);
-                game.ui().panel("Menu").line(&menu_text).at(panel_position);
-                if let Some((label, map)) = &menu_button {
+                let text = runtime_flow
+                    .as_ref()
+                    .and_then(|flow| flow.menu_text.as_deref())
+                    .unwrap_or(&menu_text);
+                game.ui().panel("Menu").line(text).at(panel_position);
+                let button = runtime_flow
+                    .as_ref()
+                    .and_then(|flow| {
+                        flow.menu_button
+                            .as_ref()
+                            .map(|button| (button.label.as_str(), button.map.as_str()))
+                    })
+                    .or_else(|| {
+                        menu_button
+                            .as_ref()
+                            .map(|(label, map)| (label.as_str(), map.as_str()))
+                    });
+                if let Some((label, map)) = button {
                     let target_scene = game_scene.clone();
-                    let target_map = map.clone();
                     let button_position = scene_button_position(game);
-                    game.ui()
-                        .button(label)
-                        .at_screen(button_position)
-                        .on_click(move |game| {
-                            start_scene_map(game, &target_scene, &target_map);
-                        });
+                    let clicked = game.ui().button(label).at_screen(button_position).clicked();
+                    if clicked {
+                        start_scene_map(game, &target_scene, map);
+                    }
                 }
             } else if current.as_deref() == Some(game_over.as_str()) {
                 let panel_position = scene_panel_position(game);
-                game.ui()
-                    .panel("Game Over")
-                    .line(&game_over_text)
-                    .at(panel_position);
-                if let Some(label) = &game_over_button {
+                let text = runtime_flow
+                    .as_ref()
+                    .and_then(|flow| flow.game_over_text.as_deref())
+                    .unwrap_or(&game_over_text);
+                game.ui().panel("Game Over").line(text).at(panel_position);
+                let button = runtime_flow
+                    .as_ref()
+                    .and_then(|flow| flow.game_over_button.as_deref())
+                    .or(game_over_button.as_deref());
+                if let Some(label) = button {
                     let target_scene = game_scene.clone();
                     let target_map = game_scene.clone();
                     let button_position = scene_button_position(game);
-                    game.ui()
-                        .button(label)
-                        .at_screen(button_position)
-                        .on_click(move |game| {
-                            start_scene_map(game, &target_scene, &target_map);
-                        });
+                    let clicked = game.ui().button(label).at_screen(button_position).clicked();
+                    if clicked {
+                        start_scene_map(game, &target_scene, &target_map);
+                    }
                 }
             } else if current.as_deref() == win.as_deref() {
-                game.ui().panel("You Win!").line(&win_text).center();
-                if let Some(label) = &win_button {
+                let text = runtime_flow
+                    .as_ref()
+                    .and_then(|flow| flow.win_text.as_deref())
+                    .unwrap_or(&win_text);
+                game.ui().panel("You Win!").line(text).center();
+                let button = runtime_flow
+                    .as_ref()
+                    .and_then(|flow| flow.win_button.as_deref())
+                    .or(win_button.as_deref());
+                if let Some(label) = button {
                     let target_scene = game_scene.clone();
                     let target_map = game_scene.clone();
                     let button_position = scene_button_position(game);
-                    game.ui()
-                        .button(label)
-                        .at_screen(button_position)
-                        .on_click(move |game| {
-                            start_scene_map(game, &target_scene, &target_map);
-                        });
+                    let clicked = game.ui().button(label).at_screen(button_position).clicked();
+                    if clicked {
+                        start_scene_map(game, &target_scene, &target_map);
+                    }
                 }
             }
         });
@@ -325,6 +360,19 @@ fn scene_panel_position(game: &GameCtx<'_, '_>) -> glam::Vec2 {
         glam::vec2(400.0, 300.0)
     };
     center - glam::vec2(0.0, 48.0)
+}
+
+fn runtime_win_conditions(game: &GameCtx<'_, '_>) -> Option<(bool, bool)> {
+    let flow = game.resource::<BeginnerRuntimeConfig>()?.scene_flow()?;
+    Some(win_conditions_from_flow(flow))
+}
+
+fn win_conditions_from_flow(flow: &SceneFlowFile) -> (bool, bool) {
+    match flow.win_condition {
+        Some(WinConditionFile::AllPickupsCollected) => (true, false),
+        Some(WinConditionFile::AllEnemiesDead) => (false, true),
+        None => (false, false),
+    }
 }
 
 fn start_scene_map(game: &mut GameCtx<'_, '_>, scene: &str, map: &str) {

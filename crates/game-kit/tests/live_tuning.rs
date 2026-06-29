@@ -1,5 +1,6 @@
 use std::fs;
 
+use game_kit::advanced::prelude::GameCtx;
 use game_kit::beginner::prelude::*;
 use game_kit::testing::GameTestHarness;
 
@@ -28,9 +29,11 @@ impl GamePlugin for LiveTuningPlugin {
             .legend('P', "player")
             .start();
         game.use_top_down_game().controls(controls).build();
-        game.on_action(controls.attack, |game| {
-            game.reload_tuning_or_log();
-            game.reset_to_start_map_or_log();
+        game.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            if game.pressed(controls.attack) {
+                game.reload_tuning_or_log();
+                game.reset_to_start_map_or_log();
+            }
         });
         Ok(())
     }

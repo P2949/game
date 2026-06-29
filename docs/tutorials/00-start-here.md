@@ -3,8 +3,8 @@
 ## Goal
 
 Create the smallest possible one-file game project. You only need a Rust
-editor and Cargo; you do not need to clone this workspace or learn ECS,
-lifetimes, or engine setup first.
+editor and Cargo; you do not need to clone this workspace or learn engine
+internals first.
 
 ## Files to edit
 
@@ -12,21 +12,24 @@ Create the project from anywhere:
 
 ```bash
 cargo install cargo-generate
-cargo generate gh:P2949/game templates/simple-demo
+cargo generate --git https://github.com/P2949/game templates/simple-demo --name my-game
 cd my-game
-cargo run
+cargo install --git https://github.com/P2949/game game-cli
+game-dev doctor
+game-dev run
 ```
 
 The generator asks for a project name and game title. It gives the project a
-git dependency on `game-starter`; the first build creates tiny placeholder
-textures you can replace later. If you already have a local checkout, the
-equivalent command is `cargo xtask new-demo my-game`.
+git dependency on the pinned `game-starter` release tag; the first build
+creates tiny starter textures and sounds you can replace later. If you already
+have a local checkout, the equivalent command is
+`cargo xtask new-demo my-game`.
 
 Then edit `src/main.rs`.
 
 If you want the no-Rust path instead, use
-`cargo xtask new-demo my-game --template data-driven` from a local checkout and
-start with [13 - Data-driven first game](13-data-driven-demo.md).
+`cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
+and start with [13 - Data-driven first game](13-data-driven-demo.md).
 
 ## Full code
 
@@ -60,8 +63,8 @@ prerequisites for your operating system:
 - [macOS setup](../setup/macos.md)
 - [Linux setup](../setup/linux.md)
 
-Then run `cargo xtask doctor` from a local repository checkout when you need a
-prerequisite check. If `game_starter` cannot be fetched, first check your
+Then run `game-dev doctor` when you need a prerequisite check. If
+`game_starter` cannot be fetched, first check your
 network connection and the generated `Cargo.toml` git dependency. If Cargo
 cannot run at all, install Rust from <https://rustup.rs> and restart your
 terminal.

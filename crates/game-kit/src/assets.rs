@@ -12,6 +12,7 @@ use game_core::backend::{FontHandle, SoundHandle, TextureHandle};
 use serde::Deserialize;
 
 use crate::beginner::animation::{AnimationClip, AnimationSheet, SpriteSheet};
+use crate::diagnostics::unknown_name_error;
 
 /// Declares the assets a game depends on, returning stable handles content stores
 /// in its own asset struct.
@@ -96,6 +97,15 @@ pub enum SoundRef {
     Key(String),
 }
 
+/// Values accepted by beginner sound helpers.
+#[diagnostic::on_unimplemented(
+    message = "sound helpers need a sound name like `\"hit\"` or a `SoundHandle`",
+    label = "this is not a sound reference"
+)]
+pub trait IntoSoundRef {
+    fn into_sound_ref(self) -> SoundRef;
+}
+
 impl From<SoundHandle> for SoundRef {
     fn from(handle: SoundHandle) -> Self {
         Self::Handle(handle)
@@ -114,17 +124,50 @@ impl From<String> for SoundRef {
     }
 }
 
+impl IntoSoundRef for SoundRef {
+    fn into_sound_ref(self) -> SoundRef {
+        self
+    }
+}
+
+impl IntoSoundRef for SoundHandle {
+    fn into_sound_ref(self) -> SoundRef {
+        self.into()
+    }
+}
+
+impl IntoSoundRef for &str {
+    fn into_sound_ref(self) -> SoundRef {
+        self.into()
+    }
+}
+
+impl IntoSoundRef for String {
+    fn into_sound_ref(self) -> SoundRef {
+        self.into()
+    }
+}
+
 /// Runtime key-to-handle lookup installed by [`crate::GameApp`]. It lets
 /// beginner systems play registered sounds by name without exposing the asset
 /// registry or carrying an `AssetBag` into every callback.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AssetLookup {
+    textures: HashMap<String, TextureHandle>,
     sounds: HashMap<String, SoundHandle>,
 }
 
 impl AssetLookup {
     pub(crate) fn from_registry(registry: &AssetRegistry) -> Self {
         Self {
+            textures: registry
+                .texture_keys()
+                .filter_map(|key| {
+                    registry
+                        .texture_handle(key)
+                        .map(|handle| (key.to_owned(), handle))
+                })
+                .collect(),
             sounds: registry
                 .sound_keys()
                 .filter_map(|key| {
@@ -134,6 +177,14 @@ impl AssetLookup {
                 })
                 .collect(),
         }
+    }
+
+    pub(crate) fn texture(&self, key: &str) -> Option<TextureHandle> {
+        self.textures.get(key).copied()
+    }
+
+    pub(crate) fn texture_error(&self, key: &str) -> anyhow::Error {
+        missing_asset_error("texture", key, self.textures.keys().map(String::as_str))
     }
 
     pub(crate) fn sound(&self, key: &str) -> Option<SoundHandle> {
@@ -258,47 +309,7 @@ pub(crate) fn missing_asset_error<'a>(
     key: &str,
     keys: impl Iterator<Item = &'a str>,
 ) -> anyhow::Error {
-    let mut keys = keys.collect::<Vec<_>>();
-    keys.sort_unstable();
-
-    let known = if keys.is_empty() {
-        "(none registered)".to_owned()
-    } else {
-        keys.iter()
-            .map(|known| format!("- {known}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let suggestion = closest_key(key, keys.iter().copied())
-        .map(|candidate| format!("\n\nDid you mean '{candidate}'?"))
-        .unwrap_or_default();
-
-    anyhow!("Unknown {kind} asset '{key}'.\n\nKnown {kind} assets:\n{known}{suggestion}")
-}
-
-fn closest_key<'a>(needle: &str, keys: impl Iterator<Item = &'a str>) -> Option<&'a str> {
-    let candidate = keys.min_by_key(|key| edit_distance(needle, key))?;
-    let distance = edit_distance(needle, candidate);
-    let threshold = (needle.chars().count().max(candidate.chars().count()) / 3).max(2);
-    (distance <= threshold).then_some(candidate)
-}
-
-fn edit_distance(left: &str, right: &str) -> usize {
-    let right = right.chars().collect::<Vec<_>>();
-    let mut previous = (0..=right.len()).collect::<Vec<_>>();
-
-    for (left_index, left_char) in left.chars().enumerate() {
-        let mut current = vec![left_index + 1];
-        for (right_index, right_char) in right.iter().enumerate() {
-            let replace = previous[right_index] + usize::from(left_char != *right_char);
-            let insert = current[right_index] + 1;
-            let delete = previous[right_index + 1] + 1;
-            current.push(replace.min(insert).min(delete));
-        }
-        previous = current;
-    }
-
-    previous[right.len()]
+    unknown_name_error(&format!("{kind} asset"), key, keys)
 }
 
 pub struct AssetBagAuthor<'a> {
@@ -619,58 +630,15 @@ fn select_conventional_path(candidates: &[String], mut exists: impl FnMut(&str) 
 }
 
 fn asset_path_exists(relative: &str) -> bool {
-    let root = std::env::var_os("GAME_ASSET_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| "assets".into());
-    if root.is_absolute() {
-        return root.join(relative).is_file();
-    }
-    let Ok(current_dir) = std::env::current_dir() else {
-        return Path::new(&root).join(relative).is_file();
-    };
-    current_dir
-        .ancestors()
-        .any(|directory| directory.join(&root).join(relative).is_file())
+    crate::paths::beginner_asset_path_exists(relative)
 }
 
 fn beginner_asset_file(path: impl AsRef<Path>) -> PathBuf {
-    let path = path.as_ref();
-    if path.is_absolute() {
-        return path.to_path_buf();
-    }
-    let root = std::env::var_os("GAME_ASSET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("assets"));
-    if root.is_absolute() {
-        return root.join(path);
-    }
-    let relative = root.join(path);
-    let Ok(current_dir) = std::env::current_dir() else {
-        return relative;
-    };
-    current_dir
-        .ancestors()
-        .map(|directory| directory.join(&relative))
-        .find(|candidate| candidate.is_file())
-        .unwrap_or_else(|| current_dir.join(relative))
+    crate::paths::beginner_asset_file(path)
 }
 
 fn beginner_asset_directory(folder: &str) -> PathBuf {
-    let root = std::env::var_os("GAME_ASSET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("assets"));
-    if root.is_absolute() {
-        return root.join(folder);
-    }
-    let relative = root.join(folder);
-    let Ok(current_dir) = std::env::current_dir() else {
-        return relative;
-    };
-    current_dir
-        .ancestors()
-        .map(|directory| directory.join(&relative))
-        .find(|candidate| candidate.is_dir())
-        .unwrap_or_else(|| current_dir.join(relative))
+    crate::paths::beginner_asset_directory(folder)
 }
 
 fn discover_conventional_assets(
@@ -795,6 +763,67 @@ fn parse_animation_sheet_metadata(
         })
         .collect::<Result<Vec<_>>>()?;
     Ok((metadata.texture, metadata.columns, metadata.rows, clips))
+}
+
+/// Validates a conventional animation metadata file such as
+/// `assets/animations/player.ron`.
+///
+/// The metadata uses asset-root-relative texture paths, so a file at
+/// `assets/animations/player.ron` that says `texture: "textures/player.png"`
+/// must have `assets/textures/player.png` next to it.
+pub fn validate_animation_sheet_file(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    let source = std::fs::read_to_string(path).map_err(|error| {
+        anyhow!(
+            "Could not read animation metadata '{}': {error}",
+            path.display()
+        )
+    })?;
+    let label = animation_metadata_label(path);
+    let (texture, _, _, _) = parse_animation_sheet_metadata(&label, &source)?;
+    let texture_path = Path::new(&texture);
+    let looked_path = if texture_path.is_absolute() {
+        texture_path.to_path_buf()
+    } else {
+        animation_asset_root(path).join(texture_path)
+    };
+    if !looked_path.is_file() {
+        anyhow::bail!(
+            "Animation metadata '{}' references missing texture '{}'.\n\nLooked for '{}'.\n\nPut the sheet at that path or update the metadata texture field.",
+            path.display(),
+            texture,
+            looked_path.display()
+        );
+    }
+    Ok(())
+}
+
+fn animation_asset_root(path: &Path) -> PathBuf {
+    if path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some("animations")
+        && let Some(root) = path.parent().and_then(Path::parent)
+    {
+        return root.to_path_buf();
+    }
+    path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
+fn animation_metadata_label(path: &Path) -> String {
+    if path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some("animations")
+        && let Some(file_name) = path.file_name().and_then(|name| name.to_str())
+    {
+        return format!("animations/{file_name}");
+    }
+    path.display().to_string()
 }
 
 fn resolve_metadata_texture_path(metadata_path: &str, texture: String) -> String {

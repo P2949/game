@@ -361,9 +361,9 @@ pub struct SimpleGameStartupBehavior {
 
 impl GamePlugin for SimpleGameStartupBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.on_start(startup_simple_game);
+        game.startup(startup_simple_game);
         let menu_navigation = self.menu_navigation;
-        game.on_start(move |game| {
+        game.startup(move |game: &mut StartupGameCtx<'_, '_>| {
             game.init_resource::<UiFocus>();
             if let Some((up, down, accept)) = menu_navigation {
                 game.insert_resource(UiNavigation::new(up, down, accept));
@@ -381,7 +381,9 @@ pub(crate) struct StateInputBehavior {
 impl GamePlugin for StateInputBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
         let actions = self.actions;
-        game.every_tick(move |game, _dt| state_input_system(game, actions));
+        game.fixed(move |game: &mut GameCtx<'_, '_>, _dt| {
+            state_input_system(game, actions);
+        });
         Ok(())
     }
 }
@@ -391,7 +393,7 @@ pub struct MovementBehavior;
 
 impl GamePlugin for MovementBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_tick::<SimpleGameState>(|game, _dt| {
+        game.fixed_active::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, _dt| {
             game.drive_input::<PlayerMovement, Speed>();
         });
         Ok(())
@@ -410,7 +412,7 @@ pub struct EnemyChaseBehavior {
 impl GamePlugin for EnemyChaseBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
         let range = self.range.map(|range| range.max(0.0));
-        game.every_active_tick::<SimpleGameState>(move |game, dt| {
+        game.fixed_active::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
             if let Some(range) = range {
                 for id in game.entities_with::<ChaseTarget>() {
                     if let Some(chase) = game.component_mut::<ChaseTarget>(id) {
@@ -429,7 +431,9 @@ pub struct EnemyPatrolBehavior;
 
 impl GamePlugin for EnemyPatrolBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_tick::<SimpleGameState>(|game, dt| game.run_patrol(dt));
+        game.fixed_active::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
+            game.run_patrol(dt);
+        });
         Ok(())
     }
 }
@@ -439,7 +443,9 @@ pub struct CollisionBehavior;
 
 impl GamePlugin for CollisionBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_tick::<SimpleGameState>(|game, dt| game.move_and_collide(dt));
+        game.fixed_active::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
+            game.move_and_collide(dt);
+        });
         Ok(())
     }
 }
@@ -452,7 +458,7 @@ pub struct MeleeCombatBehavior {
 impl GamePlugin for MeleeCombatBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
         let config = self.config;
-        game.every_active_tick::<SimpleGameState>(move |game, dt| {
+        game.fixed_active::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
             game.run_melee_combat(config, dt);
         });
         Ok(())
@@ -464,7 +470,7 @@ pub struct PlayerFacingBehavior;
 
 impl GamePlugin for PlayerFacingBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_tick::<SimpleGameState>(update_player_facing_direction_system);
+        game.fixed_active::<SimpleGameState>(update_player_facing_direction_system);
         Ok(())
     }
 }
@@ -479,7 +485,7 @@ impl GamePlugin for DirectionalAttackBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
         let attack = self.attack;
         let fallback = self.fallback;
-        game.every_active_tick::<SimpleGameState>(move |game, _dt| {
+        game.fixed_active::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, _dt| {
             if game.pressed(attack) {
                 game.play_player_attack_animation(true, fallback);
             }
@@ -493,7 +499,7 @@ pub struct PlayerAnimationByMovementBehavior;
 
 impl GamePlugin for PlayerAnimationByMovementBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_frame::<SimpleGameState>(player_animation_by_movement_system);
+        game.update_active::<SimpleGameState>(player_animation_by_movement_system);
         Ok(())
     }
 }
@@ -503,7 +509,7 @@ pub struct EnemyAnimationByMovementBehavior;
 
 impl GamePlugin for EnemyAnimationByMovementBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_frame::<SimpleGameState>(enemy_animation_by_movement_system);
+        game.update_active::<SimpleGameState>(enemy_animation_by_movement_system);
         Ok(())
     }
 }
@@ -513,7 +519,7 @@ pub struct PlayerDirectionalAnimationBehavior;
 
 impl GamePlugin for PlayerDirectionalAnimationBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_frame::<SimpleGameState>(player_directional_animation_system);
+        game.update_active::<SimpleGameState>(player_directional_animation_system);
         Ok(())
     }
 }
@@ -523,7 +529,7 @@ pub struct EnemyDirectionalAnimationBehavior;
 
 impl GamePlugin for EnemyDirectionalAnimationBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_frame::<SimpleGameState>(enemy_directional_animation_system);
+        game.update_active::<SimpleGameState>(enemy_directional_animation_system);
         Ok(())
     }
 }
@@ -533,7 +539,9 @@ pub struct AnimationUpdateBehavior;
 
 impl GamePlugin for AnimationUpdateBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_active_frame::<SimpleGameState>(|game, dt| game.update_animations(dt));
+        game.update_active::<SimpleGameState>(|game: &mut GameCtx<'_, '_>, dt| {
+            game.update_animations(dt);
+        });
         Ok(())
     }
 }
@@ -543,7 +551,9 @@ pub struct CameraFollowBehavior;
 
 impl GamePlugin for CameraFollowBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_frame(|game, _dt| game.camera_follow_first::<Player>());
+        game.update(|game: &mut GameCtx<'_, '_>, _dt| {
+            game.camera_follow_first::<Player>();
+        });
         Ok(())
     }
 }
@@ -558,7 +568,9 @@ impl GamePlugin for CameraZoomBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
         let zoom_in = self.zoom_in;
         let zoom_out = self.zoom_out;
-        game.every_frame(move |game, dt| game.zoom_camera_from_actions(zoom_in, zoom_out, dt));
+        game.update(move |game: &mut GameCtx<'_, '_>, dt| {
+            game.zoom_camera_from_actions(zoom_in, zoom_out, dt);
+        });
         Ok(())
     }
 }
@@ -568,7 +580,7 @@ pub struct PauseDeathUiBehavior;
 
 impl GamePlugin for PauseDeathUiBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.draw_ui(pause_death_ui_system);
+        game.ui(pause_death_ui_system);
         Ok(())
     }
 }
@@ -578,7 +590,7 @@ pub struct DeathStateBehavior;
 
 impl GamePlugin for DeathStateBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_tick(death_state_system);
+        game.fixed(death_state_system);
         Ok(())
     }
 }
@@ -588,7 +600,7 @@ pub struct CameraShakeBehavior;
 
 impl GamePlugin for CameraShakeBehavior {
     fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        game.every_frame(|game, dt| game.update_camera_shake(dt));
+        game.update(|game: &mut GameCtx<'_, '_>, dt| game.update_camera_shake(dt));
         Ok(())
     }
 }
@@ -629,8 +641,11 @@ fn state_input_system(game: &mut GameCtx<'_, '_>, actions: StateActions) {
     }
 
     if development_reload_enabled() && pressed(game, actions.reload) {
+        let reloaded_beginner_file = game.reload_beginner_file_if_configured_or_log();
         game.reload_tuning_if_configured_or_log();
-        game.reload_current_map_or_log();
+        if !reloaded_beginner_file {
+            game.reload_current_map_or_log();
+        }
         game.reload_assets();
         state = SimpleGameState::default();
     }

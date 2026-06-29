@@ -6,6 +6,9 @@ use glam::Vec2;
 use crate::app::GameApp;
 use crate::beginner::state::SimpleGameState;
 use crate::context::GameCtx;
+use crate::data::{
+    BeginnerCountdownEffectConfig, BeginnerCountdownRuleConfig, BeginnerRuntimeConfig,
+};
 
 /// Starts a named custom rule. The current beginner custom-rule surface is
 /// intentionally small: compose concrete patterns first, and keep arbitrary
@@ -21,12 +24,18 @@ impl<'a, 'app> CustomRuleAuthor<'a, 'app> {
     }
 
     /// Selects actors carrying a tag added by `.tag("...")` on a prefab.
-    pub fn for_each_tag(self, tag: impl Into<String>) -> TaggedCustomRuleAuthor<'a, 'app> {
+    pub fn each_tag(self, tag: impl Into<String>) -> TaggedCustomRuleAuthor<'a, 'app> {
         TaggedCustomRuleAuthor {
             app: self.app,
             name: self.name,
             tag: tag.into(),
         }
+    }
+
+    /// Selects actors carrying a tag added by `.tag("...")` on a prefab.
+    #[deprecated(note = "Use each_tag for beginner tagged custom rules.")]
+    pub fn for_each_tag(self, tag: impl Into<String>) -> TaggedCustomRuleAuthor<'a, 'app> {
+        self.each_tag(tag)
     }
 }
 
@@ -125,7 +134,7 @@ impl<'a, 'app> CountdownRuleAuthor<'a, 'app> {
         let effects = self.effects;
         let _name = self.name;
         self.app
-            .every_active_tick::<SimpleGameState>(move |game, dt| {
+            .fixed_active::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
                 countdown_rule_system(game, dt, &tag, &key, &effects);
             });
     }
@@ -192,12 +201,115 @@ fn apply_countdown_effects(
     }
 }
 
+pub(crate) fn register_runtime_countdown_rule(game: &mut GameApp<'_>, name: String) {
+    game.fixed_active::<SimpleGameState>(move |game: &mut GameCtx<'_, '_>, dt| {
+        let rule = game
+            .resource::<BeginnerRuntimeConfig>()
+            .and_then(|config| config.custom_countdown_rule(&name))
+            .cloned();
+        let Some(rule) = rule else {
+            return;
+        };
+        runtime_countdown_rule_system(game, dt, &rule);
+    });
+}
+
+fn runtime_countdown_rule_system(
+    game: &mut GameCtx<'_, '_>,
+    dt: f32,
+    rule: &BeginnerCountdownRuleConfig,
+) {
+    let tagged = game
+        .entities_with::<Tags>()
+        .into_iter()
+        .filter(|id| {
+            game.component::<Tags>(*id)
+                .is_some_and(|tags| tags.has(&rule.tag))
+        })
+        .collect::<Vec<_>>();
+    let expired = tagged
+        .into_iter()
+        .filter_map(|id| tick_countdown(game, id, &rule.key, dt).map(|position| (id, position)))
+        .collect::<Vec<_>>();
+
+    for (actor, position) in expired {
+        apply_runtime_countdown_effects(game, actor, position, &rule.effects);
+    }
+}
+
+fn apply_runtime_countdown_effects(
+    game: &mut GameCtx<'_, '_>,
+    actor: EntityId,
+    position: Vec2,
+    effects: &[BeginnerCountdownEffectConfig],
+) {
+    for effect in effects {
+        match effect {
+            BeginnerCountdownEffectConfig::AddScore(amount) => {
+                game.score().add(*amount);
+            }
+            BeginnerCountdownEffectConfig::SetScore(score) => {
+                game.score().set(*score);
+            }
+            BeginnerCountdownEffectConfig::DamageTagged {
+                tag,
+                amount,
+                radius,
+            } => {
+                game.actors_tagged(tag)
+                    .near(position, *radius)
+                    .damage(*amount);
+            }
+            BeginnerCountdownEffectConfig::DamagePlayer { amount, radius } => {
+                game.player().damage_if_near(position, *radius, *amount);
+            }
+            BeginnerCountdownEffectConfig::DespawnSelf => {
+                game.commands().despawn(actor);
+            }
+            BeginnerCountdownEffectConfig::PlaySound(key) => game.play_sound_named(key),
+            BeginnerCountdownEffectConfig::PlayMusic(key) => game.play_music_named(key),
+            BeginnerCountdownEffectConfig::StopMusic => game.stop_music(),
+            BeginnerCountdownEffectConfig::SpawnPrefab(prefab) => {
+                game.spawn(prefab.clone()).at_world(position);
+            }
+            BeginnerCountdownEffectConfig::SpawnNearPlayer { prefab, radius } => {
+                game.spawn(prefab.clone()).near_player(*radius);
+            }
+            BeginnerCountdownEffectConfig::ChangeScene(scene) => {
+                game.change_scene_or_log(scene);
+            }
+            BeginnerCountdownEffectConfig::ChangeMap(map) => {
+                game.change_map_or_log(map);
+            }
+            BeginnerCountdownEffectConfig::RestartCurrentMap => {
+                game.restart_map_or_log();
+            }
+            BeginnerCountdownEffectConfig::ShowUiText(text) => {
+                let text = text.trim();
+                if !text.is_empty() {
+                    game.resource_or_insert_with(crate::data::BeginnerRuleUiText::default)
+                        .lines
+                        .push(text.to_owned());
+                }
+            }
+            BeginnerCountdownEffectConfig::HealPlayer(amount) => {
+                game.player().heal(*amount);
+            }
+            BeginnerCountdownEffectConfig::SetData { tag, key, value } => {
+                game.actors_tagged(tag).set_data(key, *value);
+            }
+            BeginnerCountdownEffectConfig::DespawnTagged(tag) => {
+                game.actors_tagged(tag).despawn();
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use game_core::backend::TextureHandle;
 
     use crate::app::{GameApp, GamePlugin};
-    use crate::context::StartupGameCtx;
     use crate::harness::GameTestHarness;
 
     struct CountdownPlugin;
@@ -229,10 +341,10 @@ mod tests {
                 .legend('B', "bomber")
                 .legend('E', "slime")
                 .start();
-            game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
+            game.on_start(|game| game.spawn_start_map());
             game.rules().top_down_controls(controls).build();
             game.custom_rule("fuse")
-                .for_each_tag("explosive")
+                .each_tag("explosive")
                 .countdown("fuse")
                 .when_zero()
                 .damage_tag("enemy", 4, 80.0)

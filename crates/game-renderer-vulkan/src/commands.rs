@@ -128,7 +128,7 @@ fn sprite_vertex_buffer_capacity(required_bytes: vk::DeviceSize) -> anyhow::Resu
 }
 
 pub fn ui_projection(extent: vk::Extent2D) -> glam::Mat4 {
-    glam::Mat4::orthographic_rh(
+    glam::camera::rh::proj::directx::orthographic(
         0.0,
         extent.width as f32,
         0.0,

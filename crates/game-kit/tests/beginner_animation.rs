@@ -1,4 +1,4 @@
-use game_kit::prelude::*;
+use game_kit::advanced::prelude::*;
 use game_kit::testing::GameTestHarness;
 
 const PLAYER: &str = "animation/player";

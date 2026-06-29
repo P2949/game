@@ -19,6 +19,11 @@ game-renderer-vulkan = { version = "0.1.0", path = "../game-renderer-vulkan", op
 [features]
 default = ["real-backends"]
 real-backends = ["dep:game-audio", "dep:game-platform-sdl", "dep:game-renderer-vulkan"]
+ci-build-sdl3 = [
+    "real-backends",
+    "game-audio/ci-build-sdl3",
+    "game-platform-sdl/ci-build-sdl3",
+]
 ogg = ["real-backends", "game-audio/ogg"]
 mp3 = ["real-backends", "game-audio/mp3"]
 

@@ -1,5 +1,5 @@
 use game_core::commands::AssetReloadStatus;
-use game_kit::prelude::*;
+use game_kit::advanced::prelude::*;
 use game_kit::testing::GameTestHarness;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -37,7 +37,7 @@ impl GamePlugin for MapFlowPlugin {
         register_map(game, "game_over", ["...."], false, false);
 
         game.start_scene("menu").scene("game").scene("game_over");
-        game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
+        game.on_start(|game| game.spawn_start_map());
         game.on_action(controls.0, |game| {
             game.change_map_or_log("game");
             game.change_scene_or_log("game");
@@ -103,7 +103,7 @@ impl GamePlugin for SymbolicMapPlugin {
             .legend('E', "slime")
             .start();
 
-        game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
+        game.on_start(|game| game.spawn_start_map());
 
         Ok(())
     }

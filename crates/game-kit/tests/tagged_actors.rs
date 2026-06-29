@@ -1,4 +1,4 @@
-use game_kit::prelude::*;
+use game_kit::advanced::prelude::*;
 use game_kit::testing::GameTestHarness;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -45,14 +45,14 @@ impl GamePlugin for TaggedActorsPlugin {
             .start();
         game.on_start(|game| game.spawn_start_map());
 
-        game.every_tick(|game, dt| {
+        game.fixed(|game: &mut GameCtx<'_, '_>, dt| {
             let mut explosions = Vec::new();
             let mut observation = BomberObservation {
                 explosive_count: game.actors_tagged("explosive").count(),
                 ..BomberObservation::default()
             };
 
-            game.actors_tagged("explosive").for_each(|actor| {
+            game.actors_tagged("explosive").each(|actor| {
                 observation.has_explosive_tag = actor.has_tag("explosive");
                 let fuse = actor.data("fuse").unwrap_or_default() - dt;
                 actor.set_data("fuse", fuse);

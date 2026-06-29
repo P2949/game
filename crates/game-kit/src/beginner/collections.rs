@@ -2,10 +2,10 @@
 
 use game_combat::Health;
 use game_core::builder::PropertyBag;
-use game_core::world::{EntityId, Tags, Velocity};
+use game_core::world::{EntityId, NamedValues, Tags, Velocity};
 use glam::Vec2;
 
-use crate::assets::SoundRef;
+use crate::assets::{IntoSoundRef, SoundRef};
 use crate::beginner::actors::{
     CollectSound, DespawnOnCollect, Enemy, HealValue, Pickup, Player, ScoreValue,
 };
@@ -180,8 +180,8 @@ pub struct FiredShot<'g, 'a, 'w> {
 }
 
 impl<'g, 'a, 'w> FiredShot<'g, 'a, 'w> {
-    pub fn play_sound(self, sound: impl Into<SoundRef>) {
-        match sound.into() {
+    pub fn play_sound(self, sound: impl IntoSoundRef) {
+        match sound.into_sound_ref() {
             SoundRef::Handle(handle) => self.game.play_sound(handle, 1.0),
             SoundRef::Key(key) => self.game.play_sound_named(&key),
         }
@@ -197,6 +197,7 @@ struct EnemyFilter {
     alive_only: bool,
     dead_only: bool,
     near_player: Option<f32>,
+    near: Option<(Vec2, f32)>,
 }
 
 pub struct EnemyCollection<'g, 'a, 'w> {
@@ -229,6 +230,11 @@ impl<'g, 'a, 'w> EnemyCollection<'g, 'a, 'w> {
         self
     }
 
+    pub fn near(mut self, point: Vec2, range: f32) -> Self {
+        self.filter.near = Some((point, range.max(0.0)));
+        self
+    }
+
     pub fn count(&self) -> usize {
         self.ids().len()
     }
@@ -238,6 +244,19 @@ impl<'g, 'a, 'w> EnemyCollection<'g, 'a, 'w> {
             .into_iter()
             .filter(|id| self.game.damage_entity(*id, amount))
             .count()
+    }
+
+    pub fn heal(&mut self, amount: i32) -> usize {
+        let ids = self.ids();
+        let mut healed = 0;
+        for id in ids {
+            let Some(health) = self.game.component_mut::<Health>(id) else {
+                continue;
+            };
+            health.current = (health.current + amount.max(0)).min(health.max);
+            healed += 1;
+        }
+        healed
     }
 
     pub fn despawn(&mut self) -> usize {
@@ -255,6 +274,27 @@ impl<'g, 'a, 'w> EnemyCollection<'g, 'a, 'w> {
             .into_iter()
             .filter(|id| self.game.play_animation(*id, name.clone()))
             .count()
+    }
+
+    pub fn spawn_at_each(&mut self, prefab: impl Into<String>) -> usize {
+        let prefab = prefab.into();
+        let positions = self
+            .ids()
+            .into_iter()
+            .filter_map(|id| self.game.position(id))
+            .collect::<Vec<_>>();
+        for position in &positions {
+            self.game.spawn(prefab.clone()).at_world(*position);
+        }
+        positions.len()
+    }
+
+    pub fn add_score_each(&mut self, amount: i32) -> usize {
+        let count = self.ids().len();
+        if count > 0 {
+            self.game.score().add(amount * count as i32);
+        }
+        count
     }
 
     fn ids(&self) -> Vec<EntityId> {
@@ -280,7 +320,17 @@ impl<'g, 'a, 'w> EnemyCollection<'g, 'a, 'w> {
                     let Some(enemy_pos) = self.game.position(*id) else {
                         return false;
                     };
-                    return enemy_pos.distance(player_pos) <= range;
+                    if enemy_pos.distance(player_pos) > range {
+                        return false;
+                    }
+                }
+                if let Some((point, range)) = self.filter.near {
+                    let Some(enemy_pos) = self.game.position(*id) else {
+                        return false;
+                    };
+                    if enemy_pos.distance_squared(point) > range * range {
+                        return false;
+                    }
                 }
                 true
             })
@@ -290,7 +340,10 @@ impl<'g, 'a, 'w> EnemyCollection<'g, 'a, 'w> {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct PickupFilter {
+    alive_only: bool,
+    dead_only: bool,
     near_player: Option<f32>,
+    near: Option<(Vec2, f32)>,
 }
 
 pub struct PickupCollection<'g, 'a, 'w> {
@@ -307,6 +360,9 @@ pub struct TaggedActors<'g, 'a, 'w> {
     game: &'g mut GameCtx<'a, 'w>,
     tag: String,
     near: Option<(Vec2, f32)>,
+    near_player: Option<f32>,
+    alive_only: bool,
+    dead_only: bool,
 }
 
 impl<'g, 'a, 'w> TaggedActors<'g, 'a, 'w> {
@@ -315,7 +371,22 @@ impl<'g, 'a, 'w> TaggedActors<'g, 'a, 'w> {
             game,
             tag: tag.into(),
             near: None,
+            near_player: None,
+            alive_only: false,
+            dead_only: false,
         }
+    }
+
+    pub fn alive(mut self) -> Self {
+        self.alive_only = true;
+        self.dead_only = false;
+        self
+    }
+
+    pub fn dead(mut self) -> Self {
+        self.dead_only = true;
+        self.alive_only = false;
+        self
     }
 
     /// Keeps only actors within `range` world units of `point`.
@@ -324,15 +395,26 @@ impl<'g, 'a, 'w> TaggedActors<'g, 'a, 'w> {
         self
     }
 
+    pub fn near_player(mut self, range: f32) -> Self {
+        self.near_player = Some(range.max(0.0));
+        self
+    }
+
     pub fn count(&self) -> usize {
         self.ids().len()
     }
 
     /// Runs a custom rule for every currently matching actor.
-    pub fn for_each(&mut self, mut f: impl FnMut(&mut EventActor<'_, 'a, 'w>)) {
+    pub fn each(&mut self, mut f: impl FnMut(&mut EventActor<'_, 'a, 'w>)) {
         for id in self.ids() {
             f(&mut EventActor::new(self.game, ActorToken::new(id)));
         }
+    }
+
+    /// Runs a custom rule for every currently matching actor.
+    #[deprecated(note = "Use each for beginner tagged actor collections.")]
+    pub fn for_each(&mut self, f: impl FnMut(&mut EventActor<'_, 'a, 'w>)) {
+        self.each(f);
     }
 
     /// Damages all matching actors and returns how many had health to damage.
@@ -341,6 +423,34 @@ impl<'g, 'a, 'w> TaggedActors<'g, 'a, 'w> {
             .into_iter()
             .filter(|id| self.game.damage_entity(*id, amount))
             .count()
+    }
+
+    pub fn heal(&mut self, amount: i32) -> usize {
+        let ids = self.ids();
+        let mut healed = 0;
+        for id in ids {
+            let Some(health) = self.game.component_mut::<Health>(id) else {
+                continue;
+            };
+            health.current = (health.current + amount.max(0)).min(health.max);
+            healed += 1;
+        }
+        healed
+    }
+
+    pub fn set_data(&mut self, key: impl Into<String>, value: f32) -> usize {
+        let key = key.into();
+        let ids = self.ids();
+        for id in &ids {
+            if let Some(values) = self.game.component_mut::<NamedValues>(*id) {
+                values.set_f32(key.clone(), value);
+            } else {
+                let mut values = NamedValues::default();
+                values.set_f32(key.clone(), value);
+                self.game.insert_component(*id, values);
+            }
+        }
+        ids.len()
     }
 
     /// Queues removal of all matching actors and returns how many were queued.
@@ -353,7 +463,37 @@ impl<'g, 'a, 'w> TaggedActors<'g, 'a, 'w> {
         ids.len()
     }
 
+    pub fn spawn_at_each(&mut self, prefab: impl Into<String>) -> usize {
+        let prefab = prefab.into();
+        let positions = self
+            .ids()
+            .into_iter()
+            .filter_map(|id| self.game.position(id))
+            .collect::<Vec<_>>();
+        for position in &positions {
+            self.game.spawn(prefab.clone()).at_world(*position);
+        }
+        positions.len()
+    }
+
+    pub fn play_animation(&mut self, name: impl Into<String>) -> usize {
+        let name = name.into();
+        self.ids()
+            .into_iter()
+            .filter(|id| self.game.play_animation(*id, name.clone()))
+            .count()
+    }
+
+    pub fn add_score_each(&mut self, amount: i32) -> usize {
+        let count = self.ids().len();
+        if count > 0 {
+            self.game.score().add(amount * count as i32);
+        }
+        count
+    }
+
     fn ids(&self) -> Vec<EntityId> {
+        let player_pos = self.near_player.and_then(|_| self.game.player_position());
         self.game
             .entities_with::<Tags>()
             .into_iter()
@@ -368,6 +508,24 @@ impl<'g, 'a, 'w> TaggedActors<'g, 'a, 'w> {
                         .position(*id)
                         .is_some_and(|position| position.distance_squared(point) <= range * range)
                 })
+            })
+            .filter(|id| {
+                if self.alive_only && self.game.is_dead(*id) {
+                    return false;
+                }
+                if self.dead_only && !self.game.is_dead(*id) {
+                    return false;
+                }
+                if let Some(range) = self.near_player {
+                    let Some(player_pos) = player_pos else {
+                        return false;
+                    };
+                    let Some(position) = self.game.position(*id) else {
+                        return false;
+                    };
+                    return position.distance_squared(player_pos) <= range * range;
+                }
+                true
             })
             .collect()
     }
@@ -386,8 +544,83 @@ impl<'g, 'a, 'w> PickupCollection<'g, 'a, 'w> {
         self
     }
 
+    pub fn near(mut self, point: Vec2, range: f32) -> Self {
+        self.filter.near = Some((point, range.max(0.0)));
+        self
+    }
+
+    pub fn alive(mut self) -> Self {
+        self.filter.alive_only = true;
+        self.filter.dead_only = false;
+        self
+    }
+
+    pub fn dead(mut self) -> Self {
+        self.filter.dead_only = true;
+        self.filter.alive_only = false;
+        self
+    }
+
     pub fn count(&self) -> usize {
         self.ids().len()
+    }
+
+    pub fn damage(&mut self, amount: i32) -> usize {
+        self.ids()
+            .into_iter()
+            .filter(|id| self.game.damage_entity(*id, amount))
+            .count()
+    }
+
+    pub fn heal(&mut self, amount: i32) -> usize {
+        let ids = self.ids();
+        let mut healed = 0;
+        for id in ids {
+            let Some(health) = self.game.component_mut::<Health>(id) else {
+                continue;
+            };
+            health.current = (health.current + amount.max(0)).min(health.max);
+            healed += 1;
+        }
+        healed
+    }
+
+    pub fn despawn(&mut self) -> usize {
+        let ids = self.ids();
+        let mut commands = self.game.commands();
+        for id in &ids {
+            commands.despawn(*id);
+        }
+        ids.len()
+    }
+
+    pub fn spawn_at_each(&mut self, prefab: impl Into<String>) -> usize {
+        let prefab = prefab.into();
+        let positions = self
+            .ids()
+            .into_iter()
+            .filter_map(|id| self.game.position(id))
+            .collect::<Vec<_>>();
+        for position in &positions {
+            self.game.spawn(prefab.clone()).at_world(*position);
+        }
+        positions.len()
+    }
+
+    pub fn play_animation(&mut self, name: impl Into<String>) -> usize {
+        let name = name.into();
+        self.ids()
+            .into_iter()
+            .filter(|id| self.game.play_animation(*id, name.clone()))
+            .count()
+    }
+
+    pub fn add_score_each(&mut self, amount: i32) -> usize {
+        let count = self.ids().len();
+        if count > 0 {
+            self.game.score().add(amount * count as i32);
+        }
+        count
     }
 
     pub fn collect(&mut self) -> usize {
@@ -451,7 +684,23 @@ impl<'g, 'a, 'w> PickupCollection<'g, 'a, 'w> {
                     let Some(pickup_pos) = self.game.position(*id) else {
                         return false;
                     };
-                    return pickup_pos.distance(player_pos) <= range;
+                    if pickup_pos.distance(player_pos) > range {
+                        return false;
+                    }
+                }
+                if self.filter.alive_only && self.game.is_dead(*id) {
+                    return false;
+                }
+                if self.filter.dead_only && !self.game.is_dead(*id) {
+                    return false;
+                }
+                if let Some((point, range)) = self.filter.near {
+                    let Some(pickup_pos) = self.game.position(*id) else {
+                        return false;
+                    };
+                    if pickup_pos.distance_squared(point) > range * range {
+                        return false;
+                    }
                 }
                 true
             })
@@ -492,6 +741,10 @@ impl<'g, 'a, 'w> ScoreOps<'g, 'a, 'w> {
 
     pub fn add(&mut self, amount: i32) {
         self.game.resource_or_insert_with(Score::default).value += amount;
+    }
+
+    pub fn set(&mut self, value: i32) {
+        self.game.resource_or_insert_with(Score::default).value = value;
     }
 
     pub fn value(&mut self) -> i32 {
@@ -549,7 +802,6 @@ mod tests {
     use super::Score;
     use crate::app::{GameApp, GamePlugin};
     use crate::beginner::actors::Pickup;
-    use crate::context::{GameCtx, StartupGameCtx};
     use crate::harness::GameTestHarness;
 
     struct CollectionPlugin;
@@ -584,8 +836,8 @@ mod tests {
                 .legend('C', "coin")
                 .start();
 
-            game.on_start(|game: &mut StartupGameCtx<'_, '_>| game.spawn_start_map());
-            game.every_tick(|game: &mut GameCtx<'_, '_>, _dt| {
+            game.on_start(|game| game.spawn_start_map());
+            game.every_tick(|game, _dt| {
                 game.player().damage(10);
                 game.player().heal(5);
                 game.enemies().alive().near_player(80.0).damage(50);

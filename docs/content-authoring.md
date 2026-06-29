@@ -33,6 +33,8 @@ Helpful links:
 - [Beginner authoring](beginner-authoring.md): the beginner API and data path.
 - [Tutorials](tutorials/README.md): build a one-file game in a guided order.
 - [Cookbook](cookbook/README.md): copy a focused recipe for a common feature.
+- [When to use the advanced API](when-to-use-advanced-api.md): decide whether
+  lower-level control is actually needed.
 - [Advanced content authoring](advanced-content-authoring.md): use raw prefabs,
   custom systems, queries, or RON maps when those lower-level tools are truly
   needed.

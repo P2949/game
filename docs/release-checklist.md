@@ -48,13 +48,39 @@ cp -r assets /tmp/game-package/
 ( cd /tmp/game-package && GAME_SMOKE_FRAMES=120 ./game )
 ```
 
+## Prebuilt demo release artifacts
+
+Tags matching `v*` run `.github/workflows/release.yml`. The workflow packages
+the bundled demo for Linux x86_64 and Windows x86_64, uploads workflow
+artifacts, and attaches these zips to the GitHub Releases page:
+
+```text
+game-demo-linux-x86_64.zip
+game-demo-windows-x86_64.zip
+```
+
+Each zip should contain the executable, `assets/`, launcher scripts, and
+`README.txt` at the archive root. The workflow builds with `ci-build-sdl3` so
+the prebuilt artifacts do not depend on runner-provided SDL3 packages. Keep the
+README and setup docs honest that prebuilt packages still require a
+Vulkan-capable GPU/driver, and that source builds remain the main development
+path.
+
+For a local Linux dry-run of the package contents:
+
+```bash
+cargo xtask package-demo --release --features ci-build-sdl3 --out /tmp/game-demo-linux-x86_64
+( cd /tmp/game-demo-linux-x86_64 && zip -r ../game-demo-linux-x86_64.zip . )
+```
+
 ## crates.io preflight
 
 **Status: intentionally deferred.** This project currently recommends starting
-new projects via `cargo generate gh:P2949/game templates/simple-demo`, which
-resolves `game-starter` as a git dependency and requires no crates.io
-publication. The sequence below is the procedure to follow if/when publishing
-becomes the right call—it is not a pending task.
+new projects via
+`cargo generate --git https://github.com/P2949/game templates/simple-demo --name my-game`,
+which resolves `game-starter` as a pinned git dependency and requires no
+crates.io publication. The sequence below is the procedure to follow if/when
+publishing becomes the right call; it is not a pending task.
 
 Only an authorized maintainer with crates.io credentials should perform this
 section. First run the package dry-runs in dependency order; they rewrite

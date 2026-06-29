@@ -7,13 +7,19 @@ your art instead of writing the usual setup code.
 
 ## Start a data-driven demo
 
-From a local checkout:
+From anywhere:
 
 ```bash
-cargo xtask new-demo my-game --template data-driven
+cargo install cargo-generate
+cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game
 cd my-game
-cargo run
+cargo install --git https://github.com/P2949/game game-cli
+game-dev validate-data
+game-dev run
 ```
+
+From a local checkout, `cargo xtask new-demo my-game --template data-driven`
+creates the same project with a local path dependency.
 
 The generated `src/main.rs` is deliberately tiny:
 
@@ -29,6 +35,7 @@ run_game("My Game", |game| {
 - `assets/game.ron`: asset names, actors, maps, and standard rules
 - `assets/maps/level_1.txt`: walls and `P`/`E`/`C` spawns
 - `assets/textures/*.png`: your art
+- `assets/sounds/*.wav`: your sound effects
 
 The first section of `game.ron` registers conventional files. For example,
 `"player"` means `assets/textures/player.png`; `"hit"` means
@@ -36,8 +43,8 @@ The first section of `game.ron` registers conventional files. For example,
 
 ```ron
 assets: (
-    textures: ["player", "slime", "coin", "floor", "wall"],
-    sounds: ["hit"],
+    textures: ["player", "slime", "coin", "floor", "wall", "door", "bolt"],
+    sounds: ["hit", "coin", "shoot"],
 ),
 ```
 
@@ -66,6 +73,59 @@ For a larger no-Rust reference, see `examples/data-driven-full-demo`. Its
 `assets/game.ron` includes doors, projectiles, spawners, checkpoints, music,
 player shooting, enemy drops, and a countdown custom rule.
 
+For smaller focused references, copy:
+
+- `examples/data-driven-events-demo` for `When` conditions, score gates, and
+  scene changes
+- `examples/data-driven-waves-demo` for timed spawns and tag-count rules
+- `examples/data-driven-projectiles-demo` for player shooting, projectile
+  rules, and enemy-death effects
+
+## Script rules
+
+Use script rules inside the `rules` list when you want small reactions without
+writing Rust:
+
+```ron
+When(condition: AllEnemiesDead, effects: [ChangeScene("win")])
+When(condition: ScoreAtLeast(10), effects: [ShowUiText("Gate open")])
+EverySeconds(seconds: 5.0, effects: [SpawnNearPlayer(prefab: "slime", radius: 128.0)])
+```
+
+Supported conditions are:
+
+- `AllEnemiesDead`
+- `AllPickupsCollected`
+- `ScoreAtLeast(10)`
+- `PlayerHealthBelow(3)`
+- `TimerReached(name: "first_wave", seconds: 2.0)`
+- `MapIs("level_1")`
+- `SceneIs("win")`
+- `TagCountZero("enemy")`
+- `ActionPressed(Attack)`
+
+Supported game-level effects are:
+
+- `PlaySound("hit")`
+- `PlayMusic("theme")`
+- `StopMusic`
+- `AddScore(1)`
+- `SetScore(0)`
+- `SpawnPrefab("coin")`
+- `SpawnNearPlayer(prefab: "slime", radius: 128.0)`
+- `ChangeMap("level_2")`
+- `ChangeScene("win")`
+- `RestartCurrentMap`
+- `ShowUiText("Wave incoming")`
+- `DamagePlayer(amount: 1)`
+- `HealPlayer(1)`
+- `SetData(tag: "enemy", key: "fuse", value: 3.0)`
+- `DespawnTagged("hazard")`
+
+`OnEnemyDeath(prefab: "slime", effects: [...])` supports the event-shaped
+effects: score changes, `DespawnSelf`, sounds, prefab spawns, and map or scene
+changes.
+
 ## Add small Rust behavior later
 
 The loader returns the standard controls, so the data file does not trap you in
@@ -91,8 +151,22 @@ the rules that make your game unusual.
 The loader checks cross-references before it builds the game. A legend typo
 such as `"slimee"` names the map symbol and suggests `"slime"`; an unknown
 sprite or pickup sound lists the registered asset names. Fix the file named in
-the message, then run again.
+the message, then run again. You can also check the file without starting the
+renderer:
 
-`game.ron` is read at startup. F5 reloads text maps and reloadable assets, not
-the RON setup itself, so restart after changing prefabs, rules, or the map
-list.
+```bash
+game-dev validate-data assets/game.ron
+```
+
+In a debug build, F5 reparses `assets/game.ron`, validates it, reloads the
+current map data, respawns the current map, and reloads existing textures and
+sounds. This is a partial data reload: changing existing numbers, prefab
+settings, and a map's text-file path is supported, including future spawns from
+beginner rules. Existing custom countdown rule details, scene text/buttons, and
+audio scene settings also reload. Existing action settings such as prefab,
+cooldown, direction, and sound reload when the input binding stays the same.
+Adding, removing, or reordering asset names, prefab names, map names, or custom
+rule names still requires a restart. Changing scene names, scene input bindings,
+action input bindings, or the enabled rule list also still requires a restart.
+The F1 debug overlay reports `game.ron reload: partial` and shows the latest
+error if validation fails.

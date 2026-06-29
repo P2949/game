@@ -1,4 +1,4 @@
-# Zero to a running demo
+# Quickstart - Zero to a Running Demo
 
 ## Goal
 
@@ -14,14 +14,30 @@ learning engine internals first.
 ## Full code
 
 You do not need to write code for this first step. Create and run the generated
-demo from a checkout of this repository:
+demo from anywhere:
 
 ```bash
-git clone https://github.com/P2949/game
-cd game
-cargo xtask new-demo ../my-first-game
-cd ../my-first-game
-cargo run
+cargo install cargo-generate
+cargo generate --git https://github.com/P2949/game templates/simple-demo --name my-first-game
+cd my-first-game
+cargo install --git https://github.com/P2949/game game-cli
+game-dev run
+```
+
+From a local checkout, `cargo xtask new-demo ../my-first-game` creates the same
+shape with a local path dependency for framework development.
+
+The CI "first 15 minutes" acceptance test follows this same beginner path from
+a local checkout:
+
+```bash
+cargo install cargo-generate
+cargo generate --path templates/simple-demo --name first-demo --destination /tmp
+cd /tmp/first-demo
+GAME_SMOKE_FRAMES=60 cargo run
+printf '%s\n' '##########' '#P..C..E.#' '#..C.....#' '##########' > assets/maps/level_1.txt
+game-dev asset-check
+game-dev package --release --out dist/first-demo --zip
 ```
 
 ## What changed
@@ -37,6 +53,12 @@ editing files instead of the engine:
 The map uses simple symbols: `#` is a wall, `.` is floor, `P` is the player,
 and `E` is an enemy. The generated README explains the rest of the first
 changes.
+
+The first build creates small starter files such as
+`assets/textures/player.png`, `assets/textures/slime.png`,
+`assets/textures/coin.png`, `assets/sounds/hit.wav`, and
+`assets/sounds/coin.wav` when they are missing. Your own files with those names
+are left untouched.
 
 ## Common errors
 

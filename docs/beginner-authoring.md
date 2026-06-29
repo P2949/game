@@ -4,8 +4,9 @@ Start here when you want to make a small game rather than study engine internals
 Use one of these beginner paths:
 
 1. **No-Rust data file:** edit `assets/game.ron` and `assets/maps/*.txt`.
-   Start with `templates/data-driven-demo` or
-   `examples/data-driven-full-demo`.
+   Start with `templates/data-driven-demo`,
+   `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
+   `examples/data-driven-projectiles-demo`, or `examples/data-driven-full-demo`.
 2. **Standalone Rust game:** `use game_starter::prelude::*;` and
    `run_game("My Game", |game| { ... })` in one `main.rs` file.
 3. **Workspace content crate:** `use game_kit::beginner::prelude::*;` and
@@ -17,8 +18,9 @@ content-crate files.
 
 ## Choose your starting point
 
-- **No-Rust / edit data first:** `templates/data-driven-demo` and
-  `examples/data-driven-full-demo`.
+- **No-Rust / edit data first:** `templates/data-driven-demo`,
+  `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
+  `examples/data-driven-projectiles-demo`, and `examples/data-driven-full-demo`.
 - **Beginner Rust / copy this first:** `examples/one-file-demo`,
   `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
   `simple-content`, and `templates/simple-demo`.
@@ -76,14 +78,23 @@ place:
 
 ```rust
 game.assets_from_folders()
-    .required_textures(["player", "slime", "floor", "wall"])?
-    .required_sounds(["hit"])?
+    .required_textures(["player", "slime", "coin", "floor", "wall", "door", "bolt"])?
+    .required_sounds(["hit", "coin", "shoot"])?
     .build();
 ```
 
 Put those files in `assets/textures/` and `assets/sounds/`. If a required file
 is missing, setup tells you the exact path to add and how to use a custom path
 instead.
+
+The folder convention is literal:
+
+```text
+assets/textures/player.png -> .sprite("player")
+assets/sounds/hit.wav      -> .play_sound("hit")
+assets/music/theme.ogg     -> .play_music("theme")
+assets/maps/level_1.txt    -> map_from_text_auto("level_1")
+```
 
 For quick prototypes, you can register every supported file directly in the
 conventional folders instead:
@@ -101,6 +112,30 @@ Filename stems become names: `assets/textures/player.png` becomes `"player"`,
 `"theme"`. Keep `required_*` in tutorials and finished games when missing
 files should stop setup with a direct diagnostic.
 
+Animations use the same asset-root convention. Put the image and metadata here:
+
+```text
+assets/textures/player_sheet.png
+assets/animations/player.ron
+```
+
+Then load the metadata by name:
+
+```rust
+let assets = game.assets_from_folders()
+    .required_textures(["player_sheet"])?
+    .animation_sheet_auto("player")?
+    .build();
+
+game.player_prefab("player")
+    .animation_sheet(assets.animation_sheet("player"))
+    .play("idle")
+    .build()?;
+```
+
+`game-dev asset-check` validates PNGs, WAV/OGG/MP3 sound files, rectangular
+text maps, `assets/game.ron`, and animation metadata texture references.
+
 The beginner helpers keep engine details out of your game code.
 
 ## Data-driven files
@@ -117,7 +152,8 @@ Legacy string controls and rules still load, but current templates use the
 structured form. The data path compiles through the same public beginner
 builders as Rust content, covering players, enemies, pickups, doors,
 projectiles, spawners, triggers, checkpoints, scene flow, music, player
-shooting, enemy drops, UI, win conditions, and a countdown custom-rule helper.
+shooting, enemy drops, UI, win conditions, timed/event rules, and a countdown
+custom-rule helper.
 
 ## Fast map iteration
 

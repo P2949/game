@@ -5,7 +5,8 @@ fn main() -> Result<()> {
         // 1. Register files by name. You use these names later in
         // `.sprite("player")` and `.simple_theme("floor", "wall")`.
         game.assets_from_folders()
-            .required_textures(["player", "slime", "coin", "floor", "wall"])?
+            .required_textures(["player", "slime", "coin", "floor", "wall", "door", "bolt"])?
+            .required_sounds(["hit", "coin", "shoot"])?
             .build();
 
         let controls = game.input(|input| input.top_down_controls())?;
@@ -28,6 +29,7 @@ fn main() -> Result<()> {
         game.pickup_prefab("coin")
             .sprite("coin")
             .score(1)
+            .play_sound("coin")
             .despawn_on_collect()
             .build()?;
 
