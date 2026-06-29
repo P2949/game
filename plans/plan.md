@@ -4000,14 +4000,15 @@ Phase 12 artifact-verification helper note:
   environment variables, and the focused release-workflow architecture test
   passed.
 - remaining caveats: The helper can verify GitHub artifacts only after a
-  successful `release.yml` run exists. GitHub still reports zero `Release
-  Artifacts` runs for `P2949/game`, so artifact publication itself remains the
-  final external gate.
+  successful `release.yml` run exists. The branch workflow runs so far failed
+  before artifact upload, so artifact publication itself remains the final
+  external gate.
 
 Phase 12 release-workflow dispatch note:
 
-- status: Fix implemented; remote verification rerun required.
-- files changed: `xtask/Cargo.toml`,
+- status: Second fix implemented; remote verification rerun required.
+- files changed: `.github/workflows/release.yml`, `xtask/Cargo.toml`,
+  `docs/release-checklist.md`, `docs/beginner-productization-roadmap.md`,
   `crates/game-core/tests/architecture_boundaries.rs`, `CHANGELOG.md`,
   `plans/plan.md`.
 - implementation summary: Pushed branch
@@ -4018,19 +4019,30 @@ Phase 12 release-workflow dispatch note:
   to `game-cli`, so the `xtask` binary still linked against system SDL3. Added
   `xtask` feature forwarding with `ci-build-sdl3 = ["game-cli/ci-build-sdl3"]`
   and extended the release workflow architecture test to protect that wiring.
+  Pushed the fix as `8a47b1a` and dispatched workflow run `28397491428`; it
+  failed the same way because the `cargo xtask ... --features ci-build-sdl3`
+  alias passes `--features` to the `xtask` binary, not to Cargo while building
+  `xtask`. Updated the release workflow and release checklist to use
+  `cargo run -p xtask --features ci-build-sdl3 -- ...` for source-built SDL3
+  release packaging.
 - validation commands run: `gh workflow run release.yml --repo P2949/game --ref codex/beginner-release-polish-artifacts`;
   `gh run watch 28397228106 --repo P2949/game --exit-status`;
   `gh run view 28397228106 --repo P2949/game --log-failed`;
+  `gh workflow run release.yml --repo P2949/game --ref codex/beginner-release-polish-artifacts`;
+  `gh run watch 28397491428 --repo P2949/game --exit-status`;
+  `gh run view 28397491428 --repo P2949/game --log-failed`;
   `cargo check -p xtask --features ci-build-sdl3 --locked`;
   `cargo test -p game-core --test architecture_boundaries --locked release_workflow_publishes_prebuilt_demo_artifacts`;
   `cargo fmt --all -- --check`.
 - validation result: The first remote release workflow run failed before
   artifact upload, and the logs identified missing `SDL3`/`SDL3.lib` while
-  linking `xtask`. The local feature-forwarding fix now passes focused cargo
-  check, focused architecture test, and formatting.
-- remaining caveats: Push the feature-forwarding fix and rerun
-  `release.yml`; artifacts are not verified until a successful remote run
-  uploads both zips and `scripts/verify-github-release-artifacts.sh` passes.
+  linking `xtask`. The second remote run proved that the workflow invocation
+  also needed to build `xtask` with Cargo features enabled. The local
+  feature-forwarding fix passes focused cargo check, focused architecture test,
+  and formatting; the workflow-command fix is ready for another remote run.
+- remaining caveats: Push the workflow-command fix and rerun `release.yml`;
+  artifacts are not verified until a successful remote run uploads both zips
+  and `scripts/verify-github-release-artifacts.sh` passes.
 
 Final plan summary:
 
@@ -4052,8 +4064,8 @@ Final plan summary:
   release-artifact helper syntax and architecture tests.
 - known external blockers: GitHub release artifacts need
   `.github/workflows/release.yml` to pass from a pushed commit or test tag. The
-  first branch workflow run failed before artifact upload and the local fix has
-  been implemented; a rerun is still required.
+  branch workflow runs so far failed before artifact upload and the local fixes
+  have been implemented; a rerun is still required.
 - remaining future work: crates.io publication, a dedicated template repo,
   versioned docs, and a `game-dev` installer remain future distribution tasks
   rather than missing 1.0 architecture.

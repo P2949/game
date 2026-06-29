@@ -67,7 +67,7 @@ the full gate through lavapipe:
 
 ```bash
 Xvfb :99 -screen 0 1280x720x24
-env -u MESA_LOADER_DRIVER_OVERRIDE VK_LOADER_DRIVERS_SELECT='*lvp*' DISPLAY=:99 SDL_VIDEODRIVER=x11 cargo xtask release-check --features ci-build-sdl3
+env -u MESA_LOADER_DRIVER_OVERRIDE VK_LOADER_DRIVERS_SELECT='*lvp*' DISPLAY=:99 SDL_VIDEODRIVER=x11 cargo run -p xtask --features ci-build-sdl3 -- release-check --features ci-build-sdl3
 ```
 
 ## Packaged-layout check
@@ -104,7 +104,7 @@ path.
 For a local Linux dry-run of the package contents:
 
 ```bash
-cargo xtask package-demo --release --features ci-build-sdl3 --out /tmp/game-demo-linux-x86_64
+cargo run -p xtask --features ci-build-sdl3 -- package-demo --release --features ci-build-sdl3 --out /tmp/game-demo-linux-x86_64
 ( cd /tmp/game-demo-linux-x86_64 && zip -r ../game-demo-linux-x86_64.zip . )
 scripts/verify-release-artifact.sh /tmp/game-demo-linux-x86_64.zip linux
 ```

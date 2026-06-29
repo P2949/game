@@ -47,6 +47,8 @@ All notable beginner-facing changes should be recorded here before release.
 - `cargo xtask package-demo --features ci-build-sdl3` now forwards the SDL3
   source-build feature through `xtask` to `game-cli`, avoiding system SDL3
   linker requirements in the release artifact workflow.
+- The release artifact workflow now builds `xtask` with the source-built SDL3
+  feature enabled before running `package-demo`.
 
 ### Deprecated
 

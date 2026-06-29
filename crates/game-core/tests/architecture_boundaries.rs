@@ -1220,7 +1220,7 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         "\"v*\"",
         "game-demo-linux-x86_64",
         "game-demo-windows-x86_64",
-        "cargo xtask package-demo --release --features ci-build-sdl3",
+        "cargo run -p xtask --features ci-build-sdl3 -- package-demo --release --features ci-build-sdl3",
         "Verify Linux package archive",
         "scripts/verify-release-artifact.sh",
         "Verify Windows package archive",
@@ -1335,6 +1335,7 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         "gh run list --workflow release.yml --limit 5",
         "scripts/verify-github-release-artifacts.sh <run-id>",
         "latest successful `release.yml` run",
+        "cargo run -p xtask --features ci-build-sdl3 -- package-demo --release --features ci-build-sdl3",
     ] {
         assert!(
             checklist.contains(required),

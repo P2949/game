@@ -65,7 +65,7 @@ jobs:
           $vkBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Package demo
-        run: cargo xtask package-demo --release --features ci-build-sdl3 --out "dist/${{ matrix.package_name }}"
+        run: cargo run -p xtask --features ci-build-sdl3 -- package-demo --release --features ci-build-sdl3 --out "dist/${{ matrix.package_name }}"
 
       - name: Archive Linux package
         if: runner.os == 'Linux'

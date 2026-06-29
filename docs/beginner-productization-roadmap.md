@@ -73,4 +73,4 @@ renderer/runtime/backend types, commands/resources internals
 | Phase 15: Stability/migrations | Initial done | CHANGELOG and migration docs exist; update per release. |
 | Phase 16: Advanced separation | Done | `testbed-content` remains advanced. |
 | Phase 17: First-15-minutes test | Done | Script exists and CI calls it. |
-| Phase 18: Final gate | Partial | `cargo xtask release-check --features ci-build-sdl3` passes locally through Xvfb/lavapipe, generated project/package checks pass, and a Linux demo zip dry-run was produced. The GitHub release workflow still needs to run from a pushed commit or test tag to publish Linux/Windows artifacts. |
+| Phase 18: Final gate | Partial | The source-built SDL3 release-check path passes locally through Xvfb/lavapipe, generated project/package checks pass, and a Linux demo zip dry-run was produced. The GitHub release workflow branch run is being used to verify Linux/Windows artifacts. |
