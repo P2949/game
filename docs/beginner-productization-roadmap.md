@@ -8,18 +8,18 @@ harder to misuse, and friendlier when something goes wrong.
 ## Current State
 
 - Architecture status: complete.
-- Beginner Productization 1.0 status: local release gate passes; release
-  workflow artifact publication still needs a pushed commit and workflow run.
+- Beginner Productization 1.0 status: release-candidate verified on the local
+  release gate and branch release-artifact workflow.
 - Beginner entry points:
   - `game_starter::prelude::*` for standalone beginner projects.
   - `game_kit::beginner::prelude::*` for beginner content crates.
   - `game_kit::advanced::prelude::*` for advanced systems and testbed content.
 - Advanced content remains intentionally separate; `testbed-content` is an
   advanced lab and should not be the first thing beginners copy.
-- Remaining release-candidate items:
-  - run `.github/workflows/release.yml` manually or on a test tag to publish
-    Linux/Windows demo artifacts,
-  - update generated-template dependency pins when a release tag is published.
+- Remaining tagged-release items:
+  - update generated-template dependency pins when a release tag is published,
+  - run `.github/workflows/release.yml` on the release tag so the Linux/Windows
+    demo artifacts are attached to GitHub Releases.
 
 ## Beginner Productization 1.0 Acceptance Criteria
 
@@ -69,8 +69,8 @@ renderer/runtime/backend types, commands/resources internals
 | Phase 11: Tutorial path | Done / polish | Keep no-Rust, beginner Rust, Tiled, and advanced paths clearly separated. |
 | Phase 12: Data DSL parity | Mostly done | Structured conditions/effects exist; expand only as examples need it. |
 | Phase 13: Packaging docs | Done / verify | Package flow exists; continue verifying on release targets. |
-| Phase 14: Prebuilt artifacts | Done in workflow | Verify artifacts on a release tag. |
+| Phase 14: Prebuilt artifacts | Done / branch verified | Branch workflow artifacts verify; release tags attach the same zips to GitHub Releases. |
 | Phase 15: Stability/migrations | Initial done | CHANGELOG and migration docs exist; update per release. |
 | Phase 16: Advanced separation | Done | `testbed-content` remains advanced. |
 | Phase 17: First-15-minutes test | Done | Script exists and CI calls it. |
-| Phase 18: Final gate | Partial | The source-built SDL3 release-check path passes locally through Xvfb/lavapipe, generated project/package checks pass, and a Linux demo zip dry-run was produced. The GitHub release workflow branch run is being used to verify Linux/Windows artifacts. |
+| Phase 18: Final gate | Done for release candidate | Local release gates pass, branch release workflow artifacts verify, and release-tag attachment is a tagged-release action. |

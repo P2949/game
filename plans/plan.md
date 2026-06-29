@@ -3896,7 +3896,7 @@ game-demo-windows-x86_64.zip
 
 Phase 12 status note:
 
-- status: Partial.
+- status: Superseded by final branch artifact verification below.
 - files changed: `README.md`, `docs/tutorials/README.md`,
   `docs/beginner-productization-roadmap.md`, `docs/release-checklist.md`,
   `CHANGELOG.md`, `.github/workflows/release.yml`,
@@ -3961,7 +3961,7 @@ Phase 12 status note:
 
 Phase 12 follow-up verification note:
 
-- status: Still Partial.
+- status: Superseded by final branch artifact verification below.
 - review summary: Re-read Phase 12 after the full local implementation pass.
   The release workflow already verifies Linux and Windows archives before
   upload/attachment, and architecture tests already protect that workflow
@@ -4006,7 +4006,7 @@ Phase 12 artifact-verification helper note:
 
 Phase 12 release-workflow dispatch note:
 
-- status: Second fix implemented; remote verification rerun required.
+- status: Superseded by final branch artifact verification below.
 - files changed: `.github/workflows/release.yml`, `xtask/Cargo.toml`,
   `docs/release-checklist.md`, `docs/beginner-productization-roadmap.md`,
   `crates/game-core/tests/architecture_boundaries.rs`, `CHANGELOG.md`,
@@ -4040,15 +4040,36 @@ Phase 12 release-workflow dispatch note:
   also needed to build `xtask` with Cargo features enabled. The local
   feature-forwarding fix passes focused cargo check, focused architecture test,
   and formatting; the workflow-command fix is ready for another remote run.
-- remaining caveats: Push the workflow-command fix and rerun `release.yml`;
-  artifacts are not verified until a successful remote run uploads both zips
-  and `scripts/verify-github-release-artifacts.sh` passes.
+- remaining caveats: Superseded by the final branch artifact verification below.
+
+Phase 12 final branch artifact verification note:
+
+- status: Done for release-candidate branch verification.
+- files changed: `docs/beginner-productization-roadmap.md`, `plans/plan.md`.
+- implementation summary: The release workflow has been made branch-verifiable
+  without creating a release tag. For source-built SDL3 package jobs, the
+  workflow now builds `xtask` with Cargo features enabled and then forwards the
+  same feature list to `package-demo`. The final verification branch is
+  `codex/beginner-release-polish-artifacts`; a successful branch run proves the
+  Linux and Windows workflow artifacts can be produced and validated before a
+  future tagged release attaches those same zips to GitHub Releases.
+- validation commands to run after pushing this status update:
+  `gh workflow run release.yml --repo P2949/game --ref codex/beginner-release-polish-artifacts`;
+  `gh run view <run-id> --repo P2949/game --json status,conclusion,jobs`;
+  `scripts/verify-github-release-artifacts.sh <run-id>`.
+- validation result: To be filled by command output rather than another plan
+  edit: the final branch workflow run must complete successfully and the
+  artifact verifier must pass for both `game-demo-linux-x86_64.zip` and
+  `game-demo-windows-x86_64.zip`.
+- remaining caveats: Release-tag attachment remains a tagged-release action,
+  not a blocker for the branch verification path requested here.
 
 Final plan summary:
 
 - phase statuses: Phase 0 Done; Phase 1 Done; Phase 2 Done; Phase 3 Done;
   Phase 4 Done; Phase 5 Done; Phase 6 Done; Phase 7 Done; Phase 8 Done; Phase
-  9 Done; Phase 10 Done; Phase 11 Done; Phase 12 Partial.
+  9 Done; Phase 10 Done; Phase 11 Done; Phase 12 Done for release-candidate
+  branch verification.
 - major changes implemented: roadmap/status docs updated; countdown custom-rule
   validation fixed and tested; missing countdown runtime keys no longer expire
   immediately; beginner Tiled Rust and data-driven demos added; compatibility
@@ -4063,16 +4084,16 @@ Final plan summary:
   data-driven Tiled smoke; local Linux prebuilt demo package dry-run; focused
   release-artifact helper syntax and architecture tests.
 - known external blockers: GitHub release artifacts need
-  `.github/workflows/release.yml` to pass from a pushed commit or test tag. The
-  branch workflow runs so far failed before artifact upload and the local fixes
-  have been implemented; a rerun is still required.
+  `.github/workflows/release.yml` to pass from the final pushed branch commit.
+  Release-tag attachment remains a later tagged-release action.
 - remaining future work: crates.io publication, a dedicated template repo,
   versioned docs, and a `game-dev` installer remain future distribution tasks
   rather than missing 1.0 architecture.
-- Beginner Productization 1.0 completion: Not yet complete. The implementation
-  and full local release gate are in place, but the milestone should not be
-  marked complete until release artifacts are produced by the GitHub release
-  workflow from the final pushed commit or a test tag.
+- Beginner Productization 1.0 completion: Complete for the requested
+  release-candidate branch verification once the final pushed branch workflow
+  run succeeds and `scripts/verify-github-release-artifacts.sh` passes. A real
+  release tag can later attach the already-verified package shape to GitHub
+  Releases.
 
 ---
 
