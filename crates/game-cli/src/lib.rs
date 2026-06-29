@@ -10,8 +10,7 @@ use fontdue::{Font, FontSettings};
 use image::ImageReader;
 use walkdir::WalkDir;
 
-const RELEASE_GAME_STARTER_DEPENDENCY: &str =
-    r#"{ git = "https://github.com/P2949/game", tag = "v0.1.0", package = "game-starter" }"#;
+const RELEASE_GAME_STARTER_DEPENDENCY: &str = r#"{ git = "https://github.com/P2949/game", rev = "b7fa6a3dc01d185312cf0e714b5efa10201578c6", package = "game-starter" }"#;
 
 struct TemplateFile {
     path: &'static str,
@@ -115,6 +114,10 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
             reject_extra(args, "run")?;
             run_project()
         }
+        Some("check") => {
+            let options = parse_check_options(args)?;
+            check_project(&options)
+        }
         Some("package") => package_project_command(args),
         Some("asset-check") => {
             reject_extra(args, "asset-check")?;
@@ -125,12 +128,16 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Some("validate-data") => {
             let path = args.next().unwrap_or_else(|| "game.ron".to_string());
             reject_extra(args, "validate-data")?;
-            game_kit::data::validate_beginner_game_file(path)?;
+            let asset_root = configured_asset_root();
+            game_kit::data::validate_beginner_game_file(normalize_validate_data_path(
+                &path,
+                &asset_root,
+            ))?;
             println!("beginner data file is valid");
             Ok(())
         }
         _ => bail!(
-            "usage:\n    game-dev new <path> [--template simple|data-driven]\n    game-dev doctor\n    game-dev run\n    game-dev package --release --out <directory> [--features feature-list] [--zip]\n    game-dev asset-check\n    game-dev validate-data [game.ron]"
+            "usage:\n    game-dev new <path> [--template simple|data-driven]\n    game-dev doctor\n    game-dev check [--features feature-list]\n    game-dev run\n    game-dev package --release --out <directory> [--features feature-list] [--zip]\n    game-dev asset-check\n    game-dev validate-data [game.ron]"
         ),
     }
 }
@@ -156,9 +163,10 @@ pub fn run_xtask(args: impl IntoIterator<Item = String>) -> Result<()> {
             doctor(options);
             Ok(())
         }
+        Some("release-check") => release_check_command(args, &workspace),
         Some("package-demo") => package_workspace_demo_command(args, &workspace),
         _ => bail!(
-            "usage:\n    cargo xtask new-demo <name-or-path> [--template simple|data-driven]\n    cargo xtask new-demo <name-or-path> --data-driven\n    cargo xtask package-demo --release --out <directory> [--features feature-list]\n    cargo xtask doctor\n\nCreates an outside-workspace beginner demo, packages the bundled playable demo, or checks local graphics prerequisites."
+            "usage:\n    cargo xtask new-demo <name-or-path> [--template simple|data-driven]\n    cargo xtask new-demo <name-or-path> --data-driven\n    cargo xtask release-check [--skip-smoke] [--skip-generated] [--features feature-list]\n    cargo xtask package-demo --release --out <directory> [--features feature-list]\n    cargo xtask doctor\n\nCreates an outside-workspace beginner demo, runs release-candidate checks, packages the bundled playable demo, or checks local graphics prerequisites."
         ),
     }
 }
@@ -188,6 +196,43 @@ fn reject_extra(mut args: impl Iterator<Item = String>, command: &str) -> Result
         bail!("unexpected argument for {command}: '{extra}'");
     }
     Ok(())
+}
+
+struct CheckOptions {
+    features: Vec<String>,
+}
+
+fn parse_check_options(mut args: impl Iterator<Item = String>) -> Result<CheckOptions> {
+    let mut features = Vec::new();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--features" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow!("--features needs a comma-separated feature list"))?;
+                features.push(value);
+            }
+            extra => bail!("unexpected check argument '{extra}'; expected --features <list>"),
+        }
+    }
+    Ok(CheckOptions { features })
+}
+
+fn configured_asset_root() -> PathBuf {
+    env::var_os("GAME_ASSET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("assets"))
+}
+
+fn normalize_validate_data_path(path: impl AsRef<Path>, asset_root: &Path) -> PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() || asset_root.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    path.strip_prefix(asset_root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[derive(Clone, Copy)]
@@ -242,11 +287,288 @@ fn package_workspace_demo_command(
     package_workspace_demo(workspace, &output, &features)
 }
 
+fn release_check_command(args: impl Iterator<Item = String>, workspace: &Path) -> Result<()> {
+    let options = parse_release_check_options(args)?;
+    run_release_check(workspace, &options)
+}
+
 struct PackageOptions {
     release: bool,
     output: Option<PathBuf>,
     zip: bool,
     features: Vec<String>,
+}
+
+struct ReleaseCheckOptions {
+    skip_smoke: bool,
+    skip_generated: bool,
+    features: Vec<String>,
+}
+
+fn parse_release_check_options(
+    mut args: impl Iterator<Item = String>,
+) -> Result<ReleaseCheckOptions> {
+    let mut skip_smoke = false;
+    let mut skip_generated = false;
+    let mut features = Vec::new();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--skip-smoke" => skip_smoke = true,
+            "--skip-generated" => skip_generated = true,
+            "--features" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow!("--features needs a comma-separated feature list"))?;
+                features.push(value);
+            }
+            other => bail!(
+                "unknown release-check argument '{other}'; expected --skip-smoke, --skip-generated, or --features <list>"
+            ),
+        }
+    }
+    Ok(ReleaseCheckOptions {
+        skip_smoke,
+        skip_generated,
+        features,
+    })
+}
+
+fn run_release_check(workspace: &Path, options: &ReleaseCheckOptions) -> Result<()> {
+    let workspace_features = workspace_feature_names(&options.features);
+
+    let mut fmt = Command::new("cargo");
+    fmt.args(["fmt", "--all", "--", "--check"])
+        .current_dir(workspace);
+    run_command(&mut fmt, "cargo fmt --all -- --check")?;
+
+    let mut test = Command::new("cargo");
+    test.args(["test", "--workspace", "--locked"])
+        .current_dir(workspace);
+    add_features(&mut test, &workspace_features);
+    run_command(&mut test, "cargo test --workspace --locked")?;
+
+    let mut headless = Command::new("cargo");
+    headless
+        .args([
+            "test",
+            "-p",
+            "game-runtime",
+            "--test",
+            "headless_runner",
+            "--no-default-features",
+            "--locked",
+        ])
+        .current_dir(workspace);
+    run_command(
+        &mut headless,
+        "cargo test -p game-runtime --test headless_runner --no-default-features --locked",
+    )?;
+
+    let mut clippy = Command::new("cargo");
+    clippy
+        .args(["clippy", "--workspace", "--all-targets", "--locked"])
+        .current_dir(workspace);
+    add_features(&mut clippy, &workspace_features);
+    clippy.args(["--", "-D", "warnings"]);
+    run_command(
+        &mut clippy,
+        "cargo clippy --workspace --all-targets --locked -- -D warnings",
+    )?;
+
+    let mut build = Command::new("cargo");
+    build
+        .args(["build", "-p", "game", "--release", "--locked"])
+        .current_dir(workspace);
+    add_features(&mut build, &options.features);
+    run_command(&mut build, "cargo build -p game --release --locked")?;
+
+    let mut doctor = cargo_run_game_cli(workspace, &options.features);
+    doctor.args(["doctor", "--explain"]);
+    run_command(&mut doctor, "cargo run -p game-cli -- doctor --explain")?;
+
+    let mut asset_check = cargo_run_game_cli(workspace, &options.features);
+    asset_check.arg("asset-check");
+    run_command(&mut asset_check, "cargo run -p game-cli -- asset-check")?;
+
+    let mut validate_data = cargo_run_game_cli(workspace, &options.features);
+    validate_data.args(["validate-data", "assets/game.ron"]);
+    run_command(
+        &mut validate_data,
+        "cargo run -p game-cli -- validate-data assets/game.ron",
+    )?;
+
+    if options.skip_generated {
+        println!("==> skipping generated-project checks");
+    } else {
+        run_generated_release_checks(workspace, options)?;
+    }
+
+    if options.skip_smoke {
+        println!("==> skipping graphical smoke checks");
+    } else {
+        run_smoke_release_checks(workspace, &options.features)?;
+    }
+
+    println!("release check passed");
+    Ok(())
+}
+
+fn cargo_run_game_cli(workspace: &Path, features: &[String]) -> Command {
+    let mut command = Command::new("cargo");
+    command
+        .args(["run", "-p", "game-cli"])
+        .current_dir(workspace);
+    add_features(&mut command, features);
+    command.arg("--");
+    command
+}
+
+fn workspace_feature_names(features: &[String]) -> Vec<String> {
+    features
+        .iter()
+        .map(|feature| {
+            if feature.contains('/') {
+                feature.clone()
+            } else {
+                format!("game/{feature}")
+            }
+        })
+        .collect()
+}
+
+fn add_features(command: &mut Command, features: &[String]) {
+    for feature in features {
+        command.arg("--features").arg(feature);
+    }
+}
+
+fn run_command(command: &mut Command, label: &str) -> Result<()> {
+    println!("==> {label}");
+    let status = command
+        .status()
+        .with_context(|| format!("could not run `{label}`"))?;
+    if !status.success() {
+        bail!("`{label}` failed with {status}");
+    }
+    Ok(())
+}
+
+fn run_generated_release_checks(workspace: &Path, options: &ReleaseCheckOptions) -> Result<()> {
+    let root = env::temp_dir().join("game-release-check/generated");
+    if root.exists() {
+        fs::remove_dir_all(&root)
+            .with_context(|| format!("failed to remove '{}'", root.display()))?;
+    }
+    fs::create_dir_all(&root).with_context(|| format!("failed to create '{}'", root.display()))?;
+
+    let dependency = format!(
+        r#"{{ path = "{}" }}"#,
+        workspace.join("crates/game-starter").display()
+    );
+    let simple = root.join("simple");
+    let data = root.join("data");
+    new_project(&simple, DemoTemplate::Simple, &dependency)?;
+    new_project(&data, DemoTemplate::DataDriven, &dependency)?;
+
+    run_generated_project_release_checks(workspace, &simple, "simple", &options.features)?;
+    run_generated_project_release_checks(workspace, &data, "data-driven", &options.features)
+}
+
+fn run_generated_project_release_checks(
+    workspace: &Path,
+    project: &Path,
+    label: &str,
+    features: &[String],
+) -> Result<()> {
+    let mut check = Command::new("cargo");
+    check.arg("check").current_dir(project);
+    add_features(&mut check, features);
+    run_command(
+        &mut check,
+        &format!("cargo check ({label} generated project)"),
+    )?;
+
+    let mut game_dev_check = Command::new("cargo");
+    game_dev_check
+        .args(["run", "--manifest-path"])
+        .arg(workspace.join("Cargo.toml"))
+        .args(["-p", "game-cli"])
+        .current_dir(project);
+    add_features(&mut game_dev_check, features);
+    game_dev_check.args(["--", "check"]);
+    add_features(&mut game_dev_check, features);
+    run_command(
+        &mut game_dev_check,
+        &format!("game-dev check ({label} generated project)"),
+    )?;
+
+    package_project_at(
+        project,
+        &PathBuf::from(format!("dist/{label}-release-check")),
+        true,
+        features,
+    )
+    .with_context(|| format!("failed to package {label} generated project"))
+}
+
+fn run_smoke_release_checks(workspace: &Path, features: &[String]) -> Result<()> {
+    let mut default_game = Command::new("cargo");
+    default_game
+        .args(["run", "-p", "game", "--locked"])
+        .env("GAME_SMOKE_FRAMES", "120")
+        .current_dir(workspace);
+    add_features(&mut default_game, features);
+    run_command(
+        &mut default_game,
+        "GAME_SMOKE_FRAMES=120 cargo run -p game --locked",
+    )?;
+
+    let mut simple_game = Command::new("cargo");
+    simple_game
+        .args(["run", "-p", "game", "--locked"])
+        .env("GAME_DEMO", "simple")
+        .env("GAME_SMOKE_FRAMES", "120")
+        .current_dir(workspace);
+    add_features(&mut simple_game, features);
+    run_command(
+        &mut simple_game,
+        "GAME_DEMO=simple GAME_SMOKE_FRAMES=120 cargo run -p game --locked",
+    )?;
+
+    let mut testbed_game = Command::new("cargo");
+    testbed_game
+        .args(["run", "-p", "game", "--locked"])
+        .env("GAME_DEMO", "testbed")
+        .env("GAME_SMOKE_FRAMES", "120")
+        .current_dir(workspace);
+    add_features(&mut testbed_game, features);
+    run_command(
+        &mut testbed_game,
+        "GAME_DEMO=testbed GAME_SMOKE_FRAMES=120 cargo run -p game --locked",
+    )?;
+
+    let mut release_game = Command::new("cargo");
+    release_game
+        .args(["run", "-p", "game", "--release", "--locked"])
+        .env("GAME_ASSET_DIR", "assets")
+        .env("GAME_SMOKE_FRAMES", "120")
+        .current_dir(workspace);
+    add_features(&mut release_game, features);
+    run_command(
+        &mut release_game,
+        "GAME_ASSET_DIR=assets GAME_SMOKE_FRAMES=120 cargo run -p game --release --locked",
+    )?;
+
+    let mut tiled = Command::new("cargo");
+    tiled
+        .args(["run", "-p", "tiled-demo", "--locked"])
+        .env("GAME_SMOKE_FRAMES", "60")
+        .current_dir(workspace);
+    add_features(&mut tiled, features);
+    run_command(
+        &mut tiled,
+        "GAME_SMOKE_FRAMES=60 cargo run -p tiled-demo --locked",
+    )
 }
 
 fn parse_package_options(
@@ -307,6 +629,7 @@ fn new_project(destination: &Path, template: DemoTemplate, dependency: &str) -> 
     println!("next steps:");
     println!("    cd {}", destination.display());
     println!("    game-dev doctor");
+    println!("    game-dev check");
     println!("    game-dev run");
     Ok(())
 }
@@ -340,24 +663,75 @@ fn run_project() -> Result<()> {
         .status()
         .context("could not run `cargo run`")?;
     if !status.success() {
-        bail!("cargo run failed");
+        bail!("cargo run failed.\n\n{}", beginner_failure_advice());
     }
+    Ok(())
+}
+
+fn beginner_failure_advice() -> &'static str {
+    "If this looks like a setup issue:\n    game-dev doctor --explain\n\nIf this looks like an asset/data issue:\n    game-dev asset-check\n    game-dev validate-data assets/game.ron\n\nSee:\n    docs/tutorials/common-errors.md"
+}
+
+fn check_project(options: &CheckOptions) -> Result<()> {
+    let project = env::current_dir().context("failed to resolve current project directory")?;
+    check_project_at(&project, options)
+}
+
+fn check_project_at(project: &Path, options: &CheckOptions) -> Result<()> {
+    let asset_root = configured_asset_root();
+    let assets = absolutize_from(project, &asset_root);
+
+    println!("checking project setup...");
+    doctor(DoctorOptions { explain: false });
+
+    println!("\nchecking assets...");
+    validate_assets_dir(&assets, false)?;
+
+    let data_file = assets.join("game.ron");
+    if data_file.is_file() {
+        println!("checking data file...");
+        game_kit::data::validate_beginner_game_file(&data_file)?;
+    }
+
+    println!("running cargo check...");
+    let mut command = Command::new("cargo");
+    command.arg("check").current_dir(project);
+    for feature in &options.features {
+        command.arg("--features").arg(feature);
+    }
+    let status = command
+        .status()
+        .context("could not run `cargo check`; is Rust installed and available on PATH?")?;
+    if !status.success() {
+        bail!("cargo check failed.\n\n{}", beginner_failure_advice());
+    }
+
+    println!("project check passed");
     Ok(())
 }
 
 fn package_current_project(requested_output: &Path, zip: bool, features: &[String]) -> Result<()> {
     let project = env::current_dir().context("failed to resolve current project directory")?;
-    let output = absolutize_from(&project, requested_output);
+    package_project_at(&project, requested_output, zip, features)
+}
+
+fn package_project_at(
+    project: &Path,
+    requested_output: &Path,
+    zip: bool,
+    features: &[String],
+) -> Result<()> {
+    let output = absolutize_from(project, requested_output);
     ensure_empty_or_missing(&output)?;
 
     let package_info = package_info_from_manifest(&project.join("Cargo.toml"))?;
-    let assets = absolutize_from(&project, &package_info.asset_dir);
+    let assets = absolutize_from(project, &package_info.asset_dir);
     if !assets.is_dir() {
         bail!("assets directory '{}' does not exist", assets.display());
     }
 
     let mut build = Command::new("cargo");
-    build.args(["build", "--release"]).current_dir(&project);
+    build.args(["build", "--release"]).current_dir(project);
     for feature in features {
         build.arg("--features").arg(feature);
     }
@@ -365,7 +739,10 @@ fn package_current_project(requested_output: &Path, zip: bool, features: &[Strin
         .status()
         .context("could not run release build for generated project")?;
     if !status.success() {
-        bail!("release build failed; no package was created");
+        bail!(
+            "release build failed; no package was created.\n\n{}",
+            beginner_failure_advice()
+        );
     }
 
     validate_assets_dir(&assets, false)?;
@@ -1238,8 +1615,8 @@ fn executable_name(package_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        crate_name_from_destination, package_info_from_manifest, validate_asset_file,
-        validate_text_map,
+        crate_name_from_destination, normalize_validate_data_path, package_info_from_manifest,
+        validate_asset_file, validate_text_map,
     };
 
     #[test]
@@ -1294,6 +1671,25 @@ mod tests {
         let error = validate_text_map(&path).unwrap_err().to_string();
         assert!(error.contains("row 2 has width 2, expected 4"));
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn validate_data_accepts_asset_relative_or_assets_prefixed_paths() {
+        let asset_root = std::path::Path::new("assets");
+        assert_eq!(
+            normalize_validate_data_path("game.ron", asset_root),
+            std::path::PathBuf::from("game.ron")
+        );
+        assert_eq!(
+            normalize_validate_data_path("assets/game.ron", asset_root),
+            std::path::PathBuf::from("game.ron")
+        );
+
+        let absolute = std::env::temp_dir().join("game.ron");
+        assert_eq!(
+            normalize_validate_data_path(&absolute, asset_root),
+            absolute
+        );
     }
 
     #[test]

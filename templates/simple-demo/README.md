@@ -58,6 +58,7 @@ Useful commands:
 
 ```bash
 game-dev doctor
+game-dev check
 game-dev run
 game-dev asset-check
 game-dev package --release --out dist/my-game --zip

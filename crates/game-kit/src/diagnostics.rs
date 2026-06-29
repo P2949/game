@@ -72,10 +72,10 @@ pub(crate) fn bad_map_symbol_error(
 }
 
 pub(crate) fn bad_rule_combo_error(rule: &str, missing_dependency: &str) -> anyhow::Error {
-    let method = rule_method_name(missing_dependency);
+    let rule_method = rule_method_name(rule);
+    let dependency_method = rule_method_name(missing_dependency);
     anyhow!(
-        "Rule {rule} needs the {missing_dependency} rule.\n\nAdd .{method}() before .{}().",
-        rule_method_name(rule)
+        "Rule `{rule_method}` needs the `{dependency_method}` rule.\n\nAdd `.{dependency_method}()` before `.{rule_method}()`."
     )
 }
 
@@ -180,8 +180,8 @@ mod tests {
     fn rule_combo_error_names_the_missing_builder_call() {
         let error = bad_rule_combo_error("ProjectilesDamageEnemies", "Projectiles").to_string();
 
-        assert!(error.contains("Rule ProjectilesDamageEnemies needs the Projectiles rule"));
-        assert!(error.contains("Add .projectiles()"));
-        assert!(error.contains(".projectiles_damage_enemies()"));
+        assert!(error.contains("Rule `projectiles_damage_enemies` needs the `projectiles` rule"));
+        assert!(error.contains("Add `.projectiles()`"));
+        assert!(error.contains("`.projectiles_damage_enemies()`"));
     }
 }

@@ -1,5 +1,8 @@
 # Beginner Authoring Roadmap
 
+> Status: Historical. The work described here has been implemented.
+> Current release polish is tracked in `docs/beginner-productization-roadmap.md`.
+
 This roadmap records the beginner authoring milestone for the project: content
 that feels like building a small game, not like carefully driving an ECS facade.
 The lower-level `game-kit` API remains valuable as the advanced content layer;

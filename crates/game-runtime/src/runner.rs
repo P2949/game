@@ -79,8 +79,10 @@ impl Default for RuntimeConfig {
 /// The real game loop, parameterized over platform, renderer, and audio
 /// implementations. The SDL/Vulkan path and headless tests run this exact type.
 pub struct Runner<P, R, A> {
-    platform: P,
+    // Drop the renderer before the platform/window. Vulkan swapchain and
+    // surface teardown can still touch the native window/display connection.
     renderer: R,
+    platform: P,
     audio: Option<A>,
     asset_root: PathBuf,
     assets: AssetRegistry,
@@ -126,8 +128,8 @@ where
         schedule.run_startup(&mut StartCtx::new(&mut world))?;
 
         Ok(Self {
-            platform,
             renderer,
+            platform,
             audio,
             asset_root: asset_root.into(),
             assets,

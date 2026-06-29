@@ -37,3 +37,34 @@ wall rendering in this first workflow.
 
 See [`assets/maps/tiled_demo.tmx`](../../assets/maps/tiled_demo.tmx) for the
 small checked-in fixture used by the map-flow tests.
+
+Runnable example:
+
+```bash
+cargo run -p tiled-demo
+```
+
+## No-Rust Data File
+
+The same importer can be driven from `assets/game.ron`:
+
+```ron
+maps: [
+    Tiled((
+        name: "level_1",
+        path: "maps/tiled_demo.tmx",
+        theme: ("floor", "wall"),
+        objects: {
+            "Player": "player",
+            "Slime": "slime",
+        },
+        start: true,
+    )),
+]
+```
+
+Run the focused data-driven example with:
+
+```bash
+cargo run -p data-driven-tiled-demo
+```

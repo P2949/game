@@ -41,6 +41,11 @@ builders, component types, and `GameCtx` helpers only. `MapAuthor` exposes
 Runtime map switching is available through beginner door/map helpers and
 lower-level commands.
 
+Beginner CLI, data-file DSL, LDtk/Tiled import paths, runtime map switching,
+file-backed sounds, generated-project packaging, and release packaging are
+implemented surfaces now. Treat polish around those areas as release-readiness
+work, not as unimplemented architecture.
+
 ## Runtime Reality Checks
 
 - The runtime validates content asset registrations and renderer built-in assets

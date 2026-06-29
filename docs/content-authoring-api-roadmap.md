@@ -1,5 +1,8 @@
 # Content Authoring API status and stabilization roadmap
 
+> Status: Historical. The work described here has been implemented.
+> Current release polish is tracked in `docs/beginner-productization-roadmap.md`.
+
 ## Status
 
 The Content Authoring API 1.0 foundation is implemented.
