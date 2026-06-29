@@ -104,14 +104,16 @@ dist/my-game.zip
 
 Before copying, the command checks PNG decoding, the bundled font, supported
 sound decoding, rectangular text maps, TMX maps, and LDtk JSON. Its release
-build also confirms the shaders compile. It then copies the executable and the
-entire `assets/` folder together.
+build also confirms the shaders compile. It then copies the executable, any
+runtime libraries produced by the build, and the entire `assets/` folder
+together.
 
 Send the whole `dist/my-game.zip` folder to a friend. If you are sharing the
 unzipped folder instead, send the whole `dist/my-game` directory, not just the
 executable. On Linux run `./run.sh`; on Windows run `run.ps1` from PowerShell
-or double-click `run.bat`; on macOS run `./run.sh` in a Terminal. `README.txt`
-inside the package repeats these instructions.
+or double-click `run.bat`; on macOS run `./run.sh` in a Terminal. Keep any
+runtime libraries next to the executable. `README.txt` inside the package
+repeats these instructions.
 
 The package still needs a Vulkan-capable GPU and driver. If it fails to start
 on someone else's machine, have them install or update their Vulkan

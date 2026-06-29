@@ -59,9 +59,10 @@ game-demo-linux-x86_64.zip
 game-demo-windows-x86_64.zip
 ```
 
-Each zip should contain the executable, `assets/`, launcher scripts, and
-`README.txt` at the archive root. The workflow builds with `ci-build-sdl3` so
-the prebuilt artifacts do not depend on runner-provided SDL3 packages. Keep the
+Each zip should contain the executable, any bundled runtime libraries, `assets/`,
+launcher scripts, and `README.txt` at the archive root. The workflow builds with
+`ci-build-sdl3` so the prebuilt artifacts do not depend on runner-provided SDL3
+packages. Keep the
 README and setup docs honest that prebuilt packages still require a
 Vulkan-capable GPU/driver, and that source builds remain the main development
 path.

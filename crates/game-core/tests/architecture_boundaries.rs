@@ -773,6 +773,18 @@ fn generated_templates_are_ci_checked_and_release_pinned() {
             && runtime_manifest.contains("game-audio/ci-build-sdl3"),
         "game-runtime should forward the source-built SDL3 feature to backend crates"
     );
+
+    for relative in [
+        "crates/game-audio/Cargo.toml",
+        "crates/game-platform-sdl/Cargo.toml",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
+        assert!(
+            source.contains(r#"ci-build-sdl3 = ["sdl3/build-from-source"]"#),
+            "{relative} should source-build SDL3 for CI"
+        );
+    }
 }
 
 #[test]
@@ -975,6 +987,9 @@ fn generated_project_package_flow_matches_beginner_contract() {
         "run.ps1",
         "README.txt",
         "zip_package",
+        "copy_runtime_libraries",
+        "LD_LIBRARY_PATH",
+        "libSDL3.so.0",
     ] {
         assert!(
             cli.contains(required),
@@ -990,6 +1005,7 @@ fn generated_project_package_flow_matches_beginner_contract() {
         "README.txt",
         "dist/my-game.zip",
         "Send the whole dist/my-game.zip folder to a friend.",
+        "runtime libraries",
     ] {
         assert!(
             tutorial.contains(required),

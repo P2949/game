@@ -391,6 +391,7 @@ fn package_current_project(requested_output: &Path, zip: bool, features: &[Strin
             output.display()
         )
     })?;
+    copy_runtime_libraries(&target.join("release"), &output)?;
     copy_directory(&assets, &output.join("assets"))?;
     ensure_builtin_font(&output.join("assets"))?;
     validate_assets_dir(&output.join("assets"), true)?;
@@ -448,6 +449,7 @@ fn package_workspace_demo(
             executable.display()
         )
     })?;
+    copy_runtime_libraries(&target.join("release"), &output)?;
     copy_directory(&assets, &output.join("assets"))?;
     write_launchers(&output, &executable_name)?;
     write_workspace_package_readme(&output, &executable_name)?;
@@ -639,6 +641,27 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+fn copy_runtime_libraries(build_dir: &Path, output: &Path) -> Result<()> {
+    for name in [
+        "libSDL3.so.0",
+        "libSDL3.0.dylib",
+        "libSDL3.dylib",
+        "SDL3.dll",
+    ] {
+        let source = build_dir.join(name);
+        if source.is_file() {
+            fs::copy(&source, output.join(name)).with_context(|| {
+                format!(
+                    "failed to copy runtime library '{}' to '{}'",
+                    source.display(),
+                    output.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
 fn ensure_builtin_font(assets: &Path) -> Result<()> {
     let target = assets.join("fonts/DejaVuSans.ttf");
     if target.is_file() {
@@ -669,7 +692,9 @@ fn write_launchers(output: &Path, executable_name: &str) -> Result<()> {
     let shell = output.join("run.sh");
     fs::write(
         &shell,
-        format!("#!/usr/bin/env sh\ncd \"$(dirname \"$0\")\"\nexec ./{executable_name} \"$@\"\n"),
+        format!(
+            "#!/usr/bin/env sh\ncd \"$(dirname \"$0\")\"\npackage_dir=$(pwd)\nif [ -n \"${{LD_LIBRARY_PATH:-}}\" ]; then\n  export LD_LIBRARY_PATH=\"$package_dir:$LD_LIBRARY_PATH\"\nelse\n  export LD_LIBRARY_PATH=\"$package_dir\"\nfi\nif [ -n \"${{DYLD_LIBRARY_PATH:-}}\" ]; then\n  export DYLD_LIBRARY_PATH=\"$package_dir:$DYLD_LIBRARY_PATH\"\nelse\n  export DYLD_LIBRARY_PATH=\"$package_dir\"\nfi\nexec ./{executable_name} \"$@\"\n"
+        ),
     )
     .with_context(|| format!("failed to write '{}'", shell.display()))?;
     #[cfg(unix)]
@@ -702,7 +727,7 @@ fn write_project_package_readme(output: &Path, executable_name: &str) -> Result<
     fs::write(
         &readme,
         format!(
-            "Playable game package\n\nKeep this directory together: `{executable_name}` needs the adjacent `assets` folder.\n\nLinux/macOS: run ./run.sh from a terminal.\nWindows: right-click run.ps1 and choose Run with PowerShell, or double-click run.bat.\n\nRuntime requirements\n\nThis build requires a Vulkan-capable GPU and driver. If it fails to start, install or update your Vulkan runtime/driver.\n\nLinux: install the Vulkan loader/tools package and your GPU vendor driver. Mesa/lavapipe can run smoke tests but is not ideal for players.\nWindows: update your graphics driver; the Vulkan Runtime is usually included with current NVIDIA, AMD, and Intel drivers.\nmacOS: run through MoltenVK/Vulkan SDK support; this command does not create a .app bundle.\n"
+            "Playable game package\n\nKeep this directory together: `{executable_name}` needs the adjacent `assets` folder. If runtime library files such as SDL3 are included, keep them beside the executable too.\n\nLinux/macOS: run ./run.sh from a terminal.\nWindows: right-click run.ps1 and choose Run with PowerShell, or double-click run.bat.\n\nRuntime requirements\n\nThis build requires a Vulkan-capable GPU and driver. If it fails to start, install or update your Vulkan runtime/driver.\n\nLinux: install the Vulkan loader/tools package and your GPU vendor driver. Mesa/lavapipe can run smoke tests but is not ideal for players.\nWindows: update your graphics driver; the Vulkan Runtime is usually included with current NVIDIA, AMD, and Intel drivers.\nmacOS: run through MoltenVK/Vulkan SDK support; this command does not create a .app bundle.\n"
         ),
     )
     .with_context(|| format!("failed to write '{}'", readme.display()))
@@ -713,7 +738,7 @@ fn write_workspace_package_readme(output: &Path, executable_name: &str) -> Resul
     fs::write(
         &readme,
         format!(
-            "Playable game package\n\nKeep this directory together: `{executable_name}` needs the adjacent `assets` folder.\n\nLinux: run ./run.sh from a terminal.\nWindows: right-click run.ps1 and choose Run with PowerShell, or double-click run.bat.\nmacOS: open Terminal in this folder and run ./run.sh; an app bundle is not created by this command.\n\nRuntime requirements\n\nThis build requires a Vulkan-capable GPU and driver. If it fails to start, install or update your Vulkan runtime/driver.\n\nLinux: install the Vulkan loader/tools package and your GPU vendor driver. Mesa/lavapipe can run smoke tests but is not ideal for players.\nWindows: update your graphics driver; the Vulkan Runtime is usually included with current NVIDIA, AMD, and Intel drivers.\nmacOS: run through MoltenVK/Vulkan SDK support; this command does not create a .app bundle.\n\nThe bundled binary defaults to the Arena demo. Set GAME_DEMO=simple or GAME_DEMO=testbed before launching to select those bundled demos.\n"
+            "Playable game package\n\nKeep this directory together: `{executable_name}` needs the adjacent `assets` folder. If runtime library files such as SDL3 are included, keep them beside the executable too.\n\nLinux: run ./run.sh from a terminal.\nWindows: right-click run.ps1 and choose Run with PowerShell, or double-click run.bat.\nmacOS: open Terminal in this folder and run ./run.sh; an app bundle is not created by this command.\n\nRuntime requirements\n\nThis build requires a Vulkan-capable GPU and driver. If it fails to start, install or update your Vulkan runtime/driver.\n\nLinux: install the Vulkan loader/tools package and your GPU vendor driver. Mesa/lavapipe can run smoke tests but is not ideal for players.\nWindows: update your graphics driver; the Vulkan Runtime is usually included with current NVIDIA, AMD, and Intel drivers.\nmacOS: run through MoltenVK/Vulkan SDK support; this command does not create a .app bundle.\n\nThe bundled binary defaults to the Arena demo. Set GAME_DEMO=simple or GAME_DEMO=testbed before launching to select those bundled demos.\n"
         ),
     )
     .with_context(|| format!("failed to write '{}'", readme.display()))
