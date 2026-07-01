@@ -24,8 +24,9 @@ crates are identical for all demos.
 
 ## Project status
 
-The engine/content split and beginner authoring foundation are implemented. The
-project is in beginner-productization release-candidate polish.
+The engine/content split and beginner authoring foundation are implemented.
+Beginner Productization 1.0 is complete for `v0.2.0`: the local release gate
+passed, and the GitHub Release has verified Linux/Windows demo packages.
 
 Start with one of three tracks:
 
@@ -114,10 +115,10 @@ game-dev run
 ```
 
 That creates a one-file beginner game with a pinned git dependency on
-`game-starter`. The current release-prep templates pin the intended `v0.2.0`
-release tag; that tag must exist before external generated projects can resolve
-it. From a local checkout, `cargo xtask new-demo my-game` creates the same
-starter with a local path dependency. Use
+`game-starter`. The current templates pin the published `v0.2.0` release tag, so
+external generated projects resolve the same checked release by default. From a
+local checkout, `cargo xtask new-demo my-game` creates the same starter with a
+local path dependency. Use
 `cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
 when you want the same first-game setup in editable `assets/game.ron` instead.
 Generated projects can use the helper commands without cloning the engine
@@ -203,9 +204,8 @@ are the normal starting points.
 - **Engine internals:** unstable. Runtime, renderer, backend, and raw world
   details are not a beginner content API.
 
-Generated templates pin `game-starter` to the intended `v0.2.0` release tag, so
-new projects are not tied to a moving branch by default. The tag still needs to
-be pushed before that Git dependency resolves outside this checkout. See the
+Generated templates pin `game-starter` to the published `v0.2.0` release tag, so
+new projects are not tied to a moving branch by default. See the
 [distribution policy](docs/distribution-policy.md) for the current Git-based
 model and future crates.io/template-repository plan.
 

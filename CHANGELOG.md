@@ -6,7 +6,7 @@ All notable beginner-facing changes should be recorded here before release.
 
 - Nothing yet.
 
-## v0.2.0 (pending tag/artifacts)
+## v0.2.0
 
 ### Added
 
@@ -23,19 +23,20 @@ All notable beginner-facing changes should be recorded here before release.
 - Added `cargo xtask release-check` for contributor-side release-candidate
   verification, with generated-project checks and optional smoke skipping.
 - Added `docs/distribution-policy.md` to explain tagged generated-project
-  dependencies, release-prep pins, and deferred crates.io/template repository
+  dependencies, release-tag pins, and deferred crates.io/template repository
   work.
 - Added release-artifact archive verification for prebuilt demo packages before
   workflow upload/release attachment.
 - Added a GitHub artifact verifier that downloads Linux and Windows release
   workflow artifacts and checks their package layouts after a workflow run.
+- Released verified GitHub Release demo artifacts for `v0.2.0`:
+  `game-demo-linux-x86_64.zip` and `game-demo-windows-x86_64.zip`.
 
 ### Changed
 
 - Moved beginner callbacks to beginner-facing wrapper contexts.
-- Generated templates now pin `game-starter` to the intended `v0.2.0` release
-  tag. That tag still needs to be created and pushed before external generated
-  projects can resolve it.
+- Generated templates now pin `game-starter` to the published `v0.2.0` release
+  tag so external generated projects resolve a checked release by default.
 - The Rust Tiled demo now uses example-local generated assets and a checked-in
   local TMX map instead of the workspace test texture.
 - README and tutorial index now present the beginner entry path as three

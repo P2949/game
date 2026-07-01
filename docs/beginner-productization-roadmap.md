@@ -8,19 +8,19 @@ harder to misuse, and friendlier when something goes wrong.
 ## Current State
 
 - Architecture status: complete.
-- Beginner Productization 1.0 status: release-candidate verified on the local
-  release gate with `v0.2.0` template pins staged; final completion still waits
-  for release-tag artifacts.
+- Beginner Productization 1.0 status: complete for `v0.2.0`. The local
+  release gate passed, the `v0.2.0` tag was pushed, GitHub Actions release run
+  `28523446249` attached Linux/Windows demo zips to the GitHub Release, and
+  `scripts/verify-github-release-artifacts.sh 28523446249` verified them.
 - Beginner entry points:
   - `game_starter::prelude::*` for standalone beginner projects.
   - `game_kit::beginner::prelude::*` for beginner content crates.
   - `game_kit::advanced::prelude::*` for advanced systems and testbed content.
 - Advanced content remains intentionally separate; `testbed-content` is an
   advanced lab and should not be the first thing beginners copy.
-- Remaining tagged-release items:
-  - create and push the `v0.2.0` tag containing the generated-template tag pins,
-  - run `.github/workflows/release.yml` on the release tag so the Linux/Windows
-    demo artifacts are attached to GitHub Releases.
+- Verified release artifacts:
+  - `game-demo-linux-x86_64.zip`
+  - `game-demo-windows-x86_64.zip`
 
 ## Beginner Productization 1.0 Acceptance Criteria
 
@@ -70,8 +70,8 @@ renderer/runtime/backend types, commands/resources internals
 | Phase 11: Tutorial path | Done / polish | Keep no-Rust, beginner Rust, Tiled, and advanced paths clearly separated. |
 | Phase 12: Data DSL parity | Mostly done | Structured conditions/effects exist; expand only as examples need it. |
 | Phase 13: Packaging docs | Done / verify | Package flow exists; continue verifying on release targets. |
-| Phase 14: Prebuilt artifacts | Done / branch verified | Branch workflow artifacts verify; release tags attach the same zips to GitHub Releases. |
+| Phase 14: Prebuilt artifacts | Done | GitHub Actions release run `28523446249` attached verified Linux/Windows demo zips to the `v0.2.0` GitHub Release. |
 | Phase 15: Stability/migrations | Initial done | CHANGELOG and migration docs exist; update per release. |
 | Phase 16: Advanced separation | Done | `testbed-content` remains advanced. |
 | Phase 17: First-15-minutes test | Done | Script exists and CI calls it. |
-| Phase 18: Final gate | Done for release candidate | Local release gates pass, branch release workflow artifacts verify, and release-tag attachment is a tagged-release action. |
+| Phase 18: Final gate | Done | Local release gates passed; `v0.2.0` release artifacts were attached and verified. |

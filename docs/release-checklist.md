@@ -119,6 +119,14 @@ scripts/verify-github-release-artifacts.sh <run-id>
 
 Omit `<run-id>` to verify the latest successful `release.yml` run.
 
+Latest verified release:
+
+```text
+v0.2.0 — GitHub Actions run 28523446249
+verified with scripts/verify-github-release-artifacts.sh 28523446249
+release assets: game-demo-linux-x86_64.zip, game-demo-windows-x86_64.zip
+```
+
 ## crates.io preflight
 
 **Status: intentionally deferred.** This project currently recommends starting

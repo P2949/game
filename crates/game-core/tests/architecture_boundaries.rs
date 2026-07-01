@@ -922,18 +922,18 @@ fn generated_templates_are_ci_checked_and_release_pinned() {
 }
 
 #[test]
-fn distribution_policy_keeps_release_candidate_model_explicit() {
+fn distribution_policy_keeps_tagged_git_model_explicit() {
     let root = workspace_root();
     let policy = fs::read_to_string(root.join("docs/distribution-policy.md"))
         .expect("failed to read distribution policy");
 
     for required in [
-        "release-tag prep",
-        "intended release tag",
+        "tagged Git dependency model",
+        "published release tag",
         "v0.2.0",
-        "must be created and pushed",
         "cargo xtask new-demo",
         "Prebuilt demo zips",
+        "verified Linux and Windows demo zips",
         "Vulkan-capable GPU/driver",
         "publish crates.io packages after the beginner API stabilizes",
         "dedicated `game-template` repository",
@@ -948,8 +948,8 @@ fn distribution_policy_keeps_release_candidate_model_explicit() {
 
     let readme = fs::read_to_string(root.join("README.md")).expect("failed to read README");
     for required in [
-        "current release-prep templates pin the intended `v0.2.0`",
-        "The tag still needs to",
+        "current templates pin the published `v0.2.0` release tag",
+        "external generated projects resolve the same checked release",
         "cargo xtask new-demo",
         "distribution policy",
     ] {

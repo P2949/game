@@ -1,17 +1,17 @@
 # Distribution Policy
 
-This project is in beginner-productization release-tag prep. The distribution
-model favors reproducible generated projects and a simple release process over
-publishing every crate before the beginner API has settled.
+This project uses a tagged Git dependency model for beginner generated
+projects. The distribution model favors reproducible generated projects and a
+simple release process over publishing every crate before the beginner API has
+settled.
 
 ## Current Distribution Model
 
 Generated projects use Git dependencies for `game-starter`.
 
-Generated templates pin that dependency to the intended release tag so a new
-project does not track a moving branch by accident. The current release-prep tag
-is `v0.2.0`; it must be created and pushed before external generated projects
-can resolve it:
+Generated templates pin that dependency to the published release tag so a new
+project does not track a moving branch by accident. The current release tag is
+`v0.2.0`:
 
 ```toml
 game-starter = { git = "https://github.com/P2949/game", tag = "v0.2.0", package = "game-starter" }
@@ -26,8 +26,9 @@ cargo xtask new-demo my-game
 That creates the same starter shape with a local path dependency.
 
 Prebuilt demo zips are attached to GitHub Releases for players who want to try
-the bundled demo before installing Rust. They are demo packages, not a full SDK
-or installer, and they still require a Vulkan-capable GPU/driver.
+the bundled demo before installing Rust. The `v0.2.0` release attaches
+verified Linux and Windows demo zips. They are demo packages, not a full SDK or
+installer, and they still require a Vulkan-capable GPU/driver.
 
 ## Why
 
