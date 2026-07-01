@@ -35,10 +35,17 @@ Use Tiled when you prefer its object-layer workflow. The supported contract is
 an orthogonal square-tile XML TMX map with an uncompressed CSV layer named
 `Collision` (`0` floor, non-zero wall) and objects identified by class, type,
 or name. Map each identifier to a prefab with `.object(...)`; see the
-[Tiled cookbook](cookbook/tiled.md) and run `cargo run -p tiled-demo` for a
-copyable example. Tilesets, visual tile layers, object properties, infinite
-maps, templates, and compressed/base64 data are not part of this initial
-importer.
+[Tiled cookbook](cookbook/tiled.md) for Tiled Rust
+(`examples/tiled-demo`) and Tiled no-Rust
+(`examples/data-driven-tiled-demo`) examples. From the workspace root:
+
+```bash
+GAME_ASSET_DIR=examples/tiled-demo/assets cargo run -p tiled-demo --locked
+GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo --locked
+```
+
+Tilesets, visual tile layers, object properties, infinite maps, templates, and
+compressed/base64 data are not part of this initial importer.
 
 ## Future work
 

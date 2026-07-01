@@ -35,18 +35,31 @@ infinite maps, templates, base64/compressed layer data, non-square tiles, and
 isometric maps remain out of scope. Use `.simple_theme(...)` for the floor and
 wall rendering in this first workflow.
 
-See [`assets/maps/tiled_demo.tmx`](../../assets/maps/tiled_demo.tmx) for the
-small checked-in fixture used by the map-flow tests.
+See [`examples/tiled-demo/assets/maps/tiled_demo.tmx`](../../examples/tiled-demo/assets/maps/tiled_demo.tmx)
+for the small checked-in fixture used by the Rust Tiled example.
 
-Runnable example:
+## Tiled Rust
+
+Use `examples/tiled-demo` when you want to map Tiled objects to prefabs in
+beginner Rust builder code.
+
+From the example folder:
 
 ```bash
-cargo run -p tiled-demo
+cd examples/tiled-demo
+cargo run --locked
 ```
 
-## No-Rust Data File
+From the workspace root:
 
-The same importer can be driven from `assets/game.ron`:
+```bash
+GAME_ASSET_DIR=examples/tiled-demo/assets cargo run -p tiled-demo --locked
+```
+
+## Tiled no-Rust
+
+Use `examples/data-driven-tiled-demo` when you want the same importer driven
+from `assets/game.ron`:
 
 ```ron
 maps: [
@@ -63,8 +76,15 @@ maps: [
 ]
 ```
 
-Run the focused data-driven example with:
+From the example folder:
 
 ```bash
-cargo run -p data-driven-tiled-demo
+cd examples/data-driven-tiled-demo
+cargo run --locked
+```
+
+From the workspace root:
+
+```bash
+GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo --locked
 ```

@@ -9,4 +9,4 @@ default = "My Game"
 [placeholders.game_starter_dependency]
 type = "string"
 prompt = "game-starter dependency"
-default = '{ git = "https://github.com/P2949/game", rev = "b7fa6a3dc01d185312cf0e714b5efa10201578c6", package = "game-starter" }'
+default = '{ git = "https://github.com/P2949/game", tag = "v0.2.0", package = "game-starter" }'

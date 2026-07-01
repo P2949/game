@@ -4,6 +4,10 @@ All notable beginner-facing changes should be recorded here before release.
 
 ## Unreleased
 
+- Nothing yet.
+
+## v0.2.0 (pending tag/artifacts)
+
 ### Added
 
 - Added generated-template CI coverage for both starter templates outside the
@@ -18,9 +22,9 @@ All notable beginner-facing changes should be recorded here before release.
   asset validation, optional `assets/game.ron` validation, and `cargo check`.
 - Added `cargo xtask release-check` for contributor-side release-candidate
   verification, with generated-project checks and optional smoke skipping.
-- Added `docs/distribution-policy.md` to explain release-candidate git revision
-  pins, tagged generated-project dependencies, and deferred crates.io/template
-  repository work.
+- Added `docs/distribution-policy.md` to explain tagged generated-project
+  dependencies, release-prep pins, and deferred crates.io/template repository
+  work.
 - Added release-artifact archive verification for prebuilt demo packages before
   workflow upload/release attachment.
 - Added a GitHub artifact verifier that downloads Linux and Windows release
@@ -29,8 +33,11 @@ All notable beginner-facing changes should be recorded here before release.
 ### Changed
 
 - Moved beginner callbacks to beginner-facing wrapper contexts.
-- Generated templates now pin `game-starter` to a reproducible git revision
-  until the first release tag is published.
+- Generated templates now pin `game-starter` to the intended `v0.2.0` release
+  tag. That tag still needs to be created and pushed before external generated
+  projects can resolve it.
+- The Rust Tiled demo now uses example-local generated assets and a checked-in
+  local TMX map instead of the workspace test texture.
 - README and tutorial index now present the beginner entry path as three
   tracks: no-Rust data files, beginner Rust, and advanced.
 - `game-dev validate-data` now accepts both `game.ron` and `assets/game.ron`

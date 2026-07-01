@@ -9,7 +9,8 @@ harder to misuse, and friendlier when something goes wrong.
 
 - Architecture status: complete.
 - Beginner Productization 1.0 status: release-candidate verified on the local
-  release gate and branch release-artifact workflow.
+  release gate with `v0.2.0` template pins staged; final completion still waits
+  for release-tag artifacts.
 - Beginner entry points:
   - `game_starter::prelude::*` for standalone beginner projects.
   - `game_kit::beginner::prelude::*` for beginner content crates.
@@ -17,7 +18,7 @@ harder to misuse, and friendlier when something goes wrong.
 - Advanced content remains intentionally separate; `testbed-content` is an
   advanced lab and should not be the first thing beginners copy.
 - Remaining tagged-release items:
-  - update generated-template dependency pins when a release tag is published,
+  - create and push the `v0.2.0` tag containing the generated-template tag pins,
   - run `.github/workflows/release.yml` on the release tag so the Linux/Windows
     demo artifacts are attached to GitHub Releases.
 

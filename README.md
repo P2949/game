@@ -114,10 +114,10 @@ game-dev run
 ```
 
 That creates a one-file beginner game with a pinned git dependency on
-`game-starter`. Generated projects are pinned to release tags after a tagged
-release exists; release-candidate templates pin a specific git revision instead.
-From a local checkout, `cargo xtask new-demo my-game` creates the same starter
-with a local path dependency. Use
+`game-starter`. The current release-prep templates pin the intended `v0.2.0`
+release tag; that tag must exist before external generated projects can resolve
+it. From a local checkout, `cargo xtask new-demo my-game` creates the same
+starter with a local path dependency. Use
 `cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
 when you want the same first-game setup in editable `assets/game.ron` instead.
 Generated projects can use the helper commands without cloning the engine
@@ -141,13 +141,14 @@ development path.
 
 - **No Rust:** `templates/data-driven-demo`,
   `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
-  `examples/data-driven-projectiles-demo`, `examples/data-driven-tiled-demo`
+  `examples/data-driven-projectiles-demo`
+- **Tiled no-Rust:** `examples/data-driven-tiled-demo`
 - **First Rust game:** `templates/simple-demo`
 - **One-file example:** `examples/one-file-demo`
 - **Full beginner feature sample:** `examples/no-rust-shapes-demo`
 - **Custom behavior:** `examples/script-like-custom-rules`
 - **Events:** `examples/events-demo`
-- **Tiled:** `examples/tiled-demo`
+- **Tiled Rust:** `examples/tiled-demo`
 - **Structured beginner content:** `arena-content`
 - **Advanced lab:** `crates/testbed-content` - do not copy first
 
@@ -163,13 +164,14 @@ are the normal starting points.
 - **No-Rust data-driven:** edit `assets/game.ron` and text maps. Start with
   `templates/data-driven-demo`, `examples/data-driven-events-demo`,
   `examples/data-driven-waves-demo`, `examples/data-driven-projectiles-demo`,
-  `examples/data-driven-tiled-demo`, or `examples/data-driven-full-demo` when
-  the game should be made mostly from data files.
+  or `examples/data-driven-full-demo` when the game should be made mostly from
+  data files. Use `examples/data-driven-tiled-demo` for Tiled no-Rust maps.
 - **Beginner Rust builder chains:** use `game_starter::prelude::*` with
   high-level builders for assets, prefabs, maps, actions, scenes, sound,
   animation, and rules. Start with `examples/one-file-demo`,
   `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
-  `examples/tiled-demo`, `simple-content`, and `templates/simple-demo`.
+  `simple-content`, and `templates/simple-demo`. Use `examples/tiled-demo` for
+  Tiled Rust maps.
 ### Advanced API
 
 - **Advanced game-kit/testbed content:** use
@@ -201,9 +203,9 @@ are the normal starting points.
 - **Engine internals:** unstable. Runtime, renderer, backend, and raw world
   details are not a beginner content API.
 
-Release-candidate templates pin `game-starter` to a specific git revision, so
-generated projects are not tied to a moving branch by default. Tagged
-dependencies replace the revision pin when a release tag is published. See the
+Generated templates pin `game-starter` to the intended `v0.2.0` release tag, so
+new projects are not tied to a moving branch by default. The tag still needs to
+be pushed before that Git dependency resolves outside this checkout. See the
 [distribution policy](docs/distribution-policy.md) for the current Git-based
 model and future crates.io/template-repository plan.
 
@@ -218,7 +220,7 @@ If you are new:
    to create your own Rust demo, or
    `cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
    for a no-Rust demo. From a local checkout, `cargo xtask new-demo my-game`
-   uses your local sources instead of the pinned release-candidate revision.
+   uses your local sources instead of the pinned release tag.
 
 If you want a workspace content crate:
 
@@ -258,9 +260,9 @@ The workspace sets `bin/game` as its default member, so a plain `cargo run`
 works from the repository root today. The README uses `-p game` anyway because
 that form stays unambiguous if more binaries are added later.
 
-A debug `cargo run` from a source checkout finds `assets/` through the
-source-tree fallback, but a `--release` build does **not** use that fallback (see
-the discovery order below), so point it at the asset directory explicitly with
+A debug `cargo run` from a source checkout finds the nearest useful `assets/`
+folder through the discovery order below, but a `--release` build does **not**
+use the source-tree fallback, so point it at the asset directory explicitly with
 `GAME_ASSET_DIR=assets`. A packaged build instead ships `assets/` next to the
 binary (see [Packaging](#packaging)).
 
@@ -274,8 +276,9 @@ GAME_DISABLE_VALIDATION=1 cargo run -p game
 Assets are discovered in this order:
 
 1. `GAME_ASSET_DIR`, if set
-2. `assets/` next to the executable
-3. `assets/` under the crate manifest directory in debug builds only
+2. `assets/` in the current working directory
+3. `assets/` next to the executable
+4. `assets/` under the crate manifest directory in debug builds only
 
 Release packages should not rely on the source-tree fallback.
 

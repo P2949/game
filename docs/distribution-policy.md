@@ -1,17 +1,17 @@
 # Distribution Policy
 
-This project is still in beginner-productization release-candidate polish. The
-distribution model favors reproducible generated projects and a simple release
-process over publishing every crate before the beginner API has settled.
+This project is in beginner-productization release-tag prep. The distribution
+model favors reproducible generated projects and a simple release process over
+publishing every crate before the beginner API has settled.
 
 ## Current Distribution Model
 
 Generated projects use Git dependencies for `game-starter`.
 
-Release-candidate templates pin that dependency to a specific git revision so a
-new project does not track a moving branch by accident. After a release tag is
-published, generated templates should move from the revision pin to the release
-tag:
+Generated templates pin that dependency to the intended release tag so a new
+project does not track a moving branch by accident. The current release-prep tag
+is `v0.2.0`; it must be created and pushed before external generated projects
+can resolve it:
 
 ```toml
 game-starter = { git = "https://github.com/P2949/game", tag = "v0.2.0", package = "game-starter" }
@@ -40,8 +40,7 @@ cycle.
 
 Before tagging a release:
 
-- update generated-template dependency pins from the release-candidate revision
-  to the release tag,
+- confirm generated-template dependency pins target the intended release tag,
 - update `CHANGELOG.md`,
 - update migration docs in `docs/migrations/`,
 - run generated-template CI,

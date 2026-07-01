@@ -92,10 +92,10 @@ conditions allow recreation.
 ## Asset Loading
 
 Content assets are registered in `AssetRegistry` and validated before backend
-startup. Runtime assets are loaded from `GAME_ASSET_DIR`, executable-adjacent
-`assets/`, or the source-tree debug fallback. Missing content assets report the
-paths that were tried, and texture/font loaders attach exact path context. The
-runtime also validates renderer built-in assets, currently
+startup. Runtime assets are loaded from `GAME_ASSET_DIR`, current-directory
+`assets/`, executable-adjacent `assets/`, or the source-tree debug fallback.
+Missing content assets report the paths that were tried, and texture/font
+loaders attach exact path context. The runtime also validates renderer built-in assets, currently
 `assets/fonts/DejaVuSans.ttf`, before creating the Vulkan context.
 
 ## Audio Mixer

@@ -34,7 +34,7 @@ cargo deny check advisories licenses sources bans
 
 Beginner-productization release gates:
 
-- [ ] generated-template dependency pins updated for this release tag
+- [ ] generated-template dependency pins target the intended release tag
 - [ ] `CHANGELOG.md` updated
 - [ ] migration docs in `docs/migrations/` updated
 - [ ] generated-template CI is green

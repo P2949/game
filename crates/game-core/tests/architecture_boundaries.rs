@@ -303,10 +303,24 @@ fn every_beginner_demo_and_template_stays_on_the_high_level_surface() {
 
 #[test]
 fn tiled_demo_uses_the_beginner_tiled_import_path() {
-    let source =
-        read_code_without_comments(&workspace_root().join("examples/tiled-demo/src/main.rs"));
+    let root = workspace_root();
+    for relative in [
+        "examples/tiled-demo/build.rs",
+        "examples/tiled-demo/README.md",
+        "examples/tiled-demo/assets/maps/tiled_demo.tmx",
+    ] {
+        assert!(
+            root.join(relative).is_file(),
+            "Rust Tiled demo should include copyable file {relative}"
+        );
+    }
+
+    let source = read_code_without_comments(&root.join("examples/tiled-demo/src/main.rs"));
     for required in [
         "use game_starter::prelude::*;",
+        "assets_from_folders()",
+        "required_textures([\"player\", \"slime\", \"floor\", \"wall\"])",
+        "required_sounds([\"hit\"])",
         "map_from_tiled(",
         ".object(",
         ".simple_theme(",
@@ -317,6 +331,10 @@ fn tiled_demo_uses_the_beginner_tiled_import_path() {
             "tiled demo should contain {required:?}"
         );
     }
+    assert!(
+        !source.contains("textures/test.png"),
+        "Rust Tiled demo should not depend on the workspace test texture"
+    );
     for forbidden in BEGINNER_DEMO_FORBIDDEN {
         assert!(
             !source.contains(forbidden),
@@ -324,12 +342,32 @@ fn tiled_demo_uses_the_beginner_tiled_import_path() {
         );
     }
 
-    let ci = fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
         .expect("failed to read CI workflow");
     assert!(
         ci.contains("cargo run -p tiled-demo --locked --features ci-build-sdl3"),
         "CI should smoke-run tiled-demo"
     );
+    assert!(
+        ci.contains("examples/tiled-demo/assets"),
+        "CI should smoke-run tiled-demo against its own assets"
+    );
+    assert!(
+        ci.contains("examples/data-driven-tiled-demo/assets"),
+        "CI should smoke-run data-driven-tiled-demo against its own assets"
+    );
+
+    let release_check = fs::read_to_string(root.join("crates/game-cli/src/lib.rs"))
+        .expect("failed to read game-cli");
+    for required in [
+        "GAME_ASSET_DIR=examples/tiled-demo/assets",
+        "GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets",
+    ] {
+        assert!(
+            release_check.contains(required),
+            "release-check smoke command should include {required:?}"
+        );
+    }
 }
 
 #[test]
@@ -642,14 +680,20 @@ fn data_driven_tiled_demo_stays_data_only_and_uses_tiled_maps() {
 
     let cookbook = fs::read_to_string(root.join("docs/cookbook/tiled.md"))
         .expect("failed to read Tiled cookbook");
-    assert!(cookbook.contains("cargo run -p data-driven-tiled-demo"));
-    assert!(cookbook.contains("No-Rust Data File"));
+    assert!(cookbook.contains("Tiled no-Rust"));
+    assert!(cookbook.contains(
+        "GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo"
+    ));
 
     let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
         .expect("failed to read CI workflow");
     assert!(
         ci.contains("cargo run -p data-driven-tiled-demo --locked --features ci-build-sdl3"),
         "CI should smoke-run the data-driven Tiled demo"
+    );
+    assert!(
+        ci.contains("examples/data-driven-tiled-demo/assets"),
+        "CI should smoke-run the data-driven Tiled demo against its own assets"
     );
 }
 
@@ -815,15 +859,19 @@ fn generated_templates_are_ci_checked_and_release_pinned() {
             .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
         assert!(
             source.contains(
-                r#"default = '{ git = "https://github.com/P2949/game", rev = "b7fa6a3dc01d185312cf0e714b5efa10201578c6", package = "game-starter" }'"#
+                r#"default = '{ git = "https://github.com/P2949/game", tag = "v0.2.0", package = "game-starter" }'"#
             ),
-            "{relative} should pin release-generated projects to a reproducible git revision"
+            "{relative} should pin release-generated projects to the release tag"
         );
         assert!(
             !source.contains(
                 r#"default = '{ git = "https://github.com/P2949/game", package = "game-starter" }'"#
             ),
             "{relative} must not default to the moving git branch"
+        );
+        assert!(
+            !source.contains("rev ="),
+            "{relative} should not use the release-candidate revision after tag selection"
         );
     }
 
@@ -880,9 +928,10 @@ fn distribution_policy_keeps_release_candidate_model_explicit() {
         .expect("failed to read distribution policy");
 
     for required in [
-        "Release-candidate templates pin",
-        "specific git revision",
-        "release tag",
+        "release-tag prep",
+        "intended release tag",
+        "v0.2.0",
+        "must be created and pushed",
         "cargo xtask new-demo",
         "Prebuilt demo zips",
         "Vulkan-capable GPU/driver",
@@ -899,8 +948,8 @@ fn distribution_policy_keeps_release_candidate_model_explicit() {
 
     let readme = fs::read_to_string(root.join("README.md")).expect("failed to read README");
     for required in [
-        "Generated projects are pinned to release tags",
-        "release-candidate templates pin a specific git revision",
+        "current release-prep templates pin the intended `v0.2.0`",
+        "The tag still needs to",
         "cargo xtask new-demo",
         "distribution policy",
     ] {
@@ -913,7 +962,7 @@ fn distribution_policy_keeps_release_candidate_model_explicit() {
     let checklist = fs::read_to_string(root.join("docs/release-checklist.md"))
         .expect("failed to read release checklist");
     for required in [
-        "generated-template dependency pins updated for this release tag",
+        "generated-template dependency pins target the intended release tag",
         "`CHANGELOG.md` updated",
         "migration docs in `docs/migrations/` updated",
         "generated-template CI is green",
@@ -1160,6 +1209,14 @@ fn standalone_beginner_cli_is_documented_and_xtask_wrapped() {
         "game-dev asset-check",
         "game-dev validate-data assets/game.ron",
         "Rule `projectiles_damage_enemies` needs the `projectiles` rule",
+        "restart required",
+        ".object(\"Slime\", \"slime\")",
+        "objects: {\"Slime\": \"slime\"}",
+        "game-starter",
+        "git tag",
+        "git rev",
+        "ci-build-sdl3",
+        "GAME_ASSET_DIR=examples/tiled-demo/assets",
     ] {
         assert!(
             common_errors.contains(required),
@@ -1764,6 +1821,9 @@ fn beginner_entry_docs_keep_three_tracks_and_copy_list_clear() {
             "examples/one-file-demo",
             "examples/script-like-custom-rules",
             "examples/events-demo",
+            "Tiled no-Rust",
+            "examples/data-driven-tiled-demo",
+            "Tiled Rust",
             "examples/tiled-demo",
             "crates/testbed-content",
             "do not copy first",
@@ -1777,6 +1837,15 @@ fn beginner_entry_docs_keep_three_tracks_and_copy_list_clear() {
         assert!(
             !source.contains("Track D:"),
             "{relative} should keep the entry path to three tracks"
+        );
+    }
+
+    let tiled_cookbook = fs::read_to_string(root.join("docs/cookbook/tiled.md"))
+        .expect("failed to read Tiled cookbook");
+    for required in ["Tiled Rust", "Tiled no-Rust"] {
+        assert!(
+            tiled_cookbook.contains(required),
+            "Tiled cookbook should preserve the {required:?} path label"
         );
     }
 }

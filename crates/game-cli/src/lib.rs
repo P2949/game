@@ -10,7 +10,8 @@ use fontdue::{Font, FontSettings};
 use image::ImageReader;
 use walkdir::WalkDir;
 
-const RELEASE_GAME_STARTER_DEPENDENCY: &str = r#"{ git = "https://github.com/P2949/game", rev = "b7fa6a3dc01d185312cf0e714b5efa10201578c6", package = "game-starter" }"#;
+const RELEASE_GAME_STARTER_DEPENDENCY: &str =
+    r#"{ git = "https://github.com/P2949/game", tag = "v0.2.0", package = "game-starter" }"#;
 
 struct TemplateFile {
     path: &'static str,
@@ -562,12 +563,25 @@ fn run_smoke_release_checks(workspace: &Path, features: &[String]) -> Result<()>
     let mut tiled = Command::new("cargo");
     tiled
         .args(["run", "-p", "tiled-demo", "--locked"])
+        .env("GAME_ASSET_DIR", "examples/tiled-demo/assets")
         .env("GAME_SMOKE_FRAMES", "60")
         .current_dir(workspace);
     add_features(&mut tiled, features);
     run_command(
         &mut tiled,
-        "GAME_SMOKE_FRAMES=60 cargo run -p tiled-demo --locked",
+        "GAME_ASSET_DIR=examples/tiled-demo/assets GAME_SMOKE_FRAMES=60 cargo run -p tiled-demo --locked",
+    )?;
+
+    let mut data_driven_tiled = Command::new("cargo");
+    data_driven_tiled
+        .args(["run", "-p", "data-driven-tiled-demo", "--locked"])
+        .env("GAME_ASSET_DIR", "examples/data-driven-tiled-demo/assets")
+        .env("GAME_SMOKE_FRAMES", "60")
+        .current_dir(workspace);
+    add_features(&mut data_driven_tiled, features);
+    run_command(
+        &mut data_driven_tiled,
+        "GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets GAME_SMOKE_FRAMES=60 cargo run -p data-driven-tiled-demo --locked",
     )
 }
 

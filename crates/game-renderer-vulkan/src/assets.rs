@@ -164,6 +164,15 @@ struct AssetRootCandidate {
 fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
     let mut candidates = Vec::new();
 
+    let current_assets = std::env::current_dir()
+        .context("failed to resolve current directory")?
+        .join("assets");
+    candidates.push(AssetRootCandidate {
+        description: format!("current working directory {}", current_assets.display()),
+        path: current_assets,
+        is_debug_fallback: false,
+    });
+
     let exe = std::env::current_exe().context("failed to resolve current executable path")?;
     if let Some(exe_dir) = exe.parent() {
         for directory in exe_dir.ancestors() {
@@ -175,15 +184,6 @@ fn asset_root_candidates() -> anyhow::Result<Vec<AssetRootCandidate>> {
             });
         }
     }
-
-    let current_assets = std::env::current_dir()
-        .context("failed to resolve current directory")?
-        .join("assets");
-    candidates.push(AssetRootCandidate {
-        description: format!("current working directory {}", current_assets.display()),
-        path: current_assets,
-        is_debug_fallback: false,
-    });
 
     if cfg!(debug_assertions) {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
@@ -243,7 +243,8 @@ fn builtin_font_path_with_debug_fallback(
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_root_from_override, builtin_font_path_with_debug_fallback, validate_builtin_assets,
+        asset_root_candidates, asset_root_from_override, builtin_font_path_with_debug_fallback,
+        validate_builtin_assets,
     };
     use std::fs;
     use std::path::Path;
@@ -255,6 +256,17 @@ mod tests {
 
         let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("does-not-exist");
         assert!(asset_root_from_override(missing).is_err());
+    }
+
+    #[test]
+    fn current_directory_assets_take_precedence_over_executable_ancestors() {
+        let candidates = asset_root_candidates().unwrap();
+        assert!(
+            candidates.first().is_some_and(|candidate| candidate
+                .description
+                .starts_with("current working directory")),
+            "current working directory assets should be considered before executable ancestors"
+        );
     }
 
     #[test]

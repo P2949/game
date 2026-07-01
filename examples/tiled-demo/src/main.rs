@@ -2,12 +2,9 @@ use game_starter::prelude::*;
 
 fn main() -> Result<()> {
     run_game("Tiled Demo", |game| {
-        game.asset_bag()
-            .texture("player", "textures/test.png")?
-            .texture("slime", "textures/test.png")?
-            .texture("floor", "textures/test.png")?
-            .texture("wall", "textures/test.png")?
-            .sound("hit", "sounds/hit.wav")?
+        game.assets_from_folders()
+            .required_textures(["player", "slime", "floor", "wall"])?
+            .required_sounds(["hit"])?
             .build();
         let controls = game.input(|input| input.top_down_controls())?;
 

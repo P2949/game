@@ -73,9 +73,19 @@ For a larger no-Rust reference, see `examples/data-driven-full-demo`. Its
 `assets/game.ron` includes doors, projectiles, spawners, checkpoints, music,
 player shooting, enemy drops, and a countdown custom rule.
 
-For visual TMX maps without Rust setup code, run `cargo run -p
-data-driven-tiled-demo`. For the equivalent beginner Rust API, run `cargo run
--p tiled-demo` and read the [Tiled cookbook](../cookbook/tiled.md).
+For visual TMX maps without Rust setup code, use Tiled no-Rust:
+
+```bash
+GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo --locked
+```
+
+For the equivalent beginner Rust API, use Tiled Rust:
+
+```bash
+GAME_ASSET_DIR=examples/tiled-demo/assets cargo run -p tiled-demo --locked
+```
+
+Read the [Tiled cookbook](../cookbook/tiled.md) for both paths.
 
 For smaller focused references, copy:
 

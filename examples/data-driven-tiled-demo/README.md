@@ -4,8 +4,14 @@ This example is the no-Rust Tiled path: `src/main.rs` only loads
 `assets/game.ron`. The data file maps Tiled object identifiers to beginner
 prefabs and uses the normal top-down beginner rules.
 
-Run it from the workspace with:
+Run it from this folder with:
 
 ```bash
-cargo run -p data-driven-tiled-demo
+cargo run --locked
+```
+
+Run it from the workspace root with:
+
+```bash
+GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo --locked
 ```

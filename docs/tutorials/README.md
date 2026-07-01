@@ -29,14 +29,14 @@ using it as a beginner starting point.
 
 - **No Rust:** `templates/data-driven-demo`,
   `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
-  `examples/data-driven-projectiles-demo`,
-  `examples/data-driven-tiled-demo`
+  `examples/data-driven-projectiles-demo`
+- **Tiled no-Rust:** `examples/data-driven-tiled-demo`
 - **First Rust game:** `templates/simple-demo`
 - **One-file example:** `examples/one-file-demo`
 - **Full beginner feature sample:** `examples/no-rust-shapes-demo`
 - **Custom behavior:** `examples/script-like-custom-rules`
 - **Events:** `examples/events-demo`
-- **Tiled:** `examples/tiled-demo`
+- **Tiled Rust:** `examples/tiled-demo`
 - **Advanced lab:** `crates/testbed-content` - do not copy first
 
 ## Beginner Rust Course

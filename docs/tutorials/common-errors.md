@@ -114,6 +114,61 @@ Run the setup command first for SDL3, Vulkan, shader compiler, or audio
 prerequisite errors. Run the asset/data commands first for missing files,
 unknown prefab names, bad map symbols, or `assets/game.ron` validation errors.
 
+SDL3 fails while building from source
+
+Normal local source builds use the system SDL3 development libraries checked by
+`game-dev doctor --explain`. CI and generated-template checks can opt into the
+source-built SDL3 path with `ci-build-sdl3`, which is useful for reproducible
+automation but needs build tools such as CMake and Ninja.
+
+From a generated project:
+
+```bash
+cargo check --features ci-build-sdl3
+game-dev check --features ci-build-sdl3
+```
+
+If the source-build path fails before your game code compiles, check
+CMake/Ninja/build dependency errors first.
+
+Cargo cannot fetch or find `game-starter`
+
+Generated projects depend on `game-starter` through a pinned Git dependency.
+That pin is intentional: it keeps a project reproducible instead of following a
+moving branch. If Cargo cannot fetch it, check the network error first, then
+retry the dependency update:
+
+```bash
+cargo update -p game-starter
+```
+
+Release-candidate templates may use a `git rev` pin. Tagged releases should use
+a `git tag` pin. If an old generated project is stuck on an earlier release tag
+or revision, regenerate from the current template or update the dependency line
+deliberately:
+
+```bash
+cargo generate --git https://github.com/P2949/game templates/simple-demo --name my-game
+```
+
+When you are developing against a local checkout of this repository, prefer the
+xtask helper so the generated demo uses a local path dependency instead of a Git
+pin:
+
+```bash
+cargo xtask new-demo /tmp/my-local-demo
+```
+
+F5 says restart required
+
+F5 can reload existing values and files attached to existing names: edited text
+maps, tuning values, registered textures and sounds, and supported existing
+`assets/game.ron` entries. Adding, removing, or reordering assets, prefabs,
+maps, actions, scenes, rules, or custom rule names changes the startup shape of
+the game and requires a restart. This is intentional for 1.0.
+
+See [Fast iteration](12-fast-iteration.md) for the full reload table.
+
 Rule `projectiles_damage_enemies` needs the `projectiles` rule
 
 Add the projectile rules preset before the damage rule:
@@ -201,6 +256,23 @@ game.asset_bag()
     .build();
 ```
 
+For self-contained Tiled examples, these can also mean the demo is running from
+the repository root while looking at the wrong `assets/` folder:
+
+```text
+Missing texture asset 'player'
+Missing texture asset 'slime'
+Missing texture asset 'floor'
+Missing texture asset 'wall'
+```
+
+Point `GAME_ASSET_DIR` at that example's assets folder:
+
+```bash
+GAME_ASSET_DIR=examples/tiled-demo/assets cargo run -p tiled-demo
+GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo
+```
+
 `Map 'level_1' uses symbol 'X' but no legend was registered`
 
 Add a legend for every non-`.`/`#` character in a text map:
@@ -248,6 +320,24 @@ Put a `P` in the map and connect it to the player prefab:
 ```
 
 Then put a `P` in the text-map file itself.
+
+Tiled object maps to the wrong prefab
+
+If the Tiled object has class, type, or name `"Slime"` but Rust or `game.ron`
+maps it to `"slmie"`, the importer cannot spawn the prefab you meant. Fix
+either the prefab name or the object mapping so both sides use the same key.
+
+Rust Tiled mapping:
+
+```rust
+.object("Slime", "slime")
+```
+
+No-Rust `game.ron` mapping:
+
+```ron
+objects: {"Slime": "slime"}
+```
 
 `Sound file '...' uses unsupported format`
 

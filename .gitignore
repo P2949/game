@@ -9,6 +9,7 @@
 /.cursor
 /.codex
 /.agents
+/plans
 
 # OS noise
 .DS_Store
