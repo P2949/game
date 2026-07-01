@@ -36,6 +36,7 @@ facade internals, and tests; the grouped escape hatch for those internals is
 `game_core::internal_prelude`, not a content API. This is the achieved content
 foundation: content code talks to `game-kit`, not to
 runtime/backend/registry/schedule internals.
+The maintained public layer contract is in [api-boundary.md](api-boundary.md).
 
 ## Main Loop
 
@@ -100,11 +101,20 @@ loaders attach exact path context. The runtime also validates renderer built-in 
 
 ## Audio Mixer
 
-The SDL audio callback drains generated play commands from a bounded lock-free
-queue and mixes generated tones into an f32 stream. Content requests generated
-sound effects through `assets.generated_sound(..)`. File-backed loading,
-decoding, resampling, and game-kit exposure are intentionally not implemented
-yet.
+The SDL audio callback drains play commands from a bounded queue and mixes
+generated tones, file-backed sounds, and music into an f32 stream. Generated
+tones still exist for placeholders and tests. File-backed WAV sound effects are
+supported by default; OGG Vorbis and MP3 decoding are available where their
+features are enabled. Long music can stream from supported PCM16 WAV files
+through a bounded background reader. The mixer remains backend-owned: content
+sees named sound and music operations through `game-kit`, not SDL callback,
+decoder, or streaming internals.
+
+If too many sounds are requested at once, the mixer drops new requests at its
+voice cap instead of growing realtime callback work without bound. The runtime
+polls that counter on the main thread and logs a warning with the dropped count
+and cap. Beginner content should avoid firing sound effects every frame; gate
+repeated sounds behind input edges, cooldowns, animation events, or rule timers.
 
 ## Current Limitations
 

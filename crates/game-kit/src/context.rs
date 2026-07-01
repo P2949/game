@@ -283,7 +283,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     }
 
     /// Deferred runtime commands applied after the current step: despawn, play
-    /// sound, spawn prefab, and map flow commands.
+    /// sound, spawn prefab, and runtime housekeeping commands.
     pub fn commands(&mut self) -> Commands<'_> {
         Commands {
             queue: self.inner.world.resource_or_insert_with(CommandQueue::new),
@@ -705,7 +705,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         self.commands().reload_assets();
     }
 
-    /// Re-reads the tuning file registered with [`GameApp::tuning_from_file`](crate::GameApp::tuning_from_file).
+    /// Re-reads the tuning file registered with [`GameApp::tuning_from_file`](crate::app::GameApp::tuning_from_file).
     ///
     /// This updates the values used by future authoring/reload-aware spawns;
     /// values already copied into existing entity components intentionally stay
@@ -742,7 +742,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 
     pub fn change_map(&mut self, map: &str) -> Result<()> {
         let map_id = change_to_map_world(self.inner.world, map)?;
-        self.commands().change_map(map_id);
+        self.commands().queue_active_map_change_unchecked(map_id);
         Ok(())
     }
 
@@ -852,7 +852,9 @@ impl Commands<'_> {
         self.queue.spawn_prefab(prefab, position, properties);
     }
 
-    pub fn change_map(&mut self, map: game_core::builder::MapId) {
+    /// Queues the runtime active-map switch after `ContentRuntime` and world
+    /// spawning have already been updated by `GameCtx::change_map`.
+    pub(crate) fn queue_active_map_change_unchecked(&mut self, map: game_core::builder::MapId) {
         self.queue.change_map(map);
     }
 

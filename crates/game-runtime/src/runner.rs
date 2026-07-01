@@ -13,7 +13,8 @@ use game_core::backend::{AudioBackend, PlatformBackend, RenderBackend, RenderOut
 use game_core::builder::{GameBuilder, MapId, MapRegistry, PrefabRegistry, RuntimeContent};
 use game_core::camera::Camera2D;
 use game_core::commands::{
-    AssetReloadRequest, AssetReloadStatus, Command, CommandQueue, MapReload,
+    AssetReloadRequest, AssetReloadStatus, Command, CommandError, CommandErrorKind, CommandErrors,
+    CommandQueue, MapReload,
 };
 use game_core::gfx::Gfx;
 use game_core::input::{ActionId, Input, InputRegistry};
@@ -39,12 +40,21 @@ use crate::fixed_timestep::FixedTimestep;
 const RESIZE_IDLE_SLEEP: Duration = Duration::from_millis(16);
 const LAG_WARNING_INTERVAL: Duration = Duration::from_secs(1);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandErrorPolicy {
+    LogAndContinue,
+    StoreResource,
+    PanicInDebug,
+    ReturnError,
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     title: String,
     width: u32,
     height: u32,
     sim_hz: f64,
+    command_error_policy: CommandErrorPolicy,
 }
 
 impl RuntimeConfig {
@@ -63,6 +73,11 @@ impl RuntimeConfig {
         self.sim_hz = sim_hz;
         self
     }
+
+    pub fn command_error_policy(mut self, policy: CommandErrorPolicy) -> Self {
+        self.command_error_policy = policy;
+        self
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -72,6 +87,7 @@ impl Default for RuntimeConfig {
             width: 1280,
             height: 720,
             sim_hz: 120.0,
+            command_error_policy: CommandErrorPolicy::StoreResource,
         }
     }
 }
@@ -95,6 +111,7 @@ pub struct Runner<P, R, A> {
     timestep: FixedTimestep,
     camera: Camera2D,
     world: World,
+    command_error_policy: CommandErrorPolicy,
     pending_pressed: HashSet<ActionId>,
     last_lag_warning: Option<Instant>,
 }
@@ -142,6 +159,7 @@ where
             timestep: FixedTimestep::new(config.sim_hz),
             camera: Camera2D::new(glam::Vec2::ZERO, 1.0),
             world,
+            command_error_policy: config.command_error_policy,
             pending_pressed: HashSet::new(),
             last_lag_warning: None,
         })
@@ -200,17 +218,19 @@ where
                 };
                 self.schedule.run_fixed(&mut ctx, dt);
             }
-            if process_core_commands(
+            let outcome = process_core_commands(
                 &mut self.world,
                 &self.prefabs,
                 &mut self.maps,
                 self.start_map,
                 &mut self.active_map,
                 &mut audio_commands,
-            ) {
+            );
+            self.handle_command_errors(&outcome.errors)?;
+            if outcome.quit {
                 self.platform.request_quit();
             }
-            self.reload_assets_if_requested();
+            self.reload_assets_if_requested()?;
             steps += 1;
         }
 
@@ -229,17 +249,19 @@ where
             self.schedule.run_render_extract(&mut ctx, frame_dt);
             self.schedule.run_ui(&mut ctx, frame_dt);
         }
-        if process_core_commands(
+        let outcome = process_core_commands(
             &mut self.world,
             &self.prefabs,
             &mut self.maps,
             self.start_map,
             &mut self.active_map,
             &mut audio_commands,
-        ) {
+        );
+        self.handle_command_errors(&outcome.errors)?;
+        if outcome.quit {
             self.platform.request_quit();
         }
-        self.reload_assets_if_requested();
+        self.reload_assets_if_requested()?;
 
         if self.timestep.step_ready() {
             let now = Instant::now();
@@ -325,9 +347,9 @@ where
         self.audio.as_ref()
     }
 
-    fn reload_assets_if_requested(&mut self) {
+    fn reload_assets_if_requested(&mut self) -> Result<()> {
         if self.world.remove_resource::<AssetReloadRequest>().is_none() {
-            return;
+            return Ok(());
         }
 
         match self.renderer.reload_textures(&self.assets.texture_loads()) {
@@ -341,7 +363,14 @@ where
                                 log::error!("sound reload failed: {error:#}");
                                 self.world
                                     .insert_resource(AssetReloadStatus::failed(message));
-                                return;
+                                self.handle_command_errors(&[CommandError {
+                                    kind: CommandErrorKind::ReloadAssets,
+                                    message: format!(
+                                        "sound reload failed: {}",
+                                        first_error_line(&error)
+                                    ),
+                                }])?;
+                                return Ok(());
                             }
                         }
                     }
@@ -351,14 +380,23 @@ where
                 log::info!("asset reload: {message}");
                 self.world
                     .insert_resource(AssetReloadStatus::succeeded(message));
+                Ok(())
             }
             Err(error) => {
                 let message = first_error_line(&error);
                 log::error!("asset reload failed: {error:#}");
                 self.world
-                    .insert_resource(AssetReloadStatus::failed(message));
+                    .insert_resource(AssetReloadStatus::failed(message.clone()));
+                self.handle_command_errors(&[CommandError {
+                    kind: CommandErrorKind::ReloadAssets,
+                    message: format!("asset reload failed: {message}"),
+                }])
             }
         }
+    }
+
+    fn handle_command_errors(&mut self, errors: &[CommandError]) -> Result<()> {
+        apply_command_error_policy(&mut self.world, self.command_error_policy, errors)
     }
 }
 
@@ -444,6 +482,11 @@ impl ActiveMap {
     }
 }
 
+struct CommandProcessOutcome {
+    quit: bool,
+    errors: Vec<CommandError>,
+}
+
 fn process_core_commands(
     world: &mut World,
     prefabs: &PrefabRegistry,
@@ -451,13 +494,14 @@ fn process_core_commands(
     start_map: MapId,
     active_map: &mut ActiveMap,
     audio_commands: &mut AudioCommands,
-) -> bool {
+) -> CommandProcessOutcome {
     let commands = world
         .get_resource_mut::<CommandQueue>()
         .map(|queue| queue.drain().collect::<Vec<_>>())
         .unwrap_or_default();
 
     let mut quit = false;
+    let mut errors = Vec::new();
     for command in commands {
         match command {
             Command::Despawn(entity) => world.despawn(entity),
@@ -475,12 +519,20 @@ fn process_core_commands(
                 properties,
             } => {
                 if let Err(error) = prefabs.spawn(prefab, world, position, &properties) {
-                    log::error!("failed to spawn prefab command {:?}: {error:?}", prefab);
+                    record_command_error(
+                        &mut errors,
+                        CommandErrorKind::SpawnPrefab,
+                        format!("failed to spawn prefab command {prefab:?}: {error}"),
+                    );
                 }
             }
             Command::ChangeMap(map) => {
                 if let Err(error) = active_map.switch_to(maps, map) {
-                    log::error!("failed to change active map to {:?}: {error:?}", map);
+                    record_command_error(
+                        &mut errors,
+                        CommandErrorKind::ChangeMap,
+                        format!("failed to change active map to {map:?}: {error}"),
+                    );
                 }
             }
             Command::Quit => quit = true,
@@ -491,17 +543,32 @@ fn process_core_commands(
                         if let Err(error) =
                             maps.replace(map, reload.data.tilemap, reload.data.theme)
                         {
-                            log::error!("failed to replace reloaded map {:?}: {error:?}", map);
+                            record_command_error(
+                                &mut errors,
+                                CommandErrorKind::ReloadMap,
+                                format!("failed to replace reloaded map {map:?}: {error}"),
+                            );
                         } else if let Err(error) = active_map.switch_to(maps, map) {
-                            log::error!("failed to activate reloaded map {:?}: {error:?}", map);
+                            record_command_error(
+                                &mut errors,
+                                CommandErrorKind::ReloadMap,
+                                format!("failed to activate reloaded map {map:?}: {error}"),
+                            );
                         }
                     }
-                    Some(reload) => log::error!(
-                        "discarding reload data for {:?}; command requested {:?}",
-                        reload.map,
-                        map
+                    Some(reload) => record_command_error(
+                        &mut errors,
+                        CommandErrorKind::ReloadMap,
+                        format!(
+                            "discarding reload data for {:?}; command requested {:?}",
+                            reload.map, map
+                        ),
                     ),
-                    None => log::error!("map reload for {:?} had no replacement data", map),
+                    None => record_command_error(
+                        &mut errors,
+                        CommandErrorKind::ReloadMap,
+                        format!("map reload for {map:?} had no replacement data"),
+                    ),
                 }
             }
             Command::ReloadAssets => {
@@ -511,17 +578,84 @@ fn process_core_commands(
             Command::RestartMap => {
                 let map = active_map.id;
                 if let Err(error) = active_map.switch_to(maps, map) {
-                    log::error!("failed to restart active map {:?}: {error:?}", map);
+                    record_command_error(
+                        &mut errors,
+                        CommandErrorKind::RestartMap,
+                        format!("failed to restart active map {map:?}: {error}"),
+                    );
                 }
             }
             Command::RestartStartMap => {
                 if let Err(error) = active_map.switch_to(maps, start_map) {
-                    log::error!("failed to restart start map {:?}: {error:?}", start_map);
+                    record_command_error(
+                        &mut errors,
+                        CommandErrorKind::RestartStartMap,
+                        format!("failed to restart start map {start_map:?}: {error}"),
+                    );
                 }
             }
         }
     }
-    quit
+    CommandProcessOutcome { quit, errors }
+}
+
+fn record_command_error(
+    errors: &mut Vec<CommandError>,
+    kind: CommandErrorKind,
+    message: impl Into<String>,
+) {
+    errors.push(CommandError {
+        kind,
+        message: message.into(),
+    });
+}
+
+fn apply_command_error_policy(
+    world: &mut World,
+    policy: CommandErrorPolicy,
+    errors: &[CommandError],
+) -> Result<()> {
+    if errors.is_empty() {
+        return Ok(());
+    }
+
+    for error in errors {
+        log::error!("runtime command error: {}", error.message);
+    }
+
+    match policy {
+        CommandErrorPolicy::LogAndContinue => Ok(()),
+        CommandErrorPolicy::StoreResource => {
+            store_command_errors(world, errors);
+            Ok(())
+        }
+        CommandErrorPolicy::PanicInDebug if cfg!(debug_assertions) => {
+            panic!("runtime command error: {}", joined_command_errors(errors));
+        }
+        CommandErrorPolicy::PanicInDebug => {
+            store_command_errors(world, errors);
+            Ok(())
+        }
+        CommandErrorPolicy::ReturnError => {
+            store_command_errors(world, errors);
+            anyhow::bail!("runtime command error: {}", joined_command_errors(errors));
+        }
+    }
+}
+
+fn store_command_errors(world: &mut World, errors: &[CommandError]) {
+    let stored = world.resource_or_insert_with(CommandErrors::default);
+    for error in errors {
+        stored.push(error.kind.clone(), error.message.clone());
+    }
+}
+
+fn joined_command_errors(errors: &[CommandError]) -> String {
+    errors
+        .iter()
+        .map(|error| error.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn parse_smoke_frames() -> anyhow::Result<Option<u64>> {
@@ -537,7 +671,17 @@ fn parse_smoke_frames() -> anyhow::Result<Option<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_smoke_frames;
+    use super::{
+        ActiveMap, CommandErrorPolicy, apply_command_error_policy, parse_smoke_frames,
+        process_core_commands,
+    };
+    use game_core::app::TileTheme;
+    use game_core::audio::AudioCommands;
+    use game_core::backend::TextureHandle;
+    use game_core::builder::{MapId, MapRegistry, PrefabId, PrefabRegistry, PropertyBag};
+    use game_core::commands::{CommandErrors, CommandQueue};
+    use game_core::tilemap::TileMap;
+    use game_core::world::{Sprite, World};
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -578,5 +722,102 @@ mod tests {
             assert!(parse_smoke_frames().is_err(), "accepted {value:?}");
         }
         unsafe { std::env::remove_var("GAME_SMOKE_FRAMES") };
+    }
+
+    #[test]
+    fn command_error_policy_stores_resource_and_continues() {
+        let mut world = World::new();
+        let mut queue = CommandQueue::new();
+        queue.spawn_prefab(PrefabId(99), glam::Vec2::ZERO, PropertyBag::default());
+        world.insert_resource(queue);
+
+        let (mut maps, start_map, mut active_map) = test_maps();
+        let prefabs = PrefabRegistry::new();
+        let mut audio_commands = AudioCommands::default();
+
+        let outcome = process_core_commands(
+            &mut world,
+            &prefabs,
+            &mut maps,
+            start_map,
+            &mut active_map,
+            &mut audio_commands,
+        );
+
+        assert!(!outcome.quit);
+        assert_eq!(outcome.errors.len(), 1);
+        assert!(outcome.errors[0].message.contains("unknown prefab id"));
+
+        apply_command_error_policy(
+            &mut world,
+            CommandErrorPolicy::StoreResource,
+            &outcome.errors,
+        )
+        .unwrap();
+
+        let stored = world.get_resource::<CommandErrors>().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(stored.last().unwrap().message.contains("unknown prefab id"));
+    }
+
+    #[test]
+    fn command_error_policy_return_error_reports_all_errors() {
+        let mut world = World::new();
+        let mut queue = CommandQueue::new();
+        queue.spawn_prefab(PrefabId(7), glam::Vec2::ZERO, PropertyBag::default());
+        queue.change_map(MapId(99));
+        world.insert_resource(queue);
+
+        let (mut maps, start_map, mut active_map) = test_maps();
+        let prefabs = PrefabRegistry::new();
+        let mut audio_commands = AudioCommands::default();
+
+        let outcome = process_core_commands(
+            &mut world,
+            &prefabs,
+            &mut maps,
+            start_map,
+            &mut active_map,
+            &mut audio_commands,
+        );
+
+        assert_eq!(outcome.errors.len(), 2);
+
+        let error = apply_command_error_policy(
+            &mut world,
+            CommandErrorPolicy::ReturnError,
+            &outcome.errors,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("unknown prefab id PrefabId(7)"));
+        assert!(error.contains("map MapId(99) is not registered"));
+
+        let stored = world.get_resource::<CommandErrors>().unwrap();
+        assert_eq!(stored.len(), 2);
+    }
+
+    #[test]
+    fn runtime_config_sets_command_error_policy() {
+        let config =
+            super::RuntimeConfig::default().command_error_policy(CommandErrorPolicy::ReturnError);
+
+        assert_eq!(config.command_error_policy, CommandErrorPolicy::ReturnError);
+    }
+
+    fn test_maps() -> (MapRegistry, MapId, ActiveMap) {
+        let mut maps = MapRegistry::new();
+        let sprite = Sprite::new(TextureHandle(0), glam::Vec2::splat(16.0));
+        let start_map = maps.register(
+            "test",
+            TileMap::from_rows(&["."], 16.0),
+            TileTheme {
+                floor: sprite,
+                wall: sprite,
+            },
+        );
+        let active_map = ActiveMap::load(&maps, start_map).unwrap();
+        (maps, start_map, active_map)
     }
 }

@@ -1,6 +1,6 @@
 //! Beginner debug overlay helpers.
 
-use game_core::commands::AssetReloadStatus;
+use game_core::commands::{AssetReloadStatus, CommandErrors};
 use glam::{vec2, vec4};
 
 use crate::beginner::actors::{Enemy, Name, Player};
@@ -95,6 +95,15 @@ pub fn draw_debug_overlay(game: &mut GameCtx<'_, '_>, dt: f32) {
     if let Some(status) = game.resource::<AssetReloadStatus>() {
         lines.push(format!("asset reload: {}", status.message));
     }
+    if let Some(error) = game
+        .resource::<CommandErrors>()
+        .and_then(CommandErrors::last)
+    {
+        lines.push(format!(
+            "Runtime command error: {}",
+            error.message.lines().next().unwrap_or("unknown error")
+        ));
+    }
     lines.push(format!(
         "entities: {}",
         game.entities_with::<game_core::world::Transform>().len()
@@ -148,6 +157,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
 mod tests {
     use crate::app::{GameApp, GamePlugin};
     use crate::harness::GameTestHarness;
+    use game_core::commands::{CommandErrorKind, CommandErrors};
 
     struct DebugPlugin;
 
@@ -176,5 +186,20 @@ mod tests {
         game.assert_ui_contains("F5: reload text map + tuning + assets");
         game.assert_ui_contains("assets: 2 loaded");
         game.assert_ui_contains("last reload: not reloaded yet");
+    }
+
+    #[test]
+    fn overlay_reports_runtime_command_errors() {
+        let mut game = GameTestHarness::from_plugin(DebugPlugin).unwrap();
+        let mut errors = CommandErrors::default();
+        errors.push(
+            CommandErrorKind::ChangeMap,
+            "failed to change active map to MapId(7): unknown map id",
+        );
+        game.world_mut().insert_resource(errors);
+
+        game.frame(1.0 / 60.0);
+
+        game.assert_ui_contains("Runtime command error: failed to change active map");
     }
 }

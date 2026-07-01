@@ -1,7 +1,7 @@
 //! System adapters (Phase 9).
 //!
 //! These traits let content register plain `fn(&mut GameCtx, f32)` /
-//! `fn(&mut StartupGameCtx) -> Result<()>` systems through [`crate::GameApp`],
+//! `fn(&mut StartupGameCtx) -> Result<()>` systems through [`crate::app::GameApp`],
 //! which wraps the engine's raw `Ctx`/`StartCtx` for them. Content never imports
 //! `Schedule` or the engine `System` types.
 

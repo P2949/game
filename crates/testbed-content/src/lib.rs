@@ -19,8 +19,8 @@ use game_kit::advanced::prelude::*;
 
 pub struct TestbedPlugin;
 
-pub fn plugin() -> game_kit::Plugin<TestbedPlugin> {
-    game_kit::plugin(TestbedPlugin)
+pub fn plugin() -> game_kit::app::Plugin<TestbedPlugin> {
+    game_kit::app::plugin(TestbedPlugin)
 }
 
 impl GamePlugin for TestbedPlugin {

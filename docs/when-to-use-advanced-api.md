@@ -3,6 +3,7 @@
 Most demos should stay with the beginner API or `assets/game.ron`. Use the
 advanced API only when the game idea needs lower-level control that the
 beginner vocabulary cannot express.
+For the exact public API boundary, see [api-boundary.md](api-boundary.md).
 
 ## Stay beginner for normal demos
 

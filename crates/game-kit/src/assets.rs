@@ -148,7 +148,7 @@ impl IntoSoundRef for String {
     }
 }
 
-/// Runtime key-to-handle lookup installed by [`crate::GameApp`]. It lets
+/// Runtime key-to-handle lookup installed by [`crate::app::GameApp`]. It lets
 /// beginner systems play registered sounds by name without exposing the asset
 /// registry or carrying an `AssetBag` into every callback.
 #[derive(Clone, Debug, Default)]

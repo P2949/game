@@ -56,7 +56,7 @@ impl GameTestHarness {
     ///
     /// Typical content tests should still prefer [`Self::from_plugin`]. This
     /// helper deliberately accepts the already-wrapped core plugin returned by
-    /// [`crate::plugin`] / [`crate::plugin_fn`], so the caller can choose any
+    /// [`crate::app::plugin`] / [`crate::app::plugin_fn`], so the caller can choose any
     /// runtime implementation without a reverse dependency from this crate.
     pub fn build_runtime<T>(
         content: impl CoreGamePlugin,
@@ -373,7 +373,7 @@ impl GameTestHarness {
     }
 
     /// Resets the simulated world through the same content-runtime path as
-    /// [`GameCtx::reset_to_start_map`](crate::GameCtx::reset_to_start_map).
+    /// [`GameCtx::reset_to_start_map`](crate::context::GameCtx::reset_to_start_map).
     pub fn reset_to_start_map(&mut self) -> Result<()> {
         reset_to_start_map_world(&mut self.world)?;
         self.switch_active_map(self.start_map);

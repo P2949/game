@@ -17,7 +17,7 @@ pub(crate) struct AnimationFinishedRecord {
     pub(crate) name: String,
 }
 
-/// Runtime queue used by [`crate::GameApp::on_animation_finished`].
+/// Runtime queue used by [`crate::app::GameApp::on_animation_finished`].
 #[derive(Default)]
 pub(crate) struct AnimationFinishedEvents {
     next_sequence: u64,

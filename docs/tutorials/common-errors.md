@@ -94,6 +94,13 @@ runs `cargo check`. If the final compiler error mentions SDL3, Vulkan, or
 `glslc`, fix the first setup problem reported by the doctor before changing
 game code.
 
+`game-dev doctor` is advisory: it prints setup guidance and returns success
+unless the command itself crashes. `game-dev check` is the hard gate. It fails
+when the current directory cannot be read, `assets/` is missing, assets contain
+invalid or unknown files, optional `assets/game.ron` is invalid, or
+`cargo check` fails. Vulkan, audio, validation-layer, and optional-tool problems
+are setup warnings for this command unless the requested cargo check needs them.
+
 `game-dev run` or `game-dev package` fails
 
 The helper prints this checklist:
@@ -216,6 +223,11 @@ game.player_prefab("player")
 .spawn("player_start", "player", cell(1, 1))
 ```
 
+Prefab names are exact and case-sensitive. If a diagnostic says
+`Did you mean 'player'?`, fix the typo in the map legend, Tiled object mapping,
+door/spawner target, or data-file object mapping instead of adding another
+nearly identical prefab.
+
 `multiple start maps`
 
 Only one map should call `.start()`. Other maps should call `.finish()`.
@@ -238,6 +250,17 @@ game.assets_from_folders()
     .texture("player")?
     .sound("hit")?
     .build();
+```
+
+`unknown asset file 'assets/textures/player.pgn'`
+
+`game-dev asset-check`, `game-dev check`, and `game-dev package` fail on files
+with unknown runtime extensions so typos do not get silently packaged. Fix the
+extension or move notes/source files outside `assets/`. For common typos the
+message suggests the likely extension:
+
+```text
+Did you mean '.png'?
 ```
 
 `Missing texture asset 'player'`
@@ -321,6 +344,13 @@ Put a `P` in the map and connect it to the player prefab:
 
 Then put a `P` in the text-map file itself.
 
+`unknown map 'levle_2'`
+
+Map transition names are exact. Check the string passed to `.change_map(...)`,
+`.go_to_map(...)`, a door prefab, or `assets/game.ron` against the names passed
+to `game.map("level_2")` / `game.map_from_text("level_2", ...)`. Fix the typo
+at the caller; do not try to switch maps with raw map IDs.
+
 Tiled object maps to the wrong prefab
 
 If the Tiled object has class, type, or name `"Slime"` but Rust or `game.ron`
@@ -366,6 +396,14 @@ game.audio().play_music("theme").volume(0.4);
 Use `set_master_volume`, `set_sfx_volume`, and `set_music_volume` for global
 mix levels. `fade_music_to`, `pause_music`, and `resume_music` control the
 current music track without touching raw audio handles.
+
+Too many sounds play in one frame
+
+The audio mixer has a voice cap. If code starts a sound every frame or several
+rules all spam the same sound at once, new play requests can be dropped and the
+runtime logs a warning with the dropped count and cap. Gate sounds on events
+such as collect/hit/death, add a short cooldown, or use looping music for
+continuous audio.
 
 ## Data-file errors
 
@@ -483,7 +521,26 @@ Enable map-changing door behavior:
 game.rules().doors_change_maps().build();
 ```
 
-## Rust compiler errors from advanced code
+## Advanced Path: Rust Compiler Errors From Advanced Code
+
+`Query`, `ResMut`, `Transform`, or `Collider` is not found
+
+Beginner tutorials should import:
+
+```rust
+use game_kit::beginner::prelude::*;
+```
+
+Standalone generated games usually import:
+
+```rust
+use game_starter::prelude::*;
+```
+
+Use `game_kit::advanced::prelude::*` only when you intentionally need custom
+tuple prefabs, typed query parameters, raw ECS/world inspection in tests, or an
+engine-facing experiment. For normal player/enemy/pickup/door behavior, stay on
+beginner prefabs, rules, hooks, and `assets/game.ron`.
 
 `the ? operator can only be used`
 

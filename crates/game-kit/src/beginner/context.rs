@@ -139,9 +139,19 @@ impl<'g, 'a, 'w> Game<'g, 'a, 'w> {
         self.ctx.change_map(map)
     }
 
+    /// Game-shaped alias for [`Self::change_map`].
+    pub fn go_to_map(&mut self, map: &str) -> Result<()> {
+        self.change_map(map)
+    }
+
     /// Changes to a named map, logging any failure.
     pub fn change_map_or_log(&mut self, map: &str) {
         self.ctx.change_map_or_log(map);
+    }
+
+    /// Game-shaped alias for [`Self::change_map_or_log`].
+    pub fn go_to_map_or_log(&mut self, map: &str) {
+        self.change_map_or_log(map);
     }
 
     /// Restarts the currently active map, logging any failure.

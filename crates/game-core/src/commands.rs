@@ -45,6 +45,56 @@ impl AssetReloadStatus {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommandErrorKind {
+    SpawnPrefab,
+    ChangeMap,
+    ReloadMap,
+    ReloadAssets,
+    RestartMap,
+    RestartStartMap,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandError {
+    pub kind: CommandErrorKind,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommandErrors {
+    errors: Vec<CommandError>,
+}
+
+impl CommandErrors {
+    pub fn push(&mut self, kind: CommandErrorKind, message: impl Into<String>) {
+        self.errors.push(CommandError {
+            kind,
+            message: message.into(),
+        });
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.errors.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &CommandError> {
+        self.errors.iter()
+    }
+
+    pub fn clear(&mut self) {
+        self.errors.clear();
+    }
+
+    pub fn last(&self) -> Option<&CommandError> {
+        self.errors.last()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Despawn(EntityId),
@@ -136,7 +186,7 @@ impl CommandQueue {
 mod tests {
     use crate::backend::SoundHandle;
     use crate::builder::{MapId, PrefabId, PropertyBag};
-    use crate::commands::{Command, CommandQueue};
+    use crate::commands::{Command, CommandErrorKind, CommandErrors, CommandQueue};
 
     #[test]
     fn command_queue_drains_in_order() {
@@ -187,5 +237,30 @@ mod tests {
                 Command::RestartStartMap,
             ]
         );
+    }
+
+    #[test]
+    fn command_errors_keep_order_and_last_error() {
+        let mut errors = CommandErrors::default();
+        assert!(errors.is_empty());
+
+        errors.push(CommandErrorKind::ChangeMap, "unknown map id MapId(7)");
+        errors.push(
+            CommandErrorKind::SpawnPrefab,
+            "unknown prefab id PrefabId(3)",
+        );
+
+        assert_eq!(errors.len(), 2);
+        assert_eq!(
+            errors.iter().map(|error| &error.kind).collect::<Vec<_>>(),
+            vec![&CommandErrorKind::ChangeMap, &CommandErrorKind::SpawnPrefab]
+        );
+        assert_eq!(
+            errors.last().map(|error| error.message.as_str()),
+            Some("unknown prefab id PrefabId(3)")
+        );
+
+        errors.clear();
+        assert!(errors.is_empty());
     }
 }

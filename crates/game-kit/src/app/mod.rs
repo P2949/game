@@ -14,16 +14,15 @@ use game_core::builder::{GameBuilder, PrefabValidator};
 use game_core::commands::CommandQueue;
 use game_core::input::ActionId;
 use game_core::query::ParamSystem;
-use game_core::world::{EntityId, Transform};
+use game_core::world::EntityId;
 use game_map::GameMap;
-use game_physics::Collider;
 use glam::Vec2;
 
 use crate::assets::{
     AssetAuthor, AssetBagAuthor, AssetFolderAuthor, AssetLookup, SoundRef, TextureRef,
     missing_asset_error,
 };
-use crate::beginner::actors::{Door, DoorTarget, PrefabName};
+use crate::beginner::actors::{Door, DoorTarget};
 use crate::beginner::animation::AnimationFinishedEvents;
 use crate::beginner::context::{Game as BeginnerGame, Seconds, StartupGame as BeginnerStartupGame};
 use crate::beginner::custom_rules::CustomRuleAuthor;
@@ -48,6 +47,17 @@ use crate::input::InputAuthor;
 use crate::map::{ContentRuntime, MapAuthor, PendingMap};
 use crate::prefab::{IntoContentName, PrefabAuthor};
 use crate::system::{GameSystem, StartupSystem};
+
+mod debug;
+mod plugin;
+#[cfg(test)]
+mod tests;
+mod validation;
+
+pub use debug::DebugOverlayAuthor;
+pub use plugin::{FnGamePlugin, Plugin, plugin, plugin_fn};
+
+use validation::{matching_nearby_prefabs, matching_overlaps, prefab_matches};
 
 /// A deferred prefab component requirement: applies one
 /// `validator.require_component::<T>(name)` call during [`GameApp::finish`].
@@ -372,7 +382,7 @@ impl<'app> GameApp<'app> {
 
     pub fn debug(&mut self) -> DebugOverlayAuthor<'_, 'app> {
         self.enable_debug_overlay();
-        DebugOverlayAuthor { app: self }
+        DebugOverlayAuthor::new(self)
     }
 
     pub(crate) fn configure_debug_overlay(&mut self, f: impl FnOnce(&mut DebugOverlay)) {
@@ -1293,302 +1303,5 @@ impl<'app> GameApp<'app> {
             });
         }
         Ok(())
-    }
-}
-
-fn prefab_matches(game: &GameCtx<'_, '_>, entity: EntityId, expected: &str) -> bool {
-    game.component::<PrefabName>(entity)
-        .is_some_and(|name| name.matches(expected))
-}
-
-fn matching_overlaps(
-    game: &GameCtx<'_, '_>,
-    a_prefab: &str,
-    b_prefab: &str,
-) -> Vec<(EntityId, EntityId)> {
-    let a_entities = game
-        .entities_with::<PrefabName>()
-        .into_iter()
-        .filter(|entity| prefab_matches(game, *entity, a_prefab))
-        .collect::<Vec<_>>();
-    let b_entities = game
-        .entities_with::<PrefabName>()
-        .into_iter()
-        .filter(|entity| prefab_matches(game, *entity, b_prefab))
-        .collect::<Vec<_>>();
-    let mut overlaps = Vec::new();
-
-    for a in a_entities {
-        for &b in &b_entities {
-            if a != b && colliders_overlap(game, a, b) {
-                overlaps.push((a, b));
-            }
-        }
-    }
-    overlaps
-}
-
-fn matching_nearby_prefabs(
-    game: &GameCtx<'_, '_>,
-    a_prefab: &str,
-    b_prefab: &str,
-    range: f32,
-) -> Vec<(EntityId, EntityId, Vec2)> {
-    let range = range.max(0.0);
-    let range_squared = range * range;
-    let a_entities = game
-        .entities_with::<PrefabName>()
-        .into_iter()
-        .filter(|entity| prefab_matches(game, *entity, a_prefab))
-        .filter_map(|entity| game.position(entity).map(|position| (entity, position)))
-        .collect::<Vec<_>>();
-    let b_entities = game
-        .entities_with::<PrefabName>()
-        .into_iter()
-        .filter(|entity| prefab_matches(game, *entity, b_prefab))
-        .filter_map(|entity| game.position(entity).map(|position| (entity, position)))
-        .collect::<Vec<_>>();
-    let mut matches = Vec::new();
-
-    for (a, a_position) in a_entities {
-        for &(b, b_position) in &b_entities {
-            if a != b && a_position.distance_squared(b_position) <= range_squared {
-                matches.push((a, b, a_position));
-            }
-        }
-    }
-    matches
-}
-
-fn colliders_overlap(game: &GameCtx<'_, '_>, a: EntityId, b: EntityId) -> bool {
-    let Some(a_transform) = game.component::<Transform>(a) else {
-        return false;
-    };
-    let Some(a_collider) = game.component::<Collider>(a) else {
-        return false;
-    };
-    let Some(b_transform) = game.component::<Transform>(b) else {
-        return false;
-    };
-    let Some(b_collider) = game.component::<Collider>(b) else {
-        return false;
-    };
-
-    let delta = a_transform.pos - b_transform.pos;
-    delta.x.abs() < a_collider.half_extents.x + b_collider.half_extents.x
-        && delta.y.abs() < a_collider.half_extents.y + b_collider.half_extents.y
-}
-
-pub struct DebugOverlayAuthor<'a, 'app> {
-    app: &'a mut GameApp<'app>,
-}
-
-impl DebugOverlayAuthor<'_, '_> {
-    pub fn show_colliders(self) -> Self {
-        self.app
-            .configure_debug_overlay(|overlay| overlay.show_colliders = true);
-        self
-    }
-
-    pub fn show_nav(self) -> Self {
-        self.app
-            .configure_debug_overlay(|overlay| overlay.show_nav = true);
-        self
-    }
-
-    pub fn show_names(self) -> Self {
-        self.app
-            .configure_debug_overlay(|overlay| overlay.show_names = true);
-        self
-    }
-
-    pub fn show_fps(self) -> Self {
-        self.app
-            .configure_debug_overlay(|overlay| overlay.show_fps = true);
-        self
-    }
-}
-
-/// Adapts a [`GamePlugin`] (the content-facing trait) to the engine's
-/// `game_core::plugin::GamePlugin` so the runtime can run it. Build a value with
-/// [`plugin`].
-pub struct Plugin<P>(P);
-
-impl<P: GamePlugin> game_core::plugin::GamePlugin for Plugin<P> {
-    fn build(&self, builder: &mut GameBuilder) -> Result<()> {
-        let mut app = GameApp::new(builder);
-        self.0.build(&mut app)?;
-        app.finish()
-    }
-}
-
-/// Wraps a content plugin so it can be handed to `game_runtime::run`. Content's
-/// `pub fn plugin()` returns `game_kit::plugin(MyPlugin)`.
-pub fn plugin<P: GamePlugin>(plugin: P) -> Plugin<P> {
-    Plugin(plugin)
-}
-
-pub struct FnGamePlugin<F>(F);
-
-impl<F> GamePlugin for FnGamePlugin<F>
-where
-    F: for<'app> Fn(&mut GameApp<'app>) -> Result<()>,
-{
-    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
-        (self.0)(game)
-    }
-}
-
-pub fn plugin_fn<F>(build: F) -> Plugin<FnGamePlugin<F>>
-where
-    F: for<'app> Fn(&mut GameApp<'app>) -> Result<()>,
-{
-    plugin(FnGamePlugin(build))
-}
-
-#[cfg(test)]
-mod tests {
-    use game_core::backend::TextureHandle;
-    use game_core::builder::GameBuilder;
-    use game_core::input::Key;
-    use game_core::world::{Sprite, Transform};
-    use game_map::cell;
-
-    use super::GameApp;
-    use crate::map::TileTheme;
-
-    fn test_theme() -> TileTheme {
-        TileTheme {
-            floor: Sprite::new(TextureHandle(1), glam::Vec2::splat(16.0)),
-            wall: Sprite::new(TextureHandle(2), glam::Vec2::splat(16.0)),
-        }
-    }
-
-    #[test]
-    fn duplicate_prefab_name_returns_error() {
-        let mut builder = GameBuilder::new();
-        let mut game = GameApp::new(&mut builder);
-
-        game.prefab("duplicate", |prefab| {
-            prefab.spawn(|at| (Transform::at(at),))?;
-            Ok(())
-        })
-        .unwrap();
-
-        let err = game
-            .prefab("duplicate", |prefab| {
-                prefab.spawn(|at| (Transform::at(at),))?;
-                Ok(())
-            })
-            .unwrap_err();
-
-        assert!(err.to_string().contains("duplicate prefab"));
-    }
-
-    #[test]
-    fn duplicate_input_action_returns_error() {
-        let mut builder = GameBuilder::new();
-        let mut game = GameApp::new(&mut builder);
-
-        let err = game
-            .input(|input| {
-                input.action("pause")?.key(Key::P);
-                input.action("pause")?.key(Key::R);
-                Ok(())
-            })
-            .unwrap_err();
-
-        assert!(err.to_string().contains("Duplicate input action"));
-    }
-
-    #[test]
-    fn conflicting_texture_key_returns_error() {
-        let mut builder = GameBuilder::new();
-        let mut game = GameApp::new(&mut builder);
-
-        let err = game
-            .assets(|assets| {
-                assets.texture("hero", "textures/a.png")?;
-                assets.texture("hero", "textures/b.png")?;
-                Ok(())
-            })
-            .unwrap_err();
-
-        assert!(err.to_string().contains("Texture asset key"));
-    }
-
-    #[test]
-    fn ron_map_rejects_in_code_authoring_calls() {
-        let mut builder = GameBuilder::new();
-        let mut game = GameApp::new(&mut builder);
-
-        game.map_from_ron("")
-            .tile_size(16.0)
-            .tiles(["."])
-            .spawn("player_start", "demo/player", cell(0, 0))
-            .theme(test_theme())
-            .start();
-
-        let err = game.finish().unwrap_err();
-        let message = err.to_string();
-
-        assert!(message.contains("map '<ron>' has invalid authoring calls"));
-        assert!(message.contains("tile_size() is only valid on in-code maps"));
-        assert!(message.contains("tiles() is only valid on in-code maps"));
-        assert!(message.contains("spawn() is only valid on in-code maps"));
-    }
-
-    #[test]
-    fn map_without_theme_points_to_simple_theme() {
-        let mut builder = GameBuilder::new();
-        let mut game = GameApp::new(&mut builder);
-
-        game.map("demo").tiles(["."]).start();
-
-        let err = game.finish().unwrap_err();
-        let message = err.to_string();
-
-        assert!(message.contains("Map 'demo' has no tile theme."));
-        assert!(message.contains(".simple_theme(assets.floor, assets.wall)"));
-    }
-
-    #[test]
-    fn simple_theme_satisfies_map_theme_requirement() {
-        let mut builder = GameBuilder::new();
-        let mut game = GameApp::new(&mut builder);
-
-        game.map("demo")
-            .tiles(["."])
-            .simple_theme(TextureHandle(1), TextureHandle(2))
-            .start();
-
-        game.finish().unwrap();
-    }
-
-    #[test]
-    fn no_start_map_returns_error() {
-        let mut builder = GameBuilder::new();
-        let game = GameApp::new(&mut builder);
-
-        let err = game.finish().unwrap_err();
-
-        let message = err.to_string();
-        assert!(message.contains("No start map declared."));
-        assert!(message.contains(".simple_theme(assets.floor, assets.wall)"));
-    }
-
-    #[test]
-    fn multiple_start_maps_return_error() {
-        let mut builder = GameBuilder::new();
-        let mut game = GameApp::new(&mut builder);
-
-        game.map("first").tiles(["."]).theme(test_theme()).start();
-        game.map("second").tiles(["."]).theme(test_theme()).start();
-
-        let err = game.finish().unwrap_err();
-
-        let message = err.to_string();
-        assert!(message.contains("Multiple start maps declared: 'first' and 'second'"));
-        assert!(message.contains("Other maps should end with .finish()"));
     }
 }

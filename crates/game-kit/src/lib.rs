@@ -97,7 +97,7 @@ pub mod context;
 pub mod data;
 mod diagnostics;
 mod harness;
-pub mod helpers;
+mod helpers;
 pub mod input;
 pub mod map;
 mod paths;
@@ -119,12 +119,12 @@ macro_rules! content_plugin {
     ($plugin_ty:ident, $plugin_fn:ident, |$game:ident| $body:block) => {
         pub struct $plugin_ty;
 
-        pub fn $plugin_fn() -> $crate::Plugin<$plugin_ty> {
-            $crate::plugin($plugin_ty)
+        pub fn $plugin_fn() -> $crate::app::Plugin<$plugin_ty> {
+            $crate::app::plugin($plugin_ty)
         }
 
-        impl $crate::GamePlugin for $plugin_ty {
-            fn build(&self, $game: &mut $crate::GameApp<'_>) -> anyhow::Result<()> {
+        impl $crate::app::GamePlugin for $plugin_ty {
+            fn build(&self, $game: &mut $crate::app::GameApp<'_>) -> anyhow::Result<()> {
                 $body
                 Ok(())
             }
@@ -132,79 +132,92 @@ macro_rules! content_plugin {
     };
 }
 
-pub use app::{DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, Plugin, plugin, plugin_fn};
-pub use assets::{
-    AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, IntoSoundRef, IntoTextureRef,
-    SoundRef, TextureRef,
-};
-pub use beginner::actors::{
-    Area, AreaName, Checkpoint, CheckpointState, CollectSound, Collectible, DeathAnimationPolicy,
-    DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget, DropSpawned, DropsPrefab, Enemy,
-    ExitDoor, HealValue, Lifetime, Name, Npc, Pickup, Player, PlayerMovement, Projectile,
-    ProjectileDamage, ProjectileImpact, ScoreValue, Solid, Spawner, Speed, TriggerArea,
-};
-pub use beginner::animation::{
-    Animation, AnimationClip, AnimationSet, AnimationSheet, SpriteSheet, attack_frames, die_frames,
-    frames, idle_frames, walk_frames,
-};
-pub use beginner::audio::{AudioBus, AudioOps, MusicPlayback, SoundPlayback};
-pub use beginner::camera::CameraShake;
-pub use beginner::collections::{
-    CameraOps, EnemyCollection, FiredShot, PickupCollection, PlayerActor, Score, ScoreOps,
-    ShootAuthor, TaggedActors,
-};
-pub use beginner::combat::MeleeCombatConfig;
-pub use beginner::custom_rules::{CountdownRuleAuthor, CustomRuleAuthor, TaggedCustomRuleAuthor};
-pub use beginner::debug::DebugOverlay;
-pub use beginner::defaults::TopDownGameAuthor;
-pub use beginner::defaults::{
-    AnimationUpdateBehavior, CameraFollowBehavior, CameraShakeBehavior, CameraZoomBehavior,
-    CollisionBehavior, DeathStateBehavior, DirectionalAttackBehavior,
-    EnemyAnimationByMovementBehavior, EnemyChaseBehavior, EnemyDirectionalAnimationBehavior,
-    EnemyPatrolBehavior, MeleeCombatBehavior, MovementBehavior, PauseDeathUiBehavior,
-    PlayerAnimationByMovementBehavior, PlayerDirectionalAnimationBehavior, PlayerFacingBehavior,
-    SimpleGameStartupBehavior,
-};
-pub use beginner::events::{
-    AnimationFinishedEvent, CollectEvent, CollisionEvent, DoorEvent, EnemyDeathEvent, EventActor,
-    MapChangedEvent, ProjectileHitEvent,
-};
-pub use beginner::prefabs::{
-    AreaPrefabAuthor, DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor, PlayerPrefabAuthor,
-    ProjectilePrefabAuthor, SpawnerPrefabAuthor,
-};
-pub use beginner::rules::RulesAuthor;
-pub use beginner::rules::{
-    CheckpointActivationBehavior, CheckpointRespawnBehavior, CollectPickupsBehavior,
-    DeadEnemiesDespawnBehavior, DeathAnimationBehavior, DeathAnimationDespawnBehavior,
-    DoorsChangeMapsBehavior, EnemyDropsBehavior, HighLevelUiBehavior, ProjectileDamageBehavior,
-    ProjectileImpactDespawnBehavior, ProjectileLifetimeBehavior, ProjectileMovementBehavior,
-    RulesAnimationUpdateBehavior, RulesEnemyAnimationByMovementBehavior,
-    RulesEnemyDirectionalAnimationBehavior, RulesPlayerDirectionalAnimationBehavior,
-    SpawnerBehavior, WinConditionBehavior,
-};
-pub use beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
-pub use beginner::spawn::SpawnAuthor;
-pub use beginner::state::SimpleGameState;
-pub use beginner::tuning::TuningFile;
-pub use beginner::ui::{
-    UiButton, UiFocus, UiMenu, UiMenuButton, UiOps, UiPanel, UiStatusPanel, UiText,
-};
-pub use bundle::{Bundle, vec2s};
-pub use context::{Commands, GameCtx, StartupGameCtx};
-pub use data::{
-    BeginnerAssetsFile, BeginnerControlsFile, BeginnerGameFile, BeginnerMapFile,
-    BeginnerPrefabFile, BeginnerRuleFile, BeginnerScriptRuleFile, RuleEffectFile,
-    load_beginner_game_file,
-};
-pub use helpers::{
-    InputDriven, MovementSpeed, SimulationState, camera_follow_first, stop_all_velocity,
-};
-pub use input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
-pub use map::{MapAuthor, TileTheme};
-pub use prefab::PrefabAuthor;
-pub use prefab::{IntoContentName, IntoMovementAxis};
-pub use system::{GameSystem, StartupSystem};
+/// Deprecated root-export compatibility surface.
+///
+/// New content should import `game_kit::beginner::prelude::*`,
+/// `game_kit::advanced::prelude::*`, or explicit module paths such as
+/// `game_kit::app::GameApp`.
+#[deprecated(note = "Use game_kit::beginner::prelude::* or game_kit::advanced::prelude::*")]
+pub mod compat {
+    pub use crate::app::{
+        DebugOverlayAuthor, FnGamePlugin, GameApp, GamePlugin, Plugin, plugin, plugin_fn,
+    };
+    pub use crate::assets::{
+        AssetAuthor, AssetBag, AssetBagAuthor, AssetFolderAuthor, IntoSoundRef, IntoTextureRef,
+        SoundRef, TextureRef,
+    };
+    pub use crate::beginner::actors::{
+        Area, AreaName, Checkpoint, CheckpointState, CollectSound, Collectible,
+        DeathAnimationPolicy, DespawnOnCollect, DespawnOnHit, Door, DoorAction, DoorTarget,
+        DropSpawned, DropsPrefab, Enemy, ExitDoor, HealValue, Lifetime, Name, Npc, Pickup, Player,
+        PlayerMovement, Projectile, ProjectileDamage, ProjectileImpact, ScoreValue, Solid, Spawner,
+        Speed, TriggerArea,
+    };
+    pub use crate::beginner::animation::{
+        Animation, AnimationClip, AnimationSet, AnimationSheet, SpriteSheet, attack_frames,
+        die_frames, frames, idle_frames, walk_frames,
+    };
+    pub use crate::beginner::audio::{AudioBus, AudioOps, MusicPlayback, SoundPlayback};
+    pub use crate::beginner::camera::CameraShake;
+    pub use crate::beginner::collections::{
+        CameraOps, EnemyCollection, FiredShot, PickupCollection, PlayerActor, Score, ScoreOps,
+        ShootAuthor, TaggedActors,
+    };
+    pub use crate::beginner::combat::MeleeCombatConfig;
+    pub use crate::beginner::custom_rules::{
+        CountdownRuleAuthor, CustomRuleAuthor, TaggedCustomRuleAuthor,
+    };
+    pub use crate::beginner::debug::DebugOverlay;
+    pub use crate::beginner::defaults::TopDownGameAuthor;
+    pub use crate::beginner::defaults::{
+        AnimationUpdateBehavior, CameraFollowBehavior, CameraShakeBehavior, CameraZoomBehavior,
+        CollisionBehavior, DeathStateBehavior, DirectionalAttackBehavior,
+        EnemyAnimationByMovementBehavior, EnemyChaseBehavior, EnemyDirectionalAnimationBehavior,
+        EnemyPatrolBehavior, MeleeCombatBehavior, MovementBehavior, PauseDeathUiBehavior,
+        PlayerAnimationByMovementBehavior, PlayerDirectionalAnimationBehavior,
+        PlayerFacingBehavior, SimpleGameStartupBehavior,
+    };
+    pub use crate::beginner::events::{
+        AnimationFinishedEvent, CollectEvent, CollisionEvent, DoorEvent, EnemyDeathEvent,
+        EventActor, MapChangedEvent, ProjectileHitEvent,
+    };
+    pub use crate::beginner::prefabs::{
+        AreaPrefabAuthor, DoorPrefabAuthor, EnemyPrefabAuthor, PickupPrefabAuthor,
+        PlayerPrefabAuthor, ProjectilePrefabAuthor, SpawnerPrefabAuthor,
+    };
+    pub use crate::beginner::rules::RulesAuthor;
+    pub use crate::beginner::rules::{
+        CheckpointActivationBehavior, CheckpointRespawnBehavior, CollectPickupsBehavior,
+        DeadEnemiesDespawnBehavior, DeathAnimationBehavior, DeathAnimationDespawnBehavior,
+        DoorsChangeMapsBehavior, EnemyDropsBehavior, HighLevelUiBehavior, ProjectileDamageBehavior,
+        ProjectileImpactDespawnBehavior, ProjectileLifetimeBehavior, ProjectileMovementBehavior,
+        RulesAnimationUpdateBehavior, RulesEnemyAnimationByMovementBehavior,
+        RulesEnemyDirectionalAnimationBehavior, RulesPlayerDirectionalAnimationBehavior,
+        SpawnerBehavior, WinConditionBehavior,
+    };
+    pub use crate::beginner::scene::{SceneRegistry, SceneState, SimpleSceneFlowAuthor};
+    pub use crate::beginner::spawn::SpawnAuthor;
+    pub use crate::beginner::state::SimpleGameState;
+    pub use crate::beginner::tuning::TuningFile;
+    pub use crate::beginner::ui::{
+        UiButton, UiFocus, UiMenu, UiMenuButton, UiOps, UiPanel, UiStatusPanel, UiText,
+    };
+    pub use crate::bundle::{Bundle, vec2s};
+    pub use crate::context::{Commands, GameCtx, StartupGameCtx};
+    pub use crate::data::{
+        BeginnerAssetsFile, BeginnerControlsFile, BeginnerGameFile, BeginnerMapFile,
+        BeginnerPrefabFile, BeginnerRuleFile, BeginnerScriptRuleFile, RuleEffectFile,
+        load_beginner_game_file,
+    };
+    pub use crate::helpers::{
+        InputDriven, MovementSpeed, SimulationState, camera_follow_first, stop_all_velocity,
+    };
+    pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
+    pub use crate::map::{MapAuthor, TileTheme};
+    pub use crate::prefab::PrefabAuthor;
+    pub use crate::prefab::{IntoContentName, IntoMovementAxis};
+    pub use crate::system::{GameSystem, StartupSystem};
+}
 
 /// Compatibility prelude.
 ///
@@ -280,6 +293,7 @@ pub mod prelude {
     pub use crate::prefab::{IntoContentName, IntoMovementAxis, PrefabAuthor};
 }
 
+#[deprecated(note = "Use game_kit::advanced::prelude::*")]
 pub mod advanced_prelude {
     pub use crate::advanced::prelude::*;
 }
