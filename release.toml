@@ -1,0 +1,2 @@
+current_tag = "v0.2.0"
+game_starter_dependency = '{ git = "https://github.com/P2949/game", tag = "v0.2.0", package = "game-starter" }'

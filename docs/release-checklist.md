@@ -6,6 +6,8 @@ working tree.
 This checklist protects the achieved content-authoring foundation: production
 content goes through `game-kit`, while lower-level runtime, backend, registry,
 schedule, and raw world APIs stay behind the facade.
+Review [api-boundary.md](api-boundary.md) whenever release work touches public
+imports, templates, examples, runtime commands, or backend integration.
 
 ## Automated checks
 
@@ -34,7 +36,15 @@ cargo deny check advisories licenses sources bans
 
 Beginner-productization release gates:
 
+- [ ] `docs/api-boundary.md` reviewed
+- [ ] `game-kit` root export guard passed
+- [ ] `game-core` root export guard passed
+- [ ] unknown asset extension check verified
+- [ ] command error policy tests passed
+- [ ] map transition boundary tests passed
+- [ ] audio/docs consistency checked
 - [ ] generated-template dependency pins target the intended release tag
+- [ ] `release.toml` `current_tag` and `game_starter_dependency` match that tag
 - [ ] `CHANGELOG.md` updated
 - [ ] migration docs in `docs/migrations/` updated
 - [ ] generated-template CI is green

@@ -1,5 +1,7 @@
 use game_core::input::Input;
-use game_core::query::{DeltaTime, ParamSystem, Query, ResMut, With};
+use game_core::query::{
+    DeltaTime, ParamAccess, ParamSystem, Query, Res, ResMut, SystemParam, With,
+};
 use game_core::world::{Entity, World};
 
 #[derive(Clone, Copy)]
@@ -40,6 +42,13 @@ fn conflicting_filter_access(
 
 fn advance_counter(mut counter: ResMut<Counter>, dt: DeltaTime) {
     counter.0 += dt.0;
+}
+
+fn move_entities_with_resource(mut positions: Query<&mut Position>, mut counter: ResMut<Counter>) {
+    for (_, position) in &mut positions {
+        position.0 += 1.0;
+        counter.0 += 1.0;
+    }
 }
 
 fn run_disjoint<S>(system: &mut S, world: &mut World)
@@ -88,6 +97,36 @@ where
     system.run_params(world, &Input::default(), 0.5);
 }
 
+fn run_query_resource<S>(system: &mut S, world: &mut World)
+where
+    S: ParamSystem<fn(Query<'static, &'static mut Position>, ResMut<'static, Counter>)>,
+{
+    system.validate_params().unwrap();
+    system.run_params(world, &Input::default(), 0.0);
+}
+
+fn resource_access_error<P1, P2>() -> String
+where
+    P1: SystemParam,
+    P2: SystemParam,
+{
+    let mut access = ParamAccess::default();
+    P1::register_access(&mut access);
+    P2::register_access(&mut access);
+    access.validate().unwrap_err().to_string()
+}
+
+fn validate_resource_access<P1, P2>()
+where
+    P1: SystemParam,
+    P2: SystemParam,
+{
+    let mut access = ParamAccess::default();
+    P1::register_access(&mut access);
+    P2::register_access(&mut access);
+    access.validate().unwrap();
+}
+
 #[test]
 fn two_non_overlapping_queries_run_through_the_parameter_adapter() {
     let mut world = World::new();
@@ -134,4 +173,38 @@ fn resource_parameters_are_extracted_and_mutated_for_one_execution() {
     run_resource(&mut system, &mut world);
 
     assert_eq!(world.get_resource::<Counter>().unwrap().0, 2.5);
+}
+
+#[test]
+fn read_and_write_to_the_same_resource_are_rejected_by_access_validation() {
+    let error = resource_access_error::<Res<'static, Counter>, ResMut<'static, Counter>>();
+
+    assert!(error.contains("conflicting resource access"));
+    assert!(error.contains("Counter"));
+}
+
+#[test]
+fn two_mutable_resource_params_are_rejected_by_access_validation() {
+    let error = resource_access_error::<ResMut<'static, Counter>, ResMut<'static, Counter>>();
+
+    assert!(error.contains("conflicting resource access"));
+    assert!(error.contains("Counter"));
+}
+
+#[test]
+fn two_shared_resource_params_are_allowed_by_access_validation() {
+    validate_resource_access::<Res<'static, Counter>, Res<'static, Counter>>();
+}
+
+#[test]
+fn query_and_mutable_resource_params_run_through_the_parameter_adapter() {
+    let mut world = World::new();
+    let entity = world.spawn(Entity::new(glam::Vec2::ZERO).with(Position(3.0)));
+    world.insert_resource(Counter(10.0));
+    let mut system = move_entities_with_resource;
+
+    run_query_resource(&mut system, &mut world);
+
+    assert_eq!(world.get::<Position>(entity).unwrap().0, 4.0);
+    assert_eq!(world.get_resource::<Counter>().unwrap().0, 11.0);
 }

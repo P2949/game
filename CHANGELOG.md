@@ -4,7 +4,20 @@ All notable beginner-facing changes should be recorded here before release.
 
 ## Unreleased
 
-- Nothing yet.
+### Architecture
+
+- Narrowed `game-kit` and `game-core` root APIs toward explicit
+  beginner/advanced/internal surfaces.
+- Made map transitions content-aware by preventing raw active-map commands from
+  normal content paths.
+- Added structured runtime command diagnostics.
+- Split large data, audio, CLI, and architecture-test modules.
+
+### Migration
+
+- Use `game_kit::beginner::prelude::*`,
+  `game_kit::advanced::prelude::*`, or `game_starter::prelude::*` instead of
+  `game_kit::prelude::*` or root `game_kit::*` imports.
 
 ## v0.2.0
 

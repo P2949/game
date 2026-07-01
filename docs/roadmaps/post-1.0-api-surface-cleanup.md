@@ -1,5 +1,7 @@
 # Post-1.0 API Surface Cleanup Roadmap
 
+> Status: Superseded by [Content/engine boundary consolidation](content-engine-boundary-consolidation.md).
+
 Root-level `game-kit` exports are compatibility surface for the current release
 window. Do not remove them during 1.0 polish.
 

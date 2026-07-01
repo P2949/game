@@ -5,6 +5,8 @@ This document is intentionally second, not the starting point. Begin with the
 custom ECS-shaped prefabs, systems, queries, RON maps, or engine pressure tests.
 If you are deciding whether to cross that boundary, read
 [when to use the advanced API](when-to-use-advanced-api.md) first.
+The maintained import and layer contract is in
+[api-boundary.md](api-boundary.md).
 
 The repository's `testbed-content` crate uses the advanced surface on purpose:
 it is an engine testbed, not a template for first projects.
@@ -125,6 +127,14 @@ into two systems or query different component types. `With<T>` and
 `Without<T>` filter entities, `Res<T>` reads a resource (including the
 frame's `Input`), and `ResMut<T>` mutates a world resource.
 
+Resource borrows are checked the same way: reading and mutating the same
+resource, or requesting two mutable borrows of it, fails during plugin build and
+the error includes the resource type name. The current typed-function adapters
+expose one resource parameter per system signature; use a single wrapper
+resource or a `GameCtx` helper when a system needs several resource values.
+Beginner content should keep using rules, hooks, and builders instead of typed
+query parameters.
+
 Startup systems are fallible because content initialization can fail. Fixed,
 update, and UI systems are infallible by design. Runtime operations that should
 not fail after validation expose helpers such as `reset_to_start_map_or_log`;
@@ -138,6 +148,11 @@ let mut commands = game.commands();
 commands.play_sound(assets.hit);
 commands.despawn(entity);
 ```
+
+Map transitions are deliberately name-based through `GameCtx::change_map("level_2")`
+or `change_map_or_log`. Do not queue raw active-map switches by `MapId`; the
+name-based helper also updates the content runtime and respawns the new map's
+objects.
 
 ## Validation and testing
 

@@ -35,8 +35,10 @@ and should not appear in new beginner code.
 
 `game-kit` keeps beginner harness assertions in
 `game_kit::beginner::testing::prelude::*` and raw world inspection in
-`game_kit::advanced::testing::prelude::*`; the normal prelude exposes authoring
-builders, component types, and `GameCtx` helpers only. `MapAuthor` exposes
+`game_kit::advanced::testing::prelude::*`. The deliberate production surfaces
+are `game_kit::beginner::prelude::*` and `game_kit::advanced::prelude::*`; the
+legacy `game_kit::prelude::*` should be treated as a temporary compatibility
+shim, not the normal prelude. `MapAuthor` exposes
 `.start()` for the initial map and `.finish()` for additional registered maps.
 Runtime map switching is available through beginner door/map helpers and
 lower-level commands.

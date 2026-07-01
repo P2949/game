@@ -8,7 +8,8 @@ use game_core::backend::{
     PlatformBackend, PlatformEvents, RenderBackend, RenderOutcome, TextureHandle,
 };
 use game_core::input::InputState;
-use game_kit::{plugin_fn, testing::GameTestHarness};
+use game_kit::app::plugin_fn;
+use game_kit::testing::GameTestHarness;
 use game_runtime::{Runner, RuntimeConfig};
 
 #[test]

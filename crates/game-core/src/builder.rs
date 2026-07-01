@@ -304,7 +304,7 @@ fn example_component_insert(component: &str) -> &'static str {
 
 /// Low-level engine builder used by `game-kit` and the runtime.
 ///
-/// Content crates should prefer `game_kit::GameApp`, which wraps this type with
+/// Content crates should prefer `game_kit::app::GameApp`, which wraps this type with
 /// asset, input, prefab, map, and system authoring APIs.
 #[derive(Default)]
 pub struct GameBuilder {

@@ -27,6 +27,8 @@ crates are identical for all demos.
 The engine/content split and beginner authoring foundation are implemented.
 Beginner Productization 1.0 is complete for `v0.2.0`: the local release gate
 passed, and the GitHub Release has verified Linux/Windows demo packages.
+The maintained layer contract is documented in
+[docs/api-boundary.md](docs/api-boundary.md).
 
 Start with one of three tracks:
 
@@ -68,6 +70,8 @@ It is **not** yet:
 ## Content Authoring Model
 
 Start with one file. This is the path used throughout the beginner tutorial:
+See [docs/api-boundary.md](docs/api-boundary.md) for the exact no-Rust,
+beginner, advanced, facade, and runtime/backend import boundaries.
 
 ```rust
 use game_starter::prelude::*;
@@ -130,6 +134,12 @@ game-dev asset-check
 game-dev validate-data
 game-dev package --release --out dist/my-game --zip
 ```
+
+`game-dev doctor` is advisory setup guidance. `game-dev check` is the hard
+project gate: it fails for missing/invalid `assets/`, invalid optional
+`assets/game.ron`, unknown asset files, or `cargo check` failures. Vulkan,
+audio, and optional-tool findings remain setup warnings unless the cargo build
+you requested needs them.
 
 Want to try before building? Download the latest demo package from
 [Releases](https://github.com/P2949/game/releases). The prebuilt

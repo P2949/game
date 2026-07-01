@@ -7,6 +7,9 @@ The workspace has three layers:
    audio backend.
 3. The runtime owns platform, renderer, and audio integration.
 
+The precise no-Rust, beginner, advanced, facade, and runtime/backend import
+contract lives in [api-boundary.md](api-boundary.md).
+
 The automated architecture tests protect those boundaries and keep beginner
 examples free of ECS-shaped escape hatches. For the fuller historical design
 notes, see [ARCHITECTURE.md](ARCHITECTURE.md).

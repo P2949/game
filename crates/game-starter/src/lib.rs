@@ -1,5 +1,5 @@
 use anyhow::Result;
-use game_kit::GameApp;
+use game_kit::app::{GameApp, plugin_fn};
 use game_runtime::RuntimeConfig;
 
 pub mod prelude {
@@ -23,5 +23,5 @@ where
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .try_init();
 
-    game_runtime::run(config, game_kit::plugin_fn(build))
+    game_runtime::run(config, plugin_fn(build))
 }

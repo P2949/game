@@ -719,8 +719,8 @@ fn generated_object_id(prefab: &str, count: usize) -> String {
 
 /// Runtime content resource (Phase 7): the prefab registry and full maps (with
 /// objects) needed to spawn/reset map objects. Inserted into the `World` by the
-/// facade's built-in startup system and read by [`crate::GameCtx`] /
-/// [`crate::StartupGameCtx`].
+/// facade's built-in startup system and read by [`crate::context::GameCtx`] /
+/// [`crate::context::StartupGameCtx`].
 pub struct ContentRuntime {
     prefabs: Rc<PrefabRegistry>,
     maps: HashMap<String, GameMap>,

@@ -3,6 +3,7 @@
 Most games should begin with the [beginner authoring guide](beginner-authoring.md).
 It uses names such as `"player"`, `"slime"`, and `"hit"` to describe a game
 without exposing engine plumbing.
+For the exact layer and import contract, see [api-boundary.md](api-boundary.md).
 
 For a standalone game, start with `use game_starter::prelude::*;`. When the
 game becomes a workspace content crate, use

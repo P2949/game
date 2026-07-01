@@ -1,4 +1,24 @@
 //! Typed component queries for signature-driven advanced systems.
+//!
+//! # Safety model
+//!
+//! Signature-driven systems ultimately need to hand several frame-scoped borrows
+//! of the same [`World`] to one function call. The extraction code uses raw
+//! pointers internally so supported parameters can be assembled one by one while
+//! still presenting ordinary Rust references to the system body.
+//!
+//! The unsafe boundary is intentionally small:
+//!
+//! - [`SystemParam`] is sealed, so content crates cannot add new parameter types
+//!   that bypass the scheduler's access checks.
+//! - Every supported parameter registers its component and resource access in
+//!   [`ParamAccess`] before the system is added to a schedule.
+//! - Registration rejects duplicate mutable access, and rejects shared plus
+//!   mutable access, for the same component or resource type.
+//! - Extracted values are tied to one frame by their lifetimes and must not
+//!   escape the system call.
+//! - Beginner content does not use this surface; it goes through `game-kit`
+//!   rules, hooks, builders, and context helpers instead.
 
 use std::any::TypeId;
 use std::collections::HashMap;
