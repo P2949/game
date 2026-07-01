@@ -842,8 +842,9 @@ fn generated_templates_are_ci_checked_and_release_pinned() {
         "game-dev check --features ci-build-sdl3",
         "game-dev package --release --features ci-build-sdl3 --out /tmp/package-simple --zip",
         "game-dev package --release --features ci-build-sdl3 --out /tmp/package-data --zip",
-        "cargo run --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3",
-        "cargo run --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3",
+        "working-directory: /tmp/generated/smoke-simple",
+        "working-directory: /tmp/generated/smoke-data",
+        "cargo run --features ci-build-sdl3",
     ] {
         assert!(
             ci.contains(required),

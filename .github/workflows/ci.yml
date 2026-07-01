@@ -283,19 +283,21 @@ jobs:
           SDL_VIDEODRIVER: x11
         run: scripts/first-15-minutes.sh
       - name: Smoke run generated simple template
+        working-directory: /tmp/generated/smoke-simple
         env:
           GAME_SMOKE_FRAMES: "60"
           LIBGL_ALWAYS_SOFTWARE: "1"
           RUST_LOG: info
           SDL_VIDEODRIVER: x11
-        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --manifest-path /tmp/generated/smoke-simple/Cargo.toml --features ci-build-sdl3
+        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --features ci-build-sdl3
       - name: Smoke run generated data-driven template
+        working-directory: /tmp/generated/smoke-data
         env:
           GAME_SMOKE_FRAMES: "60"
           LIBGL_ALWAYS_SOFTWARE: "1"
           RUST_LOG: info
           SDL_VIDEODRIVER: x11
-        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --manifest-path /tmp/generated/smoke-data/Cargo.toml --features ci-build-sdl3
+        run: timeout -k 5s 180s xvfb-run -a --server-args="-screen 0 1280x720x24" cargo run --features ci-build-sdl3
 
   # Minimum-supported-Rust-version gate. Cargo.toml declares rust-version = 1.87
   # (the floor is set by a dependency: sdl3 0.18.4 uses `is_multiple_of`, stable

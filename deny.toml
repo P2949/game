@@ -1,5 +1,11 @@
 [advisories]
-ignore = []
+ignore = [
+    # `ttf-parser` is pulled in through `fontdue`, which backs the current
+    # runtime text rasterizer and packaged font generation path. RUSTSEC-2026-0192
+    # marks it unmaintained, but reports no vulnerability or safe upgrade.
+    # Track replacement with `skrifa`/fontations as a post-0.2 renderer/API task.
+    "RUSTSEC-2026-0192",
+]
 
 [bans]
 multiple-versions = "warn"
