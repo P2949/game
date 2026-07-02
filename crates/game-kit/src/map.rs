@@ -849,9 +849,7 @@ impl ContentRuntime {
     fn preflight_spawn_map(&self, map_name: &str) -> Result<()> {
         let map = self.map_by_name(map_name)?;
         validate_map_prefabs(map, &self.prefabs)
-            .with_context(|| format!("map '{map_name}' references unknown prefab"))?;
-        let mut scratch = World::new();
-        spawn_map_objects(&mut scratch, map, &self.prefabs)
+            .with_context(|| format!("map '{map_name}' references unknown prefab"))
     }
 
     fn spawn_map_by_name(&self, world: &mut World, map_name: &str) -> Result<()> {
@@ -999,10 +997,16 @@ pub(crate) fn reset_to_start_map_world(world: &mut World) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use game_core::world::{Entity, World};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    use game_core::backend::TextureHandle;
+    use game_core::builder::{MapId, PrefabRegistry};
+    use game_core::world::{Entity, Sprite, Transform, World};
 
     use super::{
-        expand_symbolic_tiles, validate_map_row_widths, validate_spawned_collision_components,
+        ContentRuntime, TileTheme, expand_symbolic_tiles, switch_world_to_map,
+        validate_map_row_widths, validate_spawned_collision_components,
     };
     use crate::beginner::actors::{Door, TriggerArea};
 
@@ -1069,5 +1073,63 @@ mod tests {
             .to_string();
 
         assert!(error.contains("spawned a trigger area with a zero-size or invalid collider"));
+    }
+
+    #[test]
+    fn map_switch_preflight_does_not_spawn_prefabs_without_world_resources() {
+        let mut prefabs = PrefabRegistry::new();
+        let prefab = prefabs.register("needs_resource", |world, position, _properties| {
+            let value = world
+                .get_resource::<String>()
+                .ok_or_else(|| anyhow::anyhow!("missing spawn resource"))?;
+            anyhow::ensure!(value == "ready", "unexpected spawn resource");
+            Ok(world.spawn(Entity::new(position)))
+        });
+        let prefabs = Rc::new(prefabs);
+
+        let menu = game_map::MapBuilder::new("menu", 16.0)
+            .tile_layer("collision", &["."])
+            .finish();
+        let game = game_map::MapBuilder::new("game", 16.0)
+            .tile_layer("collision", &["."])
+            .object("spawn", prefab, game_map::cell(0, 0))
+            .finish();
+        let mut maps = HashMap::new();
+        maps.insert("menu".to_owned(), menu);
+        maps.insert("game".to_owned(), game);
+        let mut map_ids = HashMap::new();
+        map_ids.insert("menu".to_owned(), MapId(0));
+        map_ids.insert("game".to_owned(), MapId(1));
+        let theme = test_theme();
+        let mut themes = HashMap::new();
+        themes.insert("menu".to_owned(), theme);
+        themes.insert("game".to_owned(), theme);
+
+        let mut world = World::new();
+        world.insert_resource("ready".to_owned());
+        world.insert_resource(ContentRuntime::new(
+            prefabs,
+            maps,
+            map_ids,
+            themes,
+            HashMap::new(),
+            "menu".to_owned(),
+        ));
+
+        let map = switch_world_to_map(&mut world, "game".to_owned()).unwrap();
+
+        assert_eq!(map, MapId(1));
+        assert_eq!(world.ids_with::<Transform>().len(), 1);
+        assert_eq!(
+            world.get_resource::<String>().map(String::as_str),
+            Some("ready")
+        );
+    }
+
+    fn test_theme() -> TileTheme {
+        TileTheme {
+            floor: Sprite::new(TextureHandle(0), glam::Vec2::ONE),
+            wall: Sprite::new(TextureHandle(0), glam::Vec2::ONE),
+        }
     }
 }

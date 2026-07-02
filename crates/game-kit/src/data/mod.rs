@@ -51,6 +51,7 @@ impl AuthoringReloadLevel {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AuthoringFileRuntime {
     pub(crate) path: PathBuf,
+    pub(crate) asset_root: PathBuf,
     pub(crate) last_loaded_version: u64,
     pub(crate) last_error: Option<String>,
     pub(crate) reload_level: AuthoringReloadLevel,
@@ -61,9 +62,10 @@ pub struct AuthoringFileRuntime {
 pub type BeginnerFileRuntime = AuthoringFileRuntime;
 
 impl AuthoringFileRuntime {
-    fn new(path: PathBuf, identity: AuthoringReloadIdentity) -> Self {
+    fn new(path: PathBuf, asset_root: PathBuf, identity: AuthoringReloadIdentity) -> Self {
         Self {
             path,
+            asset_root,
             last_loaded_version: 1,
             last_error: None,
             reload_level: AuthoringReloadLevel::Partial,
@@ -73,6 +75,10 @@ impl AuthoringFileRuntime {
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(crate) fn asset_root(&self) -> &Path {
+        &self.asset_root
     }
 
     pub(crate) fn identity(&self) -> &AuthoringReloadIdentity {
@@ -477,7 +483,11 @@ fn load_authoring_file_from_loaded(
     loaded: LoadedAuthoringGameFile,
 ) -> Result<TopDownControls> {
     let identity = AuthoringReloadIdentity::from_file(&loaded.file, &loaded.label)?;
-    let runtime = AuthoringFileRuntime::new(loaded.context.source_file.clone(), identity);
+    let runtime = AuthoringFileRuntime::new(
+        loaded.context.source_file.clone(),
+        loaded.context.asset_root.clone(),
+        identity,
+    );
     let controls = build::build_beginner_game_file(
         game,
         loaded.file,
@@ -559,9 +569,10 @@ pub fn validate_beginner_game_file(path: impl AsRef<Path>) -> Result<()> {
 
 pub(crate) fn rebuild_authoring_content_runtime(
     path: &Path,
+    asset_root: &Path,
     expected_identity: &AuthoringReloadIdentity,
 ) -> Result<RebuiltAuthoringContent> {
-    let loaded = read_authoring_game_file(path)?;
+    let loaded = read_authoring_game_file_with_asset_root(path, Some(asset_root))?;
     let identity = AuthoringReloadIdentity::from_file(&loaded.file, &loaded.label)?;
     expected_identity.ensure_matches(&identity, &loaded.label)?;
     let config = BeginnerRuntimeConfig::from_file(&loaded.file);

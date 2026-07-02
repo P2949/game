@@ -265,8 +265,56 @@ fn f5_reload_reports_primary_game_toml_by_name() {
     game.assert_ui_contains("last reload: game.toml ok (level-1)");
 }
 
+#[test]
+fn f5_reload_preserves_explicit_asset_root() {
+    let dir = temp_toml_project("toml-reload-explicit-assets");
+    let assets = dir.join("custom-assets");
+    fs::create_dir_all(assets.join("maps")).unwrap();
+    fs::write(
+        assets.join("maps").join("level-a.txt"),
+        "#####\n#P..#\n#####\n",
+    )
+    .unwrap();
+    fs::write(
+        assets.join("maps").join("level-b.txt"),
+        "#####\n#PE.#\n#####\n",
+    )
+    .unwrap();
+    let game_file = dir.join("game.toml");
+    fs::write(
+        &game_file,
+        reload_game_toml_with_map_path("maps/level-a.txt", 30),
+    )
+    .unwrap();
+
+    let mut game = GameTestHarness::from_plugin(TempTomlWithAssetRootPlugin {
+        path: game_file.to_string_lossy().into_owned(),
+        asset_root: "custom-assets".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(game.count::<Enemy>(), 0);
+
+    fs::write(
+        &game_file,
+        reload_game_toml_with_map_path("maps/level-b.txt", 77),
+    )
+    .unwrap();
+    game.tap_action("reload");
+
+    assert_eq!(game.count::<Enemy>(), 1);
+    let enemy = game.world().ids_with::<Enemy>()[0];
+    let health = game.world().get::<Health>(enemy).unwrap();
+    assert_eq!(health.max, 77);
+    assert_eq!(health.current, 77);
+}
+
 struct TempTomlPlugin {
     path: String,
+}
+
+struct TempTomlWithAssetRootPlugin {
+    path: String,
+    asset_root: String,
 }
 
 impl GamePlugin for TempTomlPlugin {
@@ -278,7 +326,20 @@ impl GamePlugin for TempTomlPlugin {
     }
 }
 
+impl GamePlugin for TempTomlWithAssetRootPlugin {
+    fn build(&self, game: &mut GameApp<'_>) -> Result<()> {
+        game.load_authoring_file_with_asset_root(&self.path, &self.asset_root)?;
+        game.enable_debug_overlay();
+        game.on_start(|game| game.spawn_start_map());
+        Ok(())
+    }
+}
+
 fn reload_game_toml(map_file: &str, enemy_health: i32) -> String {
+    reload_game_toml_with_map_path(&format!("assets/maps/{map_file}"), enemy_health)
+}
+
+fn reload_game_toml_with_map_path(map_file: &str, enemy_health: i32) -> String {
     format!(
         r#"
 version = 2
@@ -304,7 +365,7 @@ chase_player = true
 [[map]]
 kind = "text"
 name = "level-1"
-file = "assets/maps/{map_file}"
+file = "{map_file}"
 floor = "floor"
 wall = "wall"
 start = true

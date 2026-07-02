@@ -111,7 +111,11 @@ fn resolve_player_command(explicit: Option<&Path>, current: &Path) -> Result<Pla
 
 fn start_preview(options: &PreviewOptions) -> Result<Child> {
     let mut command = match &options.player {
-        PlayerCommand::Executable(path) => Command::new(path),
+        PlayerCommand::Executable(path) => {
+            let mut command = Command::new(path);
+            add_player_runtime_library_path(&mut command, path);
+            command
+        }
         PlayerCommand::CargoFallback { workspace } => {
             let mut command = Command::new("cargo");
             command
@@ -131,6 +135,25 @@ fn start_preview(options: &PreviewOptions) -> Result<Child> {
         command.arg("--smoke-frames").arg(frames.to_string());
     }
     command.spawn().context("failed to start game-player")
+}
+
+fn add_player_runtime_library_path(command: &mut Command, player: &Path) {
+    let Some(player_dir) = player.parent() else {
+        return;
+    };
+    prepend_env_path(command, "LD_LIBRARY_PATH", player_dir);
+    prepend_env_path(command, "DYLD_LIBRARY_PATH", player_dir);
+    prepend_env_path(command, "PATH", player_dir);
+}
+
+fn prepend_env_path(command: &mut Command, key: &str, path: &Path) {
+    let mut paths = vec![path.to_path_buf()];
+    if let Some(existing) = env::var_os(key) {
+        paths.extend(env::split_paths(&existing));
+    }
+    if let Ok(joined) = env::join_paths(paths) {
+        command.env(key, joined);
+    }
 }
 
 fn preview_watch(options: PreviewOptions) -> Result<()> {
@@ -212,10 +235,15 @@ fn resolve_from(base: &Path, path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlayerCommand, first_changed_path, resolve_player_command, watch_snapshot};
+    use super::{
+        PlayerCommand, add_player_runtime_library_path, first_changed_path, resolve_player_command,
+        watch_snapshot,
+    };
     use crate::project::NoRustProjectPaths;
+    use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::time::Duration;
 
     #[test]
@@ -265,6 +293,36 @@ mod tests {
             first_changed_path(&after_game_edit, &after_asset_edit).as_deref(),
             Some(assets.join("maps/level-2.txt").as_path())
         );
+    }
+
+    #[test]
+    fn executable_preview_searches_player_directory_for_runtime_libraries() {
+        let root = temp_dir("preview-runtime-libraries");
+        let player = root.join(crate::paths::executable_name("game-player"));
+        let mut command = Command::new(&player);
+
+        add_player_runtime_library_path(&mut command, &player);
+
+        assert!(command_env_path_contains(
+            &command,
+            "LD_LIBRARY_PATH",
+            &root
+        ));
+        assert!(command_env_path_contains(
+            &command,
+            "DYLD_LIBRARY_PATH",
+            &root
+        ));
+        assert!(command_env_path_contains(&command, "PATH", &root));
+    }
+
+    fn command_env_path_contains(command: &Command, key: &str, expected: &Path) -> bool {
+        command
+            .get_envs()
+            .find(|(name, _)| *name == key)
+            .and_then(|(_, value)| value)
+            .map(|value| env::split_paths(value).any(|path| path == expected))
+            .unwrap_or(false)
     }
 
     fn temp_dir(name: &str) -> PathBuf {

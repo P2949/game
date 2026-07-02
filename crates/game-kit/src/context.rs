@@ -664,6 +664,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
             .remove_resource::<AuthoringFileRuntime>()
             .ok_or_else(|| anyhow::anyhow!("no game file is registered"))?;
         let path = file.path().to_path_buf();
+        let asset_root = file.asset_root().to_path_buf();
         let file_name = authoring_file_display_name(&path);
         let current_map = self
             .inner
@@ -671,7 +672,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
             .get_resource::<ContentRuntime>()
             .map(|runtime| runtime.current_map_name().to_owned());
 
-        let rebuilt = match rebuild_authoring_content_runtime(&path, file.identity()) {
+        let rebuilt = match rebuild_authoring_content_runtime(&path, &asset_root, file.identity()) {
             Ok(rebuilt) => rebuilt,
             Err(error) => {
                 let message = error.to_string();

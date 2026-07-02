@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -201,6 +202,9 @@ fn package_no_rust_project_at(
             output.display()
         )
     })?;
+    if let Some(player_dir) = player.parent() {
+        copy_runtime_libraries(player_dir, &output)?;
+    }
     if let Ok(game_dev) = env::current_exe()
         && game_dev.is_file()
     {
@@ -360,24 +364,62 @@ pub(super) fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
 }
 
 pub(super) fn copy_runtime_libraries(build_dir: &Path, output: &Path) -> Result<()> {
-    for name in [
+    const RUNTIME_LIBRARIES: &[&str] = &[
         "libSDL3.so.0",
         "libSDL3.0.dylib",
         "libSDL3.dylib",
         "SDL3.dll",
-    ] {
-        let source = build_dir.join(name);
-        if source.is_file() {
-            fs::copy(&source, output.join(name)).with_context(|| {
-                format!(
-                    "failed to copy runtime library '{}' to '{}'",
-                    source.display(),
-                    output.display()
-                )
-            })?;
+    ];
+
+    let mut copied = BTreeSet::new();
+    for source in runtime_library_candidates(build_dir)? {
+        let Some(name) = source.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !RUNTIME_LIBRARIES.contains(&name) || !copied.insert(name.to_owned()) {
+            continue;
         }
+        fs::copy(&source, output.join(name)).with_context(|| {
+            format!(
+                "failed to copy runtime library '{}' to '{}'",
+                source.display(),
+                output.display()
+            )
+        })?;
     }
     Ok(())
+}
+
+fn runtime_library_candidates(build_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut roots = vec![build_dir.to_path_buf(), build_dir.join("build")];
+    let is_profile_dir = build_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "release" | "debug"));
+    if is_profile_dir && let Some(target_dir) = build_dir.parent() {
+        roots.push(target_dir.join("release").join("build"));
+        roots.push(target_dir.join("debug").join("build"));
+    }
+
+    let mut candidates = Vec::new();
+    let mut visited = BTreeSet::new();
+    for root in roots {
+        if !root.exists() || !visited.insert(root.clone()) {
+            continue;
+        }
+        for entry in WalkDir::new(&root).max_depth(5) {
+            let entry = entry.with_context(|| {
+                format!(
+                    "could not inspect runtime libraries under '{}'",
+                    root.display()
+                )
+            })?;
+            if entry.file_type().is_file() {
+                candidates.push(entry.path().to_path_buf());
+            }
+        }
+    }
+    Ok(candidates)
 }
 
 fn ensure_builtin_font(assets: &Path) -> Result<()> {
@@ -497,7 +539,7 @@ fn zip_package(output: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::package_no_rust_project_at;
+    use super::{copy_runtime_libraries, package_no_rust_project_at};
     use crate::templates::{DemoTemplate, new_project};
     use std::fs;
     use std::path::PathBuf;
@@ -506,9 +548,12 @@ mod tests {
     fn no_rust_package_copies_player_config_and_assets_without_cargo() {
         let project = temp_path("package-project");
         let output = temp_path("package-output");
-        let player = temp_path("fake-player");
+        let sdk = temp_path("package-sdk");
+        let player = sdk.join(super::executable_name("game-player"));
         new_project(&project, DemoTemplate::NoRust, "{ path = \"unused\" }").unwrap();
+        fs::create_dir_all(&sdk).unwrap();
         fs::write(&player, "fake player").unwrap();
+        fs::write(sdk.join("libSDL3.so.0"), "fake sdl").unwrap();
 
         package_no_rust_project_at(&project, &output, false, Some(&player)).unwrap();
 
@@ -516,8 +561,24 @@ mod tests {
         assert!(output.join("assets/maps/level-1.txt").is_file());
         assert!(output.join("README.txt").is_file());
         assert!(output.join(super::executable_name("game-player")).is_file());
+        assert!(output.join("libSDL3.so.0").is_file());
         assert!(!output.join("Cargo.toml").exists());
         assert!(!output.join("src/main.rs").exists());
+    }
+
+    #[test]
+    fn runtime_libraries_are_found_in_cargo_build_script_outputs() {
+        let target = temp_path("runtime-libraries-target");
+        let release = target.join("release");
+        let sdl_out = release.join("build/sdl3-sys-abc/out/lib64");
+        let output = temp_path("runtime-libraries-output");
+        fs::create_dir_all(&sdl_out).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        fs::write(sdl_out.join("libSDL3.so.0"), "fake sdl").unwrap();
+
+        copy_runtime_libraries(&release, &output).unwrap();
+
+        assert!(output.join("libSDL3.so.0").is_file());
     }
 
     fn temp_path(name: &str) -> PathBuf {
