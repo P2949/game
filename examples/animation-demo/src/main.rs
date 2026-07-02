@@ -4,9 +4,9 @@ fn main() -> Result<()> {
     run_game("Animation Demo", |game| {
         let assets = game
             .asset_bag()
-            .spritesheet_from_meta("player", "animations/player.ron")?
-            .spritesheet_from_meta("slime", "animations/slime.ron")?
-            .spritesheet_from_meta("bolt", "animations/bolt.ron")?
+            .spritesheet_from_meta("player", "animations/player.toml")?
+            .spritesheet_from_meta("slime", "animations/slime.toml")?
+            .spritesheet_from_meta("bolt", "animations/bolt.toml")?
             .texture("floor", "textures/test.png")?
             .texture("wall", "textures/test.png")?
             .build();

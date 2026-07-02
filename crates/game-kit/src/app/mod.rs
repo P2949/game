@@ -150,6 +150,25 @@ impl<'app> GameApp<'app> {
         AssetFolderAuthor::new(self.asset_bag())
     }
 
+    /// Loads a primary no-Rust `game.toml` package file. The package's asset
+    /// root is the `assets/` directory next to `game.toml`.
+    pub fn load_authoring_file(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<crate::input::TopDownControls> {
+        crate::data::load_authoring_file(self, path)
+    }
+
+    /// Loads a primary no-Rust `game.toml` package file with an explicit asset
+    /// root. Relative asset roots are resolved from the package root.
+    pub fn load_authoring_file_with_asset_root(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        asset_root: impl AsRef<std::path::Path>,
+    ) -> Result<crate::input::TopDownControls> {
+        crate::data::load_authoring_file_with_asset_root(self, path, asset_root)
+    }
+
     /// Loads `assets/game.ron`-style beginner content through the same public
     /// asset, prefab, map, input, and rule builders used by Rust-authored games.
     /// Add custom Rust behavior after this call for the hybrid workflow.
@@ -160,8 +179,9 @@ impl<'app> GameApp<'app> {
         crate::data::load_beginner_game_file(self, path)
     }
 
-    /// Loads named numeric values from an `assets/` RON file and installs the
+    /// Loads named numeric values from an `assets/` TOML file and installs the
     /// same file as a runtime resource for development-time reload support.
+    /// Legacy RON tuning files remain supported while old projects migrate.
     pub fn tuning_from_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<TuningFile> {
         let tuning = TuningFile::from_file(path)?;
         let startup_tuning = tuning.clone();
@@ -295,7 +315,7 @@ impl<'app> GameApp<'app> {
         MapAuthor::in_code(self, name.into_content_name())
     }
 
-    /// Begins declaring a map from an external RON document.
+    /// Begins declaring a map from a legacy/advanced external RON document.
     pub fn map_from_ron(&mut self, ron: impl Into<String>) -> MapAuthor<'_, 'app> {
         MapAuthor::from_ron(self, ron.into())
     }

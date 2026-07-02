@@ -156,6 +156,50 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           SDL_VIDEODRIVER: x11
         run: xvfb-run -a --server-args="-screen 0 1280x720x24" vulkaninfo --summary
+      - name: Check and smoke no-Rust example packages
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: |
+          for project in \
+            examples/no-rust-minimal \
+            examples/no-rust-events \
+            examples/no-rust-waves \
+            examples/no-rust-projectiles \
+            examples/no-rust-full \
+            examples/no-rust-tiled
+          do
+            cargo run -p game-cli --features ci-build-sdl3 -- check --project "$project"
+            timeout -k 5s 120s xvfb-run -a --server-args="-screen 0 1280x720x24" \
+              cargo run -p game-player --locked --features ci-build-sdl3 -- --project "$project" --smoke-frames 0
+          done
+      - name: Build no-Rust SDK artifact
+        run: cargo run -p xtask --features ci-build-sdl3 -- package-sdk --release --features ci-build-sdl3 --out /tmp/game-sdk
+      - name: Verify no-Rust SDK without Cargo
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUST_LOG: info
+          SDL_VIDEODRIVER: x11
+        run: |
+          sdk=/tmp/game-sdk
+          no_cargo_bin=/tmp/no-cargo-bin
+          mkdir -p "$no_cargo_bin"
+          cat > "$no_cargo_bin/cargo" <<'SH'
+          #!/usr/bin/env sh
+          echo "cargo must not be called after the SDK has been built" >&2
+          exit 127
+          SH
+          chmod +x "$no_cargo_bin/cargo"
+          sdk_path="$no_cargo_bin:$sdk:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          if [ "$(PATH="$sdk_path" command -v cargo)" != "$no_cargo_bin/cargo" ]; then
+            echo "cargo guard shim is not first on PATH" >&2
+            exit 1
+          fi
+          PATH="$sdk_path" "$sdk/game-dev" new /tmp/sdk-no-rust --template no-rust
+          PATH="$sdk_path" "$sdk/game-dev" check --project /tmp/sdk-no-rust
+          PATH="$sdk_path" timeout -k 5s 120s xvfb-run -a --server-args="-screen 0 1280x720x24" \
+            "$sdk/game-dev" preview --project /tmp/sdk-no-rust --smoke-frames 0
       - name: Render 120 frames headless and exit cleanly
         env:
           GAME_SMOKE_FRAMES: "120"

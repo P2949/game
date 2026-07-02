@@ -85,19 +85,19 @@ Run:
 ```bash
 game-dev doctor --explain
 game-dev asset-check
-game-dev validate-data assets/game.ron
+game-dev validate-data
 ```
 
 `game-dev check` is a quick generated-project check: it runs the setup doctor,
-validates assets, validates `assets/game.ron` when the file exists, and then
-runs `cargo check`. If the final compiler error mentions SDL3, Vulkan, or
-`glslc`, fix the first setup problem reported by the doctor before changing
-game code.
+validates assets, validates primary `game.toml` or legacy `assets/game.ron`
+when either file exists, and then runs `cargo check` for Rust starter projects.
+If the final compiler error mentions SDL3, Vulkan, or `glslc`, fix the first
+setup problem reported by the doctor before changing game code.
 
 `game-dev doctor` is advisory: it prints setup guidance and returns success
 unless the command itself crashes. `game-dev check` is the hard gate. It fails
 when the current directory cannot be read, `assets/` is missing, assets contain
-invalid or unknown files, optional `assets/game.ron` is invalid, or
+invalid or unknown files, optional legacy `assets/game.ron` is invalid, or
 `cargo check` fails. Vulkan, audio, validation-layer, and optional-tool problems
 are setup warnings for this command unless the requested cargo check needs them.
 
@@ -111,7 +111,7 @@ If this looks like a setup issue:
 
 If this looks like an asset/data issue:
     game-dev asset-check
-    game-dev validate-data assets/game.ron
+    game-dev validate-data
 
 See:
     docs/tutorials/common-errors.md
@@ -119,7 +119,8 @@ See:
 
 Run the setup command first for SDL3, Vulkan, shader compiler, or audio
 prerequisite errors. Run the asset/data commands first for missing files,
-unknown prefab names, bad map symbols, or `assets/game.ron` validation errors.
+unknown prefab names, bad map symbols, primary `game.toml` validation errors,
+or legacy `assets/game.ron` validation errors.
 
 SDL3 fails while building from source
 
@@ -170,9 +171,11 @@ F5 says restart required
 
 F5 can reload existing values and files attached to existing names: edited text
 maps, tuning values, registered textures and sounds, and supported existing
-`assets/game.ron` entries. Adding, removing, or reordering assets, prefabs,
+legacy `assets/game.ron` entries. Adding, removing, or reordering assets, prefabs,
 maps, actions, scenes, rules, or custom rule names changes the startup shape of
-the game and requires a restart. This is intentional for 1.0.
+the game and requires a restart. This is intentional for 1.0. In the primary
+no-Rust workflow, run `game-dev preview --watch` so that restart happens through
+the prebuilt player without Cargo or a Rust build.
 
 See [Fast iteration](12-fast-iteration.md) for the full reload table.
 
@@ -347,15 +350,16 @@ Then put a `P` in the text-map file itself.
 `unknown map 'levle_2'`
 
 Map transition names are exact. Check the string passed to `.change_map(...)`,
-`.go_to_map(...)`, a door prefab, or `assets/game.ron` against the names passed
+`.go_to_map(...)`, a door prefab, or legacy `assets/game.ron` against the names passed
 to `game.map("level_2")` / `game.map_from_text("level_2", ...)`. Fix the typo
 at the caller; do not try to switch maps with raw map IDs.
 
 Tiled object maps to the wrong prefab
 
-If the Tiled object has class, type, or name `"Slime"` but Rust or `game.ron`
-maps it to `"slmie"`, the importer cannot spawn the prefab you meant. Fix
-either the prefab name or the object mapping so both sides use the same key.
+If the Tiled object has class, type, or name `"Slime"` but Rust or legacy
+`game.ron` maps it to `"slmie"`, the importer cannot spawn the prefab you
+meant. Fix either the prefab name or the object mapping so both sides use the
+same key.
 
 Rust Tiled mapping:
 
@@ -363,7 +367,7 @@ Rust Tiled mapping:
 .object("Slime", "slime")
 ```
 
-No-Rust `game.ron` mapping:
+Legacy RON `game.ron` mapping:
 
 ```ron
 objects: {"Slime": "slime"}
@@ -407,7 +411,7 @@ continuous audio.
 
 ## Data-file errors
 
-New `assets/game.ron` files use structured, case-sensitive names:
+New legacy `assets/game.ron` files use structured, case-sensitive names:
 
 ```ron
 controls: TopDown,
@@ -415,9 +419,9 @@ rules: [TopDownControls, PlayerCollectsPickups, ShowBasicUi],
 ```
 
 Old strings such as `"top_down"` and `"show_score"` still work, but the current
-templates use structured names. If a data file says an asset, prefab, map,
-scene, sound, music track, tag, or rule is unknown, fix the spelling in
-`game.ron`; the message lists known values and suggests close matches.
+templates use structured names. If a legacy data file says an asset, prefab,
+map, scene, sound, music track, tag, or rule is unknown, fix the spelling in
+legacy `game.ron`; the message lists known values and suggests close matches.
 
 `references unknown music 'theem'. Known music: theme. Did you mean 'theme'?`
 
@@ -431,7 +435,7 @@ audio: (music_on_scene: {"level_1": (track: "theme")}),
 
 `unknown action 'Attak'. Known actions: Attack, Pause, Reset, Reload, MenuAccept`
 
-Action names in `game.ron` are case-sensitive. Use one of the standard
+Action names in legacy `game.ron` are case-sensitive. Use one of the standard
 top-down actions:
 
 ```ron
@@ -455,6 +459,8 @@ or change the countdown rule to use the existing key:
 ```ron
 Countdown((name: "explode", tag: "explosive", key: "fuse", when_zero: [DespawnSelf]))
 ```
+
+Legacy RON parse error:
 
 `beginner game file 'game.ron' is not valid RON`
 

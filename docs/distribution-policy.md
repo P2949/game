@@ -26,9 +26,21 @@ cargo xtask new-demo my-game
 That creates the same starter shape with a local path dependency.
 
 Prebuilt demo zips are attached to GitHub Releases for players who want to try
-the bundled demo before installing Rust. The `v0.2.0` release attaches
-verified Linux and Windows demo zips. They are demo packages, not a full SDK or
-installer, and they still require a Vulkan-capable GPU/driver.
+the bundled demo before installing Rust. The `v0.2.0` release attaches verified
+Linux and Windows demo zips. They are demo packages, not installers, and they
+still require a Vulkan-capable GPU/driver.
+
+The release workflow also builds no-Rust SDK zips:
+
+```text
+game-sdk-linux-x86_64.zip
+game-sdk-windows-x86_64.zip
+```
+
+SDK zips include `game-player`, `game-dev`, `templates/no-rust-demo/`,
+launcher scripts, notices, and verification that a no-Rust project can be
+created, checked, and previewed without compiling user code after the SDK is
+built.
 
 ## Why
 

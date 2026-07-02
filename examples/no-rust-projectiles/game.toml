@@ -1,0 +1,94 @@
+version = 2
+
+[game]
+title = "No Rust Projectiles"
+start_map = "range"
+
+[assets]
+textures = ["player", "slime", "coin", "bolt", "floor", "wall"]
+sounds = ["hit", "coin", "shoot"]
+
+[controls]
+preset = "top-down"
+
+[[prefab]]
+kind = "player"
+name = "player"
+sprite = "player"
+health = 20
+
+[[prefab]]
+kind = "enemy"
+name = "slime"
+sprite = "slime"
+health = 3
+chase_player = true
+drops = "coin"
+tags = ["enemy"]
+
+[[prefab]]
+kind = "pickup"
+name = "coin"
+sprite = "coin"
+score = 1
+sound = "coin"
+
+[[prefab]]
+kind = "projectile"
+name = "bolt"
+sprite = "bolt"
+damage = 1
+speed = 300
+duration = 1
+
+[[map]]
+kind = "text"
+name = "range"
+file = "assets/maps/range.txt"
+floor = "floor"
+wall = "wall"
+start = true
+
+[map.legend]
+P = "player"
+E = "slime"
+
+[[map]]
+kind = "text"
+name = "win"
+file = "assets/maps/win.txt"
+floor = "floor"
+wall = "wall"
+
+[map.legend]
+P = "player"
+
+[scene_flow]
+game = "range"
+win = "win"
+win_text = "Projectile room cleared"
+win_condition = "all-enemies-dead"
+
+[[action]]
+kind = "player-shoots"
+prefab = "bolt"
+action = "attack"
+cooldown = 0.2
+direction = "towards-mouse"
+sound = "shoot"
+
+[rules]
+enabled = [
+  "top-down-controls",
+  "player-collects-pickups",
+  "enemies-damage-player",
+  "dead-enemies-despawn",
+  "enemy-drops",
+  "projectiles",
+  "camera-follows-player",
+  "show-basic-ui",
+  "show-score",
+  "show-enemy-count",
+  "show-win-panel",
+  "win-when-all-enemies-dead",
+]

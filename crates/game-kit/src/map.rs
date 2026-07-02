@@ -1,7 +1,7 @@
 //! Map authoring (Phase 6) and content/runtime map services (Phase 7).
 //!
-//! [`MapAuthor`] declares a map in code or loads one from RON, referring to
-//! prefabs by **name** (matching the RON format) instead of `PrefabId`. On
+//! [`MapAuthor`] declares a map in code or loads one from legacy/advanced RON,
+//! referring to prefabs by **name** (matching the RON format) instead of `PrefabId`. On
 //! finalization the facade resolves names, validates the map, registers its
 //! collision tilemap + theme for rendering, and records the full [`GameMap`] (with
 //! objects) into a [`ContentRuntime`] resource so startup/reset systems can spawn
@@ -15,10 +15,9 @@ use std::rc::Rc;
 use anyhow::{Context, Result, anyhow};
 use game_core::app::MapData;
 use game_core::builder::{MapId, PrefabId, PrefabRegistry, PropertyBag};
-use game_core::commands::CommandQueue;
+use game_core::commands::{CommandErrorKind, CommandErrors, CommandQueue};
 use game_core::nav::NavGrid;
-use game_core::world::World;
-use game_core::world::{Sprite, Transform};
+use game_core::world::{EntityId, Sprite, Transform, World};
 use game_map::{
     GameMap, MapBuilder, MapCell, MapValidator, cell, load_game_map_ron, load_ldtk_level_file,
     load_tiled_map_file, validate_map_prefabs,
@@ -339,7 +338,7 @@ pub(crate) fn beginner_asset_path(path: &str) -> PathBuf {
 }
 
 /// Builder for one map. Created by [`GameApp::map`] (in-code) or
-/// [`GameApp::map_from_ron`] (external content). Finalized lazily by
+/// [`GameApp::map_from_ron`] (legacy/advanced external content). Finalized lazily by
 /// [`Self::start`].
 pub struct MapAuthor<'a, 'app> {
     app: &'a mut GameApp<'app>,
@@ -840,11 +839,25 @@ impl ContentRuntime {
         ))
     }
 
-    fn spawn_current(&self, world: &mut World) -> Result<()> {
-        let map = self
-            .maps
-            .get(&self.current_map)
-            .ok_or_else(|| anyhow!("unknown current map '{}'", self.current_map))?;
+    fn map_by_name(&self, name: &str) -> Result<&GameMap> {
+        self.maps
+            .get(name)
+            .ok_or_else(|| anyhow!("unknown map '{name}'"))
+    }
+
+    fn preflight_spawn_map(&self, map_name: &str) -> Result<()> {
+        let map = self.map_by_name(map_name)?;
+        validate_map_prefabs(map, &self.prefabs)
+            .with_context(|| format!("map '{map_name}' references unknown prefab"))
+    }
+
+    fn preflight_spawn_map_in_world(&self, world: &mut World, map_name: &str) -> Result<()> {
+        let map = self.map_by_name(map_name)?;
+        spawn_map_objects_transactional(world, map, &self.prefabs).map(|_| ())
+    }
+
+    fn spawn_map_by_name(&self, world: &mut World, map_name: &str) -> Result<()> {
+        let map = self.map_by_name(map_name)?;
         spawn_map_objects(world, map, &self.prefabs)
     }
 }
@@ -852,11 +865,39 @@ impl ContentRuntime {
 /// Spawns every object of `map` through `prefabs` (Phase 7.2). Shared by startup
 /// and reset, so neither content crate carries its own copy.
 pub fn spawn_map_objects(world: &mut World, map: &GameMap, prefabs: &PrefabRegistry) -> Result<()> {
+    spawn_map_objects_transactional(world, map, prefabs).map(|_| ())
+}
+
+fn spawn_map_objects_transactional(
+    world: &mut World,
+    map: &GameMap,
+    prefabs: &PrefabRegistry,
+) -> Result<Vec<EntityId>> {
+    let mut spawned = Vec::new();
     for object in &map.objects {
-        let entity = prefabs.spawn(object.prefab, world, object.position, &object.properties)?;
-        validate_spawned_collision_components(world, entity, &map.name, &object.id)?;
+        let entity = match prefabs.spawn(object.prefab, world, object.position, &object.properties)
+        {
+            Ok(entity) => entity,
+            Err(error) => {
+                rollback_spawned_entities(world, &spawned);
+                return Err(error);
+            }
+        };
+        spawned.push(entity);
+        if let Err(error) =
+            validate_spawned_collision_components(world, entity, &map.name, &object.id)
+        {
+            rollback_spawned_entities(world, &spawned);
+            return Err(error);
+        }
     }
-    Ok(())
+    Ok(spawned)
+}
+
+fn rollback_spawned_entities(world: &mut World, spawned: &[EntityId]) {
+    for entity in spawned.iter().rev() {
+        world.despawn(*entity);
+    }
 }
 
 /// Validates collision-bearing beginner roles immediately after their prefabs
@@ -919,14 +960,50 @@ fn switch_world_to_map(world: &mut World, map_name: String) -> Result<MapId> {
     let mut content = world
         .remove_resource::<ContentRuntime>()
         .ok_or_else(|| anyhow!("content runtime missing; was the game-kit plugin used?"))?;
-    let map_id = content
-        .map_id(&map_name)
-        .ok_or_else(|| anyhow!("unknown map '{map_name}'"))?;
-    content.current_map = map_name;
+    let previous_map = content.current_map.clone();
+    let Some(map_id) = content.map_id(&map_name) else {
+        let message = format!("unknown map '{map_name}'");
+        world.insert_resource(content);
+        record_map_transition_error(world, message.clone());
+        anyhow::bail!(message);
+    };
+    let preflight = content
+        .preflight_spawn_map(&map_name)
+        .and_then(|()| content.preflight_spawn_map_in_world(world, &map_name));
+    if let Err(error) = preflight {
+        let message = format!("failed to switch to map '{map_name}': {error}");
+        content.current_map = previous_map;
+        world.insert_resource(content);
+        record_map_transition_error(world, message.clone());
+        anyhow::bail!(message);
+    }
     clear_world_for_map_respawn(world);
-    let result = content.spawn_current(world).map(|()| map_id);
+    let result = match content.spawn_map_by_name(world, &map_name) {
+        Ok(()) => {
+            content.current_map = map_name.clone();
+            Ok(map_id)
+        }
+        Err(error) => {
+            let mut message = format!("failed to switch to map '{map_name}': {error}");
+            content.current_map = previous_map.clone();
+            clear_world_for_map_respawn(world);
+            if let Err(rollback) = content.spawn_map_by_name(world, &previous_map) {
+                message.push_str(&format!(
+                    "; also failed to restore previous map '{previous_map}': {rollback}"
+                ));
+            }
+            record_map_transition_error(world, message.clone());
+            Err(anyhow!(message))
+        }
+    };
     world.insert_resource(content);
     result
+}
+
+fn record_map_transition_error(world: &mut World, message: impl Into<String>) {
+    world
+        .resource_or_insert_with(CommandErrors::default)
+        .push(CommandErrorKind::MapTransition, message);
 }
 
 pub(crate) fn change_to_map_world(world: &mut World, map_name: &str) -> Result<MapId> {
@@ -959,10 +1036,16 @@ pub(crate) fn reset_to_start_map_world(world: &mut World) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use game_core::world::{Entity, World};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    use game_core::backend::TextureHandle;
+    use game_core::builder::{MapId, PrefabRegistry};
+    use game_core::world::{Entity, Sprite, Transform, World};
 
     use super::{
-        expand_symbolic_tiles, validate_map_row_widths, validate_spawned_collision_components,
+        ContentRuntime, TileTheme, expand_symbolic_tiles, switch_world_to_map,
+        validate_map_row_widths, validate_spawned_collision_components,
     };
     use crate::beginner::actors::{Door, TriggerArea};
 
@@ -1029,5 +1112,63 @@ mod tests {
             .to_string();
 
         assert!(error.contains("spawned a trigger area with a zero-size or invalid collider"));
+    }
+
+    #[test]
+    fn map_switch_preflight_does_not_spawn_prefabs_without_world_resources() {
+        let mut prefabs = PrefabRegistry::new();
+        let prefab = prefabs.register("needs_resource", |world, position, _properties| {
+            let value = world
+                .get_resource::<String>()
+                .ok_or_else(|| anyhow::anyhow!("missing spawn resource"))?;
+            anyhow::ensure!(value == "ready", "unexpected spawn resource");
+            Ok(world.spawn(Entity::new(position)))
+        });
+        let prefabs = Rc::new(prefabs);
+
+        let menu = game_map::MapBuilder::new("menu", 16.0)
+            .tile_layer("collision", &["."])
+            .finish();
+        let game = game_map::MapBuilder::new("game", 16.0)
+            .tile_layer("collision", &["."])
+            .object("spawn", prefab, game_map::cell(0, 0))
+            .finish();
+        let mut maps = HashMap::new();
+        maps.insert("menu".to_owned(), menu);
+        maps.insert("game".to_owned(), game);
+        let mut map_ids = HashMap::new();
+        map_ids.insert("menu".to_owned(), MapId(0));
+        map_ids.insert("game".to_owned(), MapId(1));
+        let theme = test_theme();
+        let mut themes = HashMap::new();
+        themes.insert("menu".to_owned(), theme);
+        themes.insert("game".to_owned(), theme);
+
+        let mut world = World::new();
+        world.insert_resource("ready".to_owned());
+        world.insert_resource(ContentRuntime::new(
+            prefabs,
+            maps,
+            map_ids,
+            themes,
+            HashMap::new(),
+            "menu".to_owned(),
+        ));
+
+        let map = switch_world_to_map(&mut world, "game".to_owned()).unwrap();
+
+        assert_eq!(map, MapId(1));
+        assert_eq!(world.ids_with::<Transform>().len(), 1);
+        assert_eq!(
+            world.get_resource::<String>().map(String::as_str),
+            Some("ready")
+        );
+    }
+
+    fn test_theme() -> TileTheme {
+        TileTheme {
+            floor: Sprite::new(TextureHandle(0), glam::Vec2::ONE),
+            wall: Sprite::new(TextureHandle(0), glam::Vec2::ONE),
+        }
     }
 }

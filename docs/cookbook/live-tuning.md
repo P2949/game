@@ -1,35 +1,34 @@
 # Live tuning
 
-Keep numbers such as health, movement speed, and melee damage in a small RON
-file so you can tune them without recompiling Rust.
+Keep numbers such as health, movement speed, and melee damage in a small TOML
+tuning file so you can tune them without recompiling Rust.
 
-Create `assets/tuning/arena.ron`:
+Create `assets/tuning/arena.toml`:
 
-```ron
-(
-    "player.health": 100.0,
-    "player.speed": 130.0,
-    "slime.health": 40.0,
-    "slime.speed": 80.0,
-    "slime.melee_damage": 6.0,
-)
+```toml
+[tuning]
+player_health = 100
+player_speed = 130
+slime_health = 40
+slime_speed = 80
+slime_melee_damage = 6
 ```
 
 Load it while defining the prefabs:
 
 ```rust
-let tuning = game.tuning_from_file("tuning/arena.ron")?;
+let tuning = game.tuning_from_file("tuning/arena.toml")?;
 
 game.player_prefab("player")
     .sprite("player")
-    .moves_with(controls.movement, tuning.float("player.speed"))
-    .health(tuning.int("player.health"))
+    .moves_with(controls.movement, tuning.float("player_speed"))
+    .health(tuning.int("player_health"))
     .build()?;
 
 game.enemy_prefab("slime")
     .sprite("slime")
-    .speed(tuning.float("slime.speed"))
-    .melee(26.0, tuning.int("slime.melee_damage"))
+    .speed(tuning.float("slime_speed"))
+    .melee(26.0, tuning.int("slime_melee_damage"))
     .chases_player()
     .build()?;
 ```
@@ -37,8 +36,8 @@ game.enemy_prefab("slime")
 ## Reload while you work
 
 Use a text map such as `assets/maps/level_1.txt`, run a debug build, save the
-RON file, then press F5. The standard development reload action reloads a
-configured tuning file before it reparses and respawns the current text map.
+tuning TOML file, then press F5. The standard development reload action reloads
+a configured tuning file before it reparses and respawns the current text map.
 Freshly spawned actors therefore use the new numbers.
 
 For a release build, opt into that same manual development action:

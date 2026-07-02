@@ -23,3 +23,4 @@ game-map = { version = "0.1.0", path = "../game-map" }
 game-ai = { version = "0.1.0", path = "../game-ai" }
 game-combat = { version = "0.1.0", path = "../game-combat" }
 game-physics = { version = "0.1.0", path = "../game-physics" }
+toml.workspace = true

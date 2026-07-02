@@ -7,6 +7,24 @@ use std::path::Path;
 pub(crate) const BEGINNER_CONTENT_CRATES: &[&str] = &["simple-content", "arena-content"];
 pub(crate) const ADVANCED_CONTENT_CRATES: &[&str] = &["testbed-content"];
 
+pub(crate) const PRIMARY_NO_RUST_PATHS: &[&str] = &[
+    "templates/no-rust-demo",
+    "examples/no-rust-minimal",
+    "examples/no-rust-events",
+    "examples/no-rust-waves",
+    "examples/no-rust-projectiles",
+    "examples/no-rust-full",
+    "examples/no-rust-tiled",
+];
+
+pub(crate) const PRIMARY_NO_RUST_DOCS: &[&str] = &[
+    "README.md",
+    "docs/api-boundary.md",
+    "docs/no-rust-package-layout.md",
+    "docs/beginner-authoring.md",
+    "docs/content-authoring.md",
+];
+
 pub(crate) const BEGINNER_CONTENT_FORBIDDEN: &[&str] = &[
     "game_kit::prelude::*",
     "game_kit::advanced::prelude::*",
@@ -207,8 +225,10 @@ pub(crate) fn read_game_cli_sources() -> String {
         "crates/game-cli/src/paths.rs",
         "crates/game-cli/src/process.rs",
         "crates/game-cli/src/templates.rs",
+        "crates/game-cli/src/commands/authoring_scan.rs",
         "crates/game-cli/src/commands/check.rs",
         "crates/game-cli/src/commands/doctor.rs",
+        "crates/game-cli/src/commands/migrate_ron.rs",
         "crates/game-cli/src/commands/package.rs",
         "crates/game-cli/src/commands/release_check.rs",
     ]
@@ -281,6 +301,20 @@ pub(crate) fn collect_markdown_files(dir: &Path, out: &mut Vec<std::path::PathBu
         if path.is_dir() {
             collect_markdown_files(&path, out);
         } else if path.extension().and_then(|extension| extension.to_str()) == Some("md") {
+            out.push(path);
+        }
+    }
+}
+
+pub(crate) fn collect_all_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap_or_else(|err| {
+        panic!("failed to read directory {}: {err}", dir.display());
+    }) {
+        let entry = entry.expect("failed to read directory entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_all_files(&path, out);
+        } else {
             out.push(path);
         }
     }

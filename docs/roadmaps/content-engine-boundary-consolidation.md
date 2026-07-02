@@ -224,7 +224,7 @@ Current reality:
 
 ### 1.1 Write a short API boundary contract
 
-**Status:** Done on 2026-07-01. Added `docs/api-boundary.md` with the no-Rust, beginner Rust, advanced content, facade/internal, runtime/backend, and compatibility-policy sections.
+**Status:** Done on 2026-07-01. Added `docs/api-boundary.md` with the then-current legacy RON data, beginner Rust, advanced content, facade/internal, runtime/backend, and compatibility-policy sections.
 
 Create:
 
@@ -234,7 +234,7 @@ docs/api-boundary.md
 
 Required sections:
 
-1. `No-Rust data path`
+1. `Legacy RON data path` (formerly described as no-Rust)
    - Uses `assets/game.ron`.
    - Runtime/backends remain hidden.
    - Schema is versioned through `version: 1` currently.

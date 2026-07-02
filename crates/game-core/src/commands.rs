@@ -53,6 +53,8 @@ pub enum CommandErrorKind {
     ReloadAssets,
     RestartMap,
     RestartStartMap,
+    AuthoringSpawn,
+    MapTransition,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

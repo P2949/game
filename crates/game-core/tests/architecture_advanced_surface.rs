@@ -67,7 +67,8 @@ fn advanced_transition_guide_names_the_boundary() {
     let guide = fs::read_to_string(root.join("docs/when-to-use-advanced-api.md"))
         .expect("failed to read advanced transition guide");
     for required in [
-        "Most demos should stay with the beginner API",
+        "Most demos should stay with the primary `game.toml` package",
+        "Advanced Rust authoring is not the primary no-Rust surface.",
         "Stay beginner for normal demos",
         "Use `game_kit::advanced::prelude::*`",
         "custom ECS systems",

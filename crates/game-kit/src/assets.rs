@@ -437,7 +437,8 @@ impl<'a> AssetFolderAuthor<'a> {
         Ok(self)
     }
 
-    /// Registers `assets/animations/<key>.ron` as an animation sheet.
+    /// Registers `assets/animations/<key>.toml` as an animation sheet, falling
+    /// back to legacy `.ron` metadata when that is the only file present.
     pub fn animation_sheet_auto(mut self, key: impl Into<String>) -> Result<Self> {
         self.bag = self.bag.animation_sheet_auto(key)?;
         Ok(self)
@@ -550,9 +551,10 @@ impl<'a> AssetBagAuthor<'a> {
         Ok(self)
     }
 
-    /// Registers a spritesheet and named clips from a RON metadata document
-    /// under `assets/<path>`. Use `assets.animation_sheet("player")` with a
-    /// prefab's `.animation_sheet(...)` method afterwards.
+    /// Registers a spritesheet and named clips from a TOML metadata document
+    /// under `assets/<path>`. Legacy RON metadata remains supported for
+    /// compatibility. Use `assets.animation_sheet("player")` with a prefab's
+    /// `.animation_sheet(...)` method afterwards.
     pub fn spritesheet_from_meta(
         mut self,
         key: impl Into<String>,
@@ -567,11 +569,15 @@ impl<'a> AssetBagAuthor<'a> {
         Ok(self)
     }
 
-    /// Registers `assets/animations/<key>.ron` as a spritesheet with named
-    /// clips. Use `assets.animation_sheet("<key>")` with a prefab afterwards.
+    /// Registers `assets/animations/<key>.toml` as a spritesheet with named
+    /// clips, falling back to legacy `.ron` metadata if needed. Use
+    /// `assets.animation_sheet("<key>")` with a prefab afterwards.
     pub fn animation_sheet_auto(self, key: impl Into<String>) -> Result<Self> {
         let key = key.into();
-        self.spritesheet_from_meta(key.clone(), format!("animations/{key}.ron"))
+        self.spritesheet_from_meta(
+            key.clone(),
+            conventional_asset_path("animations", &key, &["toml", "ron"]),
+        )
     }
 
     pub fn build(self) -> AssetBag {
@@ -702,7 +708,10 @@ struct AnimationSheetMetadata {
     texture: String,
     columns: u32,
     rows: u32,
+    #[serde(default)]
     clips: HashMap<String, AnimationClipMetadata>,
+    #[serde(default)]
+    clip: Vec<NamedAnimationClipMetadata>,
 }
 
 #[derive(Deserialize)]
@@ -714,7 +723,20 @@ struct AnimationClipMetadata {
     looping: bool,
 }
 
+#[derive(Deserialize)]
+struct NamedAnimationClipMetadata {
+    name: String,
+    #[serde(flatten)]
+    clip: AnimationClipMetadata,
+}
+
 type ParsedAnimationSheetMetadata = (String, u32, u32, Vec<(String, AnimationClip)>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AnimationMetadataFormat {
+    Toml,
+    LegacyRon,
+}
 
 fn default_animation_fps() -> f32 {
     8.0
@@ -728,16 +750,30 @@ fn parse_animation_sheet_metadata(
     path: &str,
     source: &str,
 ) -> Result<ParsedAnimationSheetMetadata> {
-    let metadata: AnimationSheetMetadata = ron::from_str(source).map_err(|error| {
-        anyhow!(
-            "Animation metadata 'assets/{path}' is not valid RON: {error}.\n\nUse fields: texture, columns, rows, and clips."
-        )
-    })?;
+    let format = animation_metadata_format(path);
+    let metadata: AnimationSheetMetadata = match format {
+        AnimationMetadataFormat::Toml => toml::from_str(source).map_err(|error| {
+            anyhow!(
+                "Animation metadata 'assets/{path}' is not valid TOML: {error}.\n\nUse fields: texture, columns, rows, and [[clip]] entries."
+            )
+        })?,
+        AnimationMetadataFormat::LegacyRon => ron::from_str(source).map_err(|error| {
+            anyhow!(
+                "Legacy animation metadata 'assets/{path}' is not valid RON: {error}.\n\nUse primary TOML fields: texture, columns, rows, and [[clip]] entries."
+            )
+        })?,
+    };
+    if format == AnimationMetadataFormat::Toml && !metadata.clips.is_empty() {
+        anyhow::bail!(
+            "Animation metadata 'assets/{path}' should use [[clip]] entries, not a clips map."
+        );
+    }
     if metadata.columns == 0 || metadata.rows == 0 {
         anyhow::bail!("Animation metadata 'assets/{path}' needs non-zero columns and rows.");
     }
     let total_frames = metadata.columns as usize * metadata.rows as usize;
     let mut clips = metadata.clips.into_iter().collect::<Vec<_>>();
+    clips.extend(metadata.clip.into_iter().map(|clip| (clip.name, clip.clip)));
     clips.sort_by(|left, right| left.0.cmp(&right.0));
     let clips = clips
         .into_iter()
@@ -765,11 +801,21 @@ fn parse_animation_sheet_metadata(
     Ok((metadata.texture, metadata.columns, metadata.rows, clips))
 }
 
+fn animation_metadata_format(path: &str) -> AnimationMetadataFormat {
+    match Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+    {
+        Some(extension) if extension.eq_ignore_ascii_case("toml") => AnimationMetadataFormat::Toml,
+        _ => AnimationMetadataFormat::LegacyRon,
+    }
+}
+
 /// Validates a conventional animation metadata file such as
-/// `assets/animations/player.ron`.
+/// `assets/animations/player.toml`.
 ///
 /// The metadata uses asset-root-relative texture paths, so a file at
-/// `assets/animations/player.ron` that says `texture: "textures/player.png"`
+/// `assets/animations/player.toml` that says `texture = "textures/player.png"`
 /// must have `assets/textures/player.png` next to it.
 pub fn validate_animation_sheet_file(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
@@ -874,9 +920,10 @@ impl<'a> AssetAuthor<'a> {
         Ok(SpriteSheet::new(texture, columns, rows))
     }
 
-    /// Loads `texture`, grid dimensions, and named clips from a small RON file.
-    /// The metadata texture path is relative to the game asset folder, just like
-    /// `.texture(...)` and `.spritesheet(...)` paths.
+    /// Loads `texture`, grid dimensions, and named clips from a small TOML file.
+    /// Legacy RON metadata is still accepted. The metadata texture path is
+    /// relative to the game asset folder, just like `.texture(...)` and
+    /// `.spritesheet(...)` paths.
     pub fn spritesheet_from_meta(
         &mut self,
         key: impl Into<String>,
@@ -1098,7 +1145,7 @@ mod tests {
     }
 
     #[test]
-    fn animation_metadata_creates_sorted_named_clips_without_rust_frame_ranges() {
+    fn legacy_ron_animation_metadata_creates_sorted_named_clips_without_rust_frame_ranges() {
         let (texture, columns, rows, clips) = parse_animation_sheet_metadata(
             "animations/player.ron",
             r#"(
@@ -1122,6 +1169,56 @@ mod tests {
     }
 
     #[test]
+    fn animation_metadata_toml_creates_sorted_named_clips() {
+        let (texture, columns, rows, clips) = parse_animation_sheet_metadata(
+            "animations/player.toml",
+            r#"
+texture = "textures/player.png"
+columns = 4
+rows = 1
+
+[[clip]]
+name = "walk_right"
+frames = [3]
+fps = 10
+
+[[clip]]
+name = "attack_down"
+frames = [1, 2]
+fps = 12
+looping = false
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(texture, "textures/player.png");
+        assert_eq!((columns, rows), (4, 1));
+        assert_eq!(clips[0].0, "attack_down");
+        assert!(!clips[0].1.looping);
+        assert_eq!(clips[1].0, "walk_right");
+        assert!(clips[1].1.looping);
+    }
+
+    #[test]
+    fn animation_metadata_toml_rejects_legacy_clip_maps() {
+        let error = parse_animation_sheet_metadata(
+            "animations/player.toml",
+            r#"
+texture = "textures/player.png"
+columns = 4
+rows = 1
+
+[clips.idle]
+frames = [0]
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("should use [[clip]] entries"));
+    }
+
+    #[test]
     fn animation_metadata_explains_invalid_frame_numbers() {
         let error = parse_animation_sheet_metadata(
             "animations/player.ron",
@@ -1142,8 +1239,8 @@ mod tests {
     #[test]
     fn checked_in_animation_demo_metadata_matches_the_loader_format() {
         let (texture, columns, rows, clips) = parse_animation_sheet_metadata(
-            "animations/player.ron",
-            include_str!("../../../assets/animations/player.ron"),
+            "animations/player.toml",
+            include_str!("../../../assets/animations/player.toml"),
         )
         .unwrap();
 

@@ -1,7 +1,7 @@
 //! Phase 13: optional external map content.
 //!
 //! `serde` data-transfer structs that mirror the [`MapBuilder`](crate::MapBuilder)
-//! API one-to-one, plus a RON loader. Files reference prefabs by name (as content
+//! API one-to-one, plus a legacy/advanced RON loader. Files reference prefabs by name (as content
 //! authors think of them); the caller supplies a resolver — typically
 //! `|name| prefabs.id(name)` — so this layer never needs the numeric `PrefabId`
 //! assignment to be stable across builds.
@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{GameMap, MapBuilder, PrefabId, cell};
 
-/// File-shaped mirror of [`GameMap`]. The struct is renamed to `GameMap` so a RON
-/// document reads `GameMap( id: ..., layers: [...], objects: [...] )`.
+/// File-shaped mirror of [`GameMap`] for legacy/advanced RON map tests. The
+/// struct is renamed to `GameMap` so a RON document reads
+/// `GameMap( id: ..., layers: [...], objects: [...] )`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename = "GameMap")]
 pub struct GameMapFile {

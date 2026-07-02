@@ -1,6 +1,9 @@
 # Data Driven Full Demo
 
-This example is the no-Rust acceptance path: `src/main.rs` only loads
+Legacy Rust-wrapper example. The primary no-Rust package equivalent is
+`examples/no-rust-full`.
+
+This example keeps the transitional `src/main.rs` wrapper that loads
 `assets/game.ron`. The data file defines assets, animation metadata, prefabs,
 maps, scene flow, audio, actions, custom countdown behavior, and standard
 beginner rules.

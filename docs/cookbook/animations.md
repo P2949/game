@@ -4,28 +4,37 @@ Copy [examples/animation-demo/src/main.rs](../../examples/animation-demo/src/mai
 when you want idle, directional walk, flight, impact, attack, or death clips
 from a sprite sheet.
 
-Put the sheet image and clip names in conventional folders so the Rust game
-setup stays about game behavior instead of frame numbers:
+Put the sheet image and clip names in conventional folders so the game setup
+stays about game behavior instead of frame numbers:
 
 ```text
 assets/textures/player_sheet.png
-assets/animations/player.ron
+assets/animations/player.toml
 ```
 
 The conventional `.animation_sheet_auto("player")` helper loads the metadata
 path automatically. The `texture` field is relative to `assets/`:
 
-```ron
-(
-    texture: "textures/player_sheet.png",
-    columns: 4,
-    rows: 1,
-    clips: {
-        "idle": (frames: [0], fps: 6.0),
-        "walk_right": (frames: [3], fps: 10.0),
-        "attack_right": (frames: [0, 1], fps: 12.0, looping: false),
-    },
-)
+```toml
+texture = "textures/player_sheet.png"
+columns = 4
+rows = 1
+
+[[clip]]
+name = "idle"
+frames = [0]
+fps = 6
+
+[[clip]]
+name = "walk_right"
+frames = [3]
+fps = 10
+
+[[clip]]
+name = "attack_right"
+frames = [0, 1]
+fps = 12
+looping = false
 ```
 
 Load and use that sheet with no frame ranges in Rust:
@@ -44,7 +53,8 @@ game.player_prefab("player")
 ```
 
 Run `game-dev asset-check` after editing animation metadata. It validates the
-RON shape and checks that the `texture` field points at an existing sheet PNG.
+primary TOML shape and checks that the `texture` field points at an existing
+sheet PNG. Legacy animation RON remains supported for old projects.
 
 Then let the rule choose the walk clip from velocity. It falls back to `walk`
 when a prefab intentionally omits a direction, and uses `idle` when stopped:

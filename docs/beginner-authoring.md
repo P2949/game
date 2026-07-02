@@ -3,13 +3,21 @@
 Start here when you want to make a small game rather than study engine internals.
 Use one of these beginner paths:
 
-1. **No-Rust data file:** edit `assets/game.ron` and `assets/maps/*.txt`.
+<!-- primary-no-rust:start -->
+1. **Primary no-Rust target:** edit `game.toml` and `assets/` through a
+   prebuilt executable (`game-player`) and CLI. Start with `templates/no-rust-demo`,
+   `examples/no-rust-minimal`, `examples/no-rust-full`, or
+   `examples/no-rust-tiled`, then run `game-dev check` and `game-dev preview`.
+<!-- primary-no-rust:end -->
+2. **Legacy data-driven compatibility:** edit `assets/game.ron` and
+   `assets/maps/*.txt` inside the current Rust-wrapper demos.
    Start with `templates/data-driven-demo`,
    `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
    `examples/data-driven-projectiles-demo`, or `examples/data-driven-full-demo`.
-2. **Standalone Rust game:** `use game_starter::prelude::*;` and
+   `game.load_beginner_file("game.ron")` remains compatibility for this path.
+3. **Standalone Rust game:** `use game_starter::prelude::*;` and
    `run_game("My Game", |game| { ... })` in one `main.rs` file.
-3. **Workspace content crate:** `use game_kit::beginner::prelude::*;` and
+4. **Workspace content crate:** `use game_kit::beginner::prelude::*;` and
    `content_plugin!(MyContent, plugin, |game| { ... });`. The macro gives the
    workspace a plugin without making you write the crate glue yourself.
 
@@ -18,7 +26,11 @@ content-crate files.
 
 ## Choose your starting point
 
-- **No-Rust / edit data first:** `templates/data-driven-demo`,
+- **Primary no-Rust:** `templates/no-rust-demo`,
+  `examples/no-rust-minimal`, `examples/no-rust-events`,
+  `examples/no-rust-waves`, `examples/no-rust-projectiles`,
+  `examples/no-rust-full`, and `examples/no-rust-tiled`.
+- **Legacy RON / edit data first:** `templates/data-driven-demo`,
   `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
   `examples/data-driven-projectiles-demo`, and `examples/data-driven-full-demo`.
 - **Beginner Rust / copy this first:** `examples/one-file-demo`,
@@ -31,14 +43,18 @@ content-crate files.
   systems, RON maps, tuple prefabs, direct component composition, custom
   state, and lower-level facade APIs.
 
-| Feature | No-Rust data-driven | Beginner Rust | Advanced |
+| Feature | Primary no-Rust target | Beginner Rust | Advanced |
 | --- | --- | --- | --- |
 | Player/enemy/pickups | yes | yes | yes |
 | Doors/maps/scenes | yes | yes | yes |
 | Projectiles/spawners | yes | yes | yes |
 | Custom countdown/explosion | yes/basic | yes | yes/manual |
 | Custom ECS systems | no | no | yes |
-| No Rust required | yes | no | no |
+| No Rust required | roadmap target | no | no |
+
+## Secondary Rust Authoring Path
+
+Use this only if you want to write Rust.
 
 ## When to use typed assets
 
@@ -116,7 +132,7 @@ Animations use the same asset-root convention. Put the image and metadata here:
 
 ```text
 assets/textures/player_sheet.png
-assets/animations/player.ron
+assets/animations/player.toml
 ```
 
 Then load the metadata by name:
@@ -134,13 +150,17 @@ game.player_prefab("player")
 ```
 
 `game-dev asset-check` validates PNGs, WAV/OGG/MP3 sound files, rectangular
-text maps, `assets/game.ron`, and animation metadata texture references.
+text maps, primary animation TOML metadata, legacy `assets/game.ron`, and
+legacy animation RON metadata.
 
 The beginner helpers keep engine details out of your game code.
 
-## Data-driven files
+## Legacy Data-Driven Files
 
-New data files use a version and structured names:
+The current RON data path is legacy/transitional compatibility. The primary
+no-Rust authoring surface is `game.toml`; old RON projects can migrate with
+`game-dev migrate-ron assets/game.ron --out game.toml`. New legacy RON files
+use a version and structured names:
 
 ```ron
 version: 1,
@@ -148,8 +168,8 @@ controls: TopDown,
 rules: [TopDownControls, PlayerCollectsPickups, ShowBasicUi],
 ```
 
-Legacy string controls and rules still load, but current templates use the
-structured form. The data path compiles through the same public beginner
+Older string controls and rules still load, but current RON templates use the
+structured form. The legacy data path compiles through the same public beginner
 builders as Rust content, covering players, enemies, pickups, doors,
 projectiles, spawners, triggers, checkpoints, scene flow, music, player
 shooting, enemy drops, UI, win conditions, timed/event rules, and a countdown
@@ -163,4 +183,4 @@ recompiling Rust. Release builds keep this development action disabled unless
 you deliberately set `GAME_DEV_RELOAD=1`.
 
 If the project also uses `game.tuning_from_file(...)`, the same F5 action
-reloads its tuning RON file before respawning the text map.
+reloads its tuning TOML file before respawning the text map.

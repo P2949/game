@@ -25,9 +25,11 @@ maps, rules, scene flow, sound, animation, and common gameplay events without ra
 tuple bundles or manual ECS traversal. Advanced content can still use those
 lower-level APIs deliberately.
 
-The main architecture split is complete. The remaining finish line is
-data-driven parity, authoring polish, validation, templates, docs, and runtime
-proof for the no-Rust `assets/game.ron` path.
+The main architecture split is complete. This historical roadmap's remaining
+finish line was data-driven parity, authoring polish, validation, templates,
+docs, and runtime proof for what was then described as the no-Rust
+`assets/game.ron` path. The current primary no-Rust target is the separate
+`game.toml` authoring roadmap.
 
 ## Target Beginner API
 

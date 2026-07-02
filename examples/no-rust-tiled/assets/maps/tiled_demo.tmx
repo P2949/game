@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map width="5" height="3" tilewidth="32" tileheight="32">
+  <layer name="Collision" width="5" height="3">
+    <data encoding="csv">
+      1,1,1,1,1,
+      1,0,0,0,1,
+      1,1,1,1,1
+    </data>
+  </layer>
+  <objectgroup name="Actors">
+    <object id="1" type="Player" x="32" y="32"/>
+    <object id="2" class="Slime" x="96" y="32"/>
+  </objectgroup>
+</map>

@@ -10,5 +10,6 @@ milestones.
 | [Beginner authoring](../beginner-authoring-roadmap.md) | Complete / historical | Beginner builders, wrappers, events, scenes, assets, maps, and rules exist. |
 | [Beginner productization](../beginner-productization-roadmap.md) | Complete / v0.2.0 productization | Tracks completed diagnostics, generated-project workflow, Tiled demo, and release gates. |
 | [Content/engine boundary consolidation](content-engine-boundary-consolidation.md) | Current | Narrows root APIs, splits large modules, unifies map commands, improves diagnostics, and hardens CI/docs. |
+| [Primary no-Rust authoring foundation](primary-no-rust-authoring-foundation.md) | Current | Replaces RON-as-primary with a true no-Rust data/package/runtime workflow. |
 | [Post-1.0 live data reload](post-1.0-live-data-reload.md) | Future / post-1.0 | Tracks full structural `assets/game.ron` reload without making it a 1.0 blocker. |
 | [Post-1.0 API surface cleanup](post-1.0-api-surface-cleanup.md) | Superseded | Root export cleanup is handled by content/engine boundary consolidation. |

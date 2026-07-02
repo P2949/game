@@ -58,8 +58,25 @@ GAME_ASSET_DIR=examples/tiled-demo/assets cargo run -p tiled-demo --locked
 
 ## Tiled no-Rust
 
-Use `examples/data-driven-tiled-demo` when you want the same importer driven
-from `assets/game.ron`:
+Use `examples/no-rust-tiled` when you want the same importer driven by primary
+`game.toml` without a Rust wrapper:
+
+```toml
+[[map]]
+kind = "tiled"
+name = "level_1"
+file = "assets/maps/tiled_demo.tmx"
+floor = "floor"
+wall = "wall"
+start = true
+
+[map.objects]
+Player = "player"
+Slime = "slime"
+```
+
+The older `examples/data-driven-tiled-demo` remains as a legacy Rust-wrapper
+example driven from `assets/game.ron`:
 
 ```ron
 maps: [
@@ -76,15 +93,8 @@ maps: [
 ]
 ```
 
-From the example folder:
-
-```bash
-cd examples/data-driven-tiled-demo
-cargo run --locked
-```
-
 From the workspace root:
 
 ```bash
-GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo --locked
+game-dev preview --project examples/no-rust-tiled
 ```

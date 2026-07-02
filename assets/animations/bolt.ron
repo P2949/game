@@ -1,9 +1,0 @@
-(
-    texture: "textures/test.png",
-    columns: 4,
-    rows: 1,
-    clips: {
-        "flight": (frames: [0, 1], fps: 12.0),
-        "impact": (frames: [2, 3], fps: 12.0, looping: false),
-    },
-)

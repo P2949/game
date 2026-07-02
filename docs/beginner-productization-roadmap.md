@@ -12,6 +12,9 @@ harder to misuse, and friendlier when something goes wrong.
   release gate passed, the `v0.2.0` tag was pushed, GitHub Actions release run
   `28523446249` attached Linux/Windows demo zips to the GitHub Release, and
   `scripts/verify-github-release-artifacts.sh 28523446249` verified them.
+- This completion predates the stricter primary no-Rust objective. It does not
+  mean `game.toml`, a prebuilt player, a no-Rust template, or no-user-Rust CI
+  package checks are complete.
 - Beginner entry points:
   - `game_starter::prelude::*` for standalone beginner projects.
   - `game_kit::beginner::prelude::*` for beginner content crates.
@@ -28,7 +31,7 @@ harder to misuse, and friendlier when something goes wrong.
 - The generated project runs with one documented command.
 - The generated project includes starter assets and a text map.
 - Small demos can be authored through beginner APIs only.
-- No-Rust demos can be authored through `assets/game.ron`.
+- Legacy RON data-driven demos can be authored through `assets/game.ron`.
 - Common custom behavior uses `on_*` hooks and custom-rule builders.
 - `game.ron` validation is friendly, complete, and names valid options.
 - Fast iteration covers text maps, tuning, assets, and partial data-file reload.
@@ -67,7 +70,7 @@ renderer/runtime/backend types, commands/resources internals
 | Phase 8: Script-like events/rules | Done / expandable | Hooks, events, structured rules, and custom-rule builders exist. |
 | Phase 9: Diagnostics | Mostly done | Known-name checks and countdown key validation exist; keep expanding messages as users hit new mistakes. |
 | Phase 10: Starter assets | Done / polish | Templates generate starter assets and maps. |
-| Phase 11: Tutorial path | Done / polish | Keep no-Rust, beginner Rust, Tiled, and advanced paths clearly separated. |
+| Phase 11: Tutorial path | Done / polish | Keep legacy RON, beginner Rust, Tiled, and advanced paths clearly separated. |
 | Phase 12: Data DSL parity | Mostly done | Structured conditions/effects exist; expand only as examples need it. |
 | Phase 13: Packaging docs | Done / verify | Package flow exists; continue verifying on release targets. |
 | Phase 14: Prebuilt artifacts | Done | GitHub Actions release run `28523446249` attached verified Linux/Windows demo zips to the `v0.2.0` GitHub Release. |

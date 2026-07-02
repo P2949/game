@@ -26,16 +26,26 @@ crates are identical for all demos.
 
 The engine/content split and beginner authoring foundation are implemented.
 Beginner Productization 1.0 is complete for `v0.2.0`: the local release gate
-passed, and the GitHub Release has verified Linux/Windows demo packages.
+passed, and the GitHub Release has verified Linux/Windows demo packages. The
+release workflow now also builds no-Rust SDK packages with `game-player`,
+`game-dev`, and `templates/no-rust-demo`.
 The maintained layer contract is documented in
 [docs/api-boundary.md](docs/api-boundary.md).
 
-Start with one of three tracks:
+Start with the track that matches the work you are doing now:
 
-- **Track A: No Rust.** Use `templates/data-driven-demo` and edit
-  `assets/game.ron`.
-- **Track B: Beginner Rust.** Use `templates/simple-demo`; follow tutorials 00-12.
+- **Track A: No Rust.** The primary target is a `game.toml` package, prebuilt
+  player, and no-Rust SDK. Start with `templates/no-rust-demo`. Legacy RON
+  compatibility remains available for old Rust-wrapper projects and migration;
+  it is not the primary path. Tiled no-Rust examples live in
+  `examples/no-rust-tiled`; see
+  [docs/roadmaps/primary-no-rust-authoring-foundation.md](docs/roadmaps/primary-no-rust-authoring-foundation.md).
+- **Track B: Beginner Rust.** Use `templates/simple-demo`; follow
+  tutorials 00-12 when you want to write Rust with the beginner API. Good copy
+  references are `examples/one-file-demo`, `examples/script-like-custom-rules`,
+  and `examples/events-demo`. Tiled Rust examples live in `examples/tiled-demo`.
 - **Track C: Advanced.** Use the advanced path only when beginner APIs are insufficient.
+  `crates/testbed-content` is a lower-level reference; do not copy first.
 
 This is still a small Rust/SDL3/Vulkan game prototype. It currently focuses on:
 
@@ -69,9 +79,26 @@ It is **not** yet:
 
 ## Content Authoring Model
 
-Start with one file. This is the path used throughout the beginner tutorial:
-See [docs/api-boundary.md](docs/api-boundary.md) for the exact no-Rust,
-beginner, advanced, facade, and runtime/backend import boundaries.
+<!-- primary-no-rust:start -->
+The primary no-Rust workflow is a normal folder with `game.toml` and `assets/`,
+run by the prebuilt executable (`game-player`):
+
+```bash
+game-dev new my-game --template no-rust
+cd my-game
+game-dev check
+game-dev preview
+```
+
+Checked-in no-Rust example packages live at `examples/no-rust-minimal`,
+`examples/no-rust-events`, `examples/no-rust-waves`,
+`examples/no-rust-projectiles`, `examples/no-rust-full`, and
+`examples/no-rust-tiled`.
+<!-- primary-no-rust:end -->
+
+The beginner Rust tutorial is now the secondary Rust authoring path. See
+[docs/api-boundary.md](docs/api-boundary.md) for the exact primary no-Rust,
+secondary beginner Rust, advanced Rust, facade, and runtime/backend boundaries.
 
 ```rust
 use game_starter::prelude::*;
@@ -106,7 +133,7 @@ content_plugin!(MyContent, plugin, |game| {
 });
 ```
 
-Start a project from anywhere with:
+Start a secondary beginner Rust project from anywhere with:
 
 ```bash
 cargo install cargo-generate
@@ -122,9 +149,9 @@ That creates a one-file beginner game with a pinned git dependency on
 `game-starter`. The current templates pin the published `v0.2.0` release tag, so
 external generated projects resolve the same checked release by default. From a
 local checkout, `cargo xtask new-demo my-game` creates the same starter with a
-local path dependency. Use
-`cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
-when you want the same first-game setup in editable `assets/game.ron` instead.
+local path dependency. Use the legacy `templates/data-driven-demo` wrapper only
+when maintaining an older RON project or following the RON-to-TOML migration
+guide.
 Generated projects can use the helper commands without cloning the engine
 repository:
 
@@ -136,10 +163,10 @@ game-dev package --release --out dist/my-game --zip
 ```
 
 `game-dev doctor` is advisory setup guidance. `game-dev check` is the hard
-project gate: it fails for missing/invalid `assets/`, invalid optional
-`assets/game.ron`, unknown asset files, or `cargo check` failures. Vulkan,
-audio, and optional-tool findings remain setup warnings unless the cargo build
-you requested needs them.
+project gate: for no-Rust packages it validates `game.toml` and `assets/`
+without Cargo, and for Rust starter projects it also runs `cargo check`.
+Vulkan, audio, and optional-tool findings remain setup warnings unless the
+build or preview command you requested needs them.
 
 Want to try before building? Download the latest demo package from
 [Releases](https://github.com/P2949/game/releases). The prebuilt
@@ -148,12 +175,21 @@ you unzip and run the bundled demo before installing Rust or SDL3. They still
 require a Vulkan-capable GPU/driver, and source builds remain the main
 development path.
 
+No-Rust SDK release artifacts are named `game-sdk-linux-x86_64.zip` and
+`game-sdk-windows-x86_64.zip`. They contain `game-player`, `game-dev`,
+`templates/no-rust-demo/`, launchers, and a README for creating and previewing
+`game.toml` packages without Rust.
+
 ## What Should I Copy First?
 
-- **No Rust:** `templates/data-driven-demo`,
+- **Primary no-Rust:** `templates/no-rust-demo`,
+  `examples/no-rust-minimal`, `examples/no-rust-events`,
+  `examples/no-rust-waves`, `examples/no-rust-projectiles`,
+  `examples/no-rust-full`, and `examples/no-rust-tiled`.
+- **Legacy RON data wrapper:** `templates/data-driven-demo`,
   `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
   `examples/data-driven-projectiles-demo`
-- **Tiled no-Rust:** `examples/data-driven-tiled-demo`
+- **Legacy Tiled RON wrapper:** `examples/data-driven-tiled-demo`
 - **First Rust game:** `templates/simple-demo`
 - **One-file example:** `examples/one-file-demo`
 - **Full beginner feature sample:** `examples/no-rust-shapes-demo`
@@ -172,12 +208,15 @@ are the normal starting points.
 
 ## Authoring levels
 
-- **No-Rust data-driven:** edit `assets/game.ron` and text maps. Start with
+- **Primary no-Rust target:** edit `game.toml` and `assets/` through
+  `game-dev check`, `game-dev preview`, and the prebuilt `game-player`.
+- **Legacy RON data-driven compatibility:** edit `assets/game.ron` and text
+  maps inside the current Rust-wrapper demos. Start with
   `templates/data-driven-demo`, `examples/data-driven-events-demo`,
   `examples/data-driven-waves-demo`, `examples/data-driven-projectiles-demo`,
-  or `examples/data-driven-full-demo` when the game should be made mostly from
-  data files. Use `examples/data-driven-tiled-demo` for Tiled no-Rust maps.
-- **Beginner Rust builder chains:** use `game_starter::prelude::*` with
+  or `examples/data-driven-full-demo` only when you are using the transitional
+  RON path.
+- **Secondary beginner Rust builder chains:** use `game_starter::prelude::*` with
   high-level builders for assets, prefabs, maps, actions, scenes, sound,
   animation, and rules. Start with `examples/one-file-demo`,
   `examples/no-rust-shapes-demo`, `examples/script-like-custom-rules`,
@@ -192,23 +231,25 @@ are the normal starting points.
 - **Engine/runtime API:** internal engine, runtime, renderer, platform, and
   audio crates. Not for beginner content.
 
-| Feature | No-Rust data-driven | Beginner Rust | Advanced |
+| Feature | Primary no-Rust target | Secondary beginner Rust | Advanced |
 | --- | --- | --- | --- |
 | Player/enemy/pickups | yes | yes | yes |
 | Doors/maps/scenes | yes | yes | yes |
 | Projectiles/spawners | yes | yes | yes |
 | Custom countdown/explosion | yes/basic | yes | yes/manual |
 | Custom ECS systems | no | no | yes |
-| No Rust required | yes | no | no |
+| No Rust required | roadmap target | no | no |
 
 ## API Stability
 
 - **Beginner API:** stabilized first. Renamed beginner methods should keep the
   old method for one release with a deprecation note, a changelog entry, and a
   migration note.
-- **Data file schema:** versioned through `assets/game.ron` and its `version`
-  field. The current schema is `version: 1`; future schema changes should get a
-  guide in [docs/migrations](docs/migrations/README.md).
+- **Primary no-Rust schema:** versioned through `game.toml` and its
+  `version` field. The current supported TOML schema is `version = 2`.
+  Legacy RON data files are versioned by `assets/game.ron` and its
+  `version:` field while compatibility remains available. Schema changes and
+  migrations should get a guide in [docs/migrations](docs/migrations/README.md).
 - **Advanced API:** allowed to evolve faster for custom systems, manual
   prefabs, and low-level experiments.
 - **Engine internals:** unstable. Runtime, renderer, backend, and raw world
@@ -221,16 +262,24 @@ model and future crates.io/template-repository plan.
 
 ## What should I copy?
 
-If you are new:
+If you are new and want the primary no-Rust path:
+
+1. Copy `templates/no-rust-demo`.
+2. Edit `game.toml` and files under `assets/`.
+3. Run `game-dev check` and `game-dev preview`.
+
+If you want the secondary beginner Rust path:
 
 1. Copy `examples/one-file-demo`.
 2. Then read `examples/no-rust-shapes-demo`.
 3. Then use
    `cargo generate --git https://github.com/P2949/game templates/simple-demo --name my-game`
-   to create your own Rust demo, or
-   `cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
-   for a no-Rust demo. From a local checkout, `cargo xtask new-demo my-game`
-   uses your local sources instead of the pinned release tag.
+   to create your own Rust demo. From a local checkout, `cargo xtask new-demo
+   my-game` uses your local sources instead of the pinned release tag.
+
+Legacy RON Rust-wrapper projects can be migrated with
+`game-dev migrate-ron assets/game.ron --out game.toml`; see the migration docs
+before copying `templates/data-driven-demo` for new work.
 
 If you want a workspace content crate:
 

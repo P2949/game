@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use game_core::world::World;
 
 use crate::map::beginner_asset_path;
 
-/// A named set of beginner-authored numeric values loaded from a RON file.
+/// A named set of beginner-authored numeric values loaded from a TOML file.
 ///
 /// Tuning intentionally stays small and string-keyed. It is for values such
 /// as health, speed, damage, and cooldowns—not a replacement for game data
@@ -81,7 +81,10 @@ impl From<i32> for TunedI32 {
 }
 
 impl TuningFile {
-    /// Loads a RON map such as `( "slime.health": 40.0, )`.
+    /// Loads a TOML tuning file such as `[tuning] slime_health = 40`.
+    ///
+    /// Legacy RON maps such as `( "slime.health": 40.0, )` remain supported
+    /// while old projects migrate.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let requested = path.as_ref();
         let path = if requested.is_absolute() {
@@ -155,6 +158,13 @@ fn f32_to_i32(value: f32) -> Option<i32> {
 }
 
 fn parse_values(path: &Path, text: &str) -> Result<HashMap<String, f32>> {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) if extension.eq_ignore_ascii_case("toml") => parse_toml_values(path, text),
+        _ => parse_legacy_ron_values(path, text),
+    }
+}
+
+fn parse_legacy_ron_values(path: &Path, text: &str) -> Result<HashMap<String, f32>> {
     // RON normally represents a map with `{ ... }`, but the concise
     // parenthesized form is easier to read in beginner documentation. Accept
     // both forms while still deserializing a concrete string-to-float map.
@@ -171,10 +181,64 @@ fn parse_values(path: &Path, text: &str) -> Result<HashMap<String, f32>> {
     };
     ron::de::from_str(source).with_context(|| {
         format!(
-            "could not parse tuning file '{}' as a RON map",
+            "could not parse tuning file '{}' as a legacy RON map",
             path.display()
         )
     })
+}
+
+fn parse_toml_values(path: &Path, text: &str) -> Result<HashMap<String, f32>> {
+    let value = toml::from_str::<toml::Value>(text)
+        .with_context(|| format!("could not parse tuning file '{}' as TOML", path.display()))?;
+    let root = value
+        .as_table()
+        .ok_or_else(|| anyhow::anyhow!("tuning file '{}' must be a TOML table", path.display()))?;
+    let table = root
+        .get("tuning")
+        .and_then(toml::Value::as_table)
+        .unwrap_or(root);
+    let mut values = HashMap::new();
+    collect_toml_tuning_values("", table, &mut values, path)?;
+    Ok(values)
+}
+
+fn collect_toml_tuning_values(
+    prefix: &str,
+    table: &toml::value::Table,
+    values: &mut HashMap<String, f32>,
+    path: &Path,
+) -> Result<()> {
+    for (key, value) in table {
+        let name = if prefix.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        if let Some(number) = toml_number_to_f32(value) {
+            values.insert(name, number);
+            continue;
+        }
+        if let Some(nested) = value.as_table() {
+            if let Some(number) = nested.get("value").and_then(toml_number_to_f32) {
+                values.insert(name, number);
+            } else {
+                collect_toml_tuning_values(&name, nested, values, path)?;
+            }
+            continue;
+        }
+        bail!(
+            "tuning value '{name}' in '{}' must be a number",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn toml_number_to_f32(value: &toml::Value) -> Option<f32> {
+    let number = value
+        .as_float()
+        .or_else(|| value.as_integer().map(|integer| integer as f64))?;
+    number.is_finite().then_some(number as f32)
 }
 
 #[cfg(test)]
@@ -184,9 +248,40 @@ mod tests {
     use super::TuningFile;
 
     #[test]
-    fn tuning_file_reads_named_floats_and_integer_values() {
+    fn tuning_file_reads_toml_named_floats_and_integer_values() {
         let path = std::env::temp_dir().join(format!(
-            "game-kit-tuning-{}-{}.ron",
+            "game-kit-tuning-{}-{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            r#"
+[tuning]
+slime_health = 40
+slime_speed = 80.5
+
+[tuning."boss.health"]
+value = 120
+"#,
+        )
+        .unwrap();
+
+        let tuning = TuningFile::from_file(&path).unwrap();
+        assert_eq!(tuning.int("slime_health").initial(), 40);
+        assert_eq!(tuning.float("slime_speed").initial(), 80.5);
+        assert_eq!(tuning.int("boss.health").initial(), 120);
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn tuning_file_still_reads_legacy_ron_values() {
+        let path = std::env::temp_dir().join(format!(
+            "game-kit-tuning-legacy-{}-{}.ron",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

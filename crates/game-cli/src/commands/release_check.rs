@@ -184,6 +184,7 @@ fn run_generated_project_release_checks(
         project,
         &PathBuf::from(format!("dist/{label}-release-check")),
         true,
+        true,
         features,
     )
     .with_context(|| format!("failed to package {label} generated project"))

@@ -7,14 +7,18 @@ use fontdue::{Font, FontSettings};
 use image::ImageReader;
 use walkdir::WalkDir;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct AssetCheckOptions {
     pub(crate) deny_unknown: bool,
+    pub(crate) ignore: Vec<String>,
 }
 
 impl AssetCheckOptions {
     pub(crate) fn deny_unknown() -> Self {
-        Self { deny_unknown: true }
+        Self {
+            deny_unknown: true,
+            ignore: Vec::new(),
+        }
     }
 }
 
@@ -23,6 +27,21 @@ pub(crate) fn validate_assets_dir(assets: &Path, require_builtin_font: bool) -> 
         assets,
         require_builtin_font,
         AssetCheckOptions::deny_unknown(),
+    )
+}
+
+pub(crate) fn validate_assets_dir_with_ignores(
+    assets: &Path,
+    require_builtin_font: bool,
+    ignore: Vec<String>,
+) -> Result<()> {
+    validate_assets_dir_with_options(
+        assets,
+        require_builtin_font,
+        AssetCheckOptions {
+            deny_unknown: true,
+            ignore,
+        },
     )
 }
 
@@ -49,7 +68,7 @@ fn validate_assets_dir_with_options(
             continue;
         }
         checked += 1;
-        validate_asset_file(entry.path(), assets, options)?;
+        validate_asset_file(entry.path(), assets, &options)?;
     }
     if checked == 0 {
         bail!("assets directory '{}' is empty", assets.display());
@@ -57,8 +76,12 @@ fn validate_assets_dir_with_options(
     Ok(())
 }
 
-fn validate_asset_file(path: &Path, asset_root: &Path, options: AssetCheckOptions) -> Result<()> {
+fn validate_asset_file(path: &Path, asset_root: &Path, options: &AssetCheckOptions) -> Result<()> {
     if is_ignored_asset_metadata(path) {
+        return Ok(());
+    }
+    let relative = asset_relative_path(path, asset_root);
+    if matches_ignore(relative, &options.ignore) {
         return Ok(());
     }
 
@@ -120,9 +143,21 @@ fn validate_asset_file(path: &Path, asset_root: &Path, options: AssetCheckOption
             })?;
         }
         Some(extension)
+            if extension.eq_ignore_ascii_case("toml")
+                && is_animation_metadata_file(path, asset_root) =>
+        {
+            game_kit::assets::validate_animation_sheet_file(path).with_context(|| {
+                format!("could not validate animation metadata '{}'", path.display())
+            })?;
+        }
+        Some(extension)
             if extension.eq_ignore_ascii_case("ron")
                 && is_animation_metadata_file(path, asset_root) =>
         {
+            eprintln!(
+                "warning: legacy animation metadata '{}' uses RON; primary packages should use assets/animations/*.toml",
+                path.display()
+            );
             game_kit::assets::validate_animation_sheet_file(path).with_context(|| {
                 format!("could not validate animation metadata '{}'", path.display())
             })?;
@@ -168,9 +203,75 @@ fn unknown_asset_message(path: &Path) -> String {
         message.push_str(&format!("\n\nDid you mean '{suggestion}'?"));
     }
     message.push_str(
-        "\nSupported beginner asset types: .png, .ttf, .wav, .ogg, .mp3, .txt, .tmx, .ldtk, assets/game.ron, and animation .ron files under assets/animations/.\nMove notes/source files outside assets/ or add an explicit ignore rule when ignore support exists.",
+        "\nSupported beginner asset types: .png, .ttf, .wav, .ogg, .mp3, .txt, .tmx, .ldtk, animation .toml files under assets/animations/, legacy assets/game.ron, and legacy animation .ron files under assets/animations/.\nMove notes/source files outside assets/ or add an explicit ignore rule in [asset_check] ignore.",
     );
     message
+}
+
+pub(crate) fn asset_ignore_patterns_from_game_file(game_file: &Path) -> Result<Vec<String>> {
+    if !game_file.is_file() {
+        return Ok(Vec::new());
+    }
+    let source = fs::read_to_string(game_file)
+        .with_context(|| format!("could not read game config '{}'", game_file.display()))?;
+    let value = toml::from_str::<toml::Value>(&source)
+        .with_context(|| format!("could not parse game config '{}'", game_file.display()))?;
+    let Some(ignore) = value
+        .get("asset_check")
+        .and_then(|table| table.get("ignore"))
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = ignore.as_array() else {
+        bail!("game config [asset_check].ignore must be an array of strings");
+    };
+    items
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow!("game config [asset_check].ignore entries must be strings"))
+        })
+        .collect()
+}
+
+fn matches_ignore(relative: &Path, patterns: &[String]) -> bool {
+    let relative = slash_path(relative);
+    patterns
+        .iter()
+        .any(|pattern| wildcard_match(pattern, &relative))
+}
+
+fn slash_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    if !pattern.contains('*') {
+        return pattern == text;
+    }
+    let mut remaining = text;
+    let mut first = true;
+    for part in pattern.split('*') {
+        if part.is_empty() {
+            continue;
+        }
+        if first && !pattern.starts_with('*') {
+            let Some(next) = remaining.strip_prefix(part) else {
+                return false;
+            };
+            remaining = next;
+        } else if let Some(index) = remaining.find(part) {
+            remaining = &remaining[index + part.len()..];
+        } else {
+            return false;
+        }
+        first = false;
+    }
+    pattern.ends_with('*') || remaining.is_empty()
 }
 
 fn suggested_asset_extension(path: &Path) -> Option<&'static str> {
@@ -224,7 +325,10 @@ fn validate_text_map(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AssetCheckOptions, validate_asset_file, validate_assets_dir, validate_text_map};
+    use super::{
+        AssetCheckOptions, asset_ignore_patterns_from_game_file, validate_asset_file,
+        validate_assets_dir, validate_assets_dir_with_ignores, validate_text_map,
+    };
 
     fn temp_assets(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("game-cli-{name}-{}", std::process::id()));
@@ -256,7 +360,7 @@ mod tests {
         let path = textures.join("player.pgn");
         std::fs::write(&path, b"not actually a png").unwrap();
 
-        let error = validate_asset_file(&path, &assets, AssetCheckOptions::deny_unknown())
+        let error = validate_asset_file(&path, &assets, &AssetCheckOptions::deny_unknown())
             .unwrap_err()
             .to_string();
 
@@ -273,7 +377,7 @@ mod tests {
         let path = assets.join("readme.md");
         std::fs::write(&path, "# notes\n").unwrap();
 
-        let error = validate_asset_file(&path, &assets, AssetCheckOptions::deny_unknown())
+        let error = validate_asset_file(&path, &assets, &AssetCheckOptions::deny_unknown())
             .unwrap_err()
             .to_string();
 
@@ -289,10 +393,35 @@ mod tests {
         let path = assets.join(".gitignore");
         std::fs::write(&path, "*\n!.gitignore\n").unwrap();
 
-        validate_asset_file(&path, &assets, AssetCheckOptions::deny_unknown()).unwrap();
+        validate_asset_file(&path, &assets, &AssetCheckOptions::deny_unknown()).unwrap();
         validate_assets_dir(&assets, false).unwrap();
 
         std::fs::remove_dir_all(assets.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn asset_check_ignore_config_allows_explicit_unknown_files() {
+        let root =
+            std::env::temp_dir().join(format!("game-cli-ignore-config-{}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+        let assets = root.join("assets");
+        std::fs::create_dir_all(assets.join("source")).unwrap();
+        std::fs::write(assets.join("notes.txt"), "notes").unwrap();
+        std::fs::write(assets.join("source/player.aseprite"), "source").unwrap();
+        std::fs::write(
+            root.join("game.toml"),
+            r#"
+[asset_check]
+ignore = ["notes.txt", "source/*.aseprite"]
+"#,
+        )
+        .unwrap();
+
+        let ignore = asset_ignore_patterns_from_game_file(&root.join("game.toml")).unwrap();
+        validate_assets_dir_with_ignores(&assets, false, ignore).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -301,12 +430,48 @@ mod tests {
 
         validate_assets_dir(&workspace.join("templates/simple-demo/assets"), false).unwrap();
         validate_assets_dir(&workspace.join("templates/data-driven-demo/assets"), false).unwrap();
+        validate_assets_dir(&workspace.join("templates/no-rust-demo/assets"), false).unwrap();
     }
 
     #[test]
-    fn animation_metadata_ron_is_validated_as_animation_metadata() {
+    fn animation_metadata_toml_is_validated_as_animation_metadata() {
         let root = std::env::temp_dir().join(format!(
-            "game-cli-animation-validation-{}",
+            "game-cli-animation-toml-validation-{}",
+            std::process::id()
+        ));
+        let animations = root.join("assets/animations");
+        std::fs::create_dir_all(&animations).unwrap();
+        let path = animations.join("player.toml");
+        std::fs::write(
+            &path,
+            r#"
+texture = "textures/player_sheet.png"
+columns = 4
+rows = 1
+
+[[clip]]
+name = "idle"
+frames = [0]
+"#,
+        )
+        .unwrap();
+
+        let assets = root.join("assets");
+        let error = format!(
+            "{:?}",
+            validate_asset_file(&path, &assets, &AssetCheckOptions::deny_unknown()).unwrap_err()
+        );
+
+        assert!(error.contains("could not validate animation metadata"));
+        assert!(error.contains("references missing texture 'textures/player_sheet.png'"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_animation_metadata_ron_is_still_validated_as_animation_metadata() {
+        let root = std::env::temp_dir().join(format!(
+            "game-cli-animation-ron-validation-{}",
             std::process::id()
         ));
         let animations = root.join("assets/animations");
@@ -326,7 +491,7 @@ mod tests {
         let assets = root.join("assets");
         let error = format!(
             "{:?}",
-            validate_asset_file(&path, &assets, AssetCheckOptions::deny_unknown()).unwrap_err()
+            validate_asset_file(&path, &assets, &AssetCheckOptions::deny_unknown()).unwrap_err()
         );
 
         assert!(error.contains("could not validate animation metadata"));
@@ -341,7 +506,7 @@ mod tests {
         let path = assets.join("foo.ron");
         std::fs::write(&path, "()").unwrap();
 
-        let error = validate_asset_file(&path, &assets, AssetCheckOptions::deny_unknown())
+        let error = validate_asset_file(&path, &assets, &AssetCheckOptions::deny_unknown())
             .unwrap_err()
             .to_string();
 
