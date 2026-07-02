@@ -17,8 +17,7 @@ use game_core::app::MapData;
 use game_core::builder::{MapId, PrefabId, PrefabRegistry, PropertyBag};
 use game_core::commands::{CommandErrorKind, CommandErrors, CommandQueue};
 use game_core::nav::NavGrid;
-use game_core::world::World;
-use game_core::world::{Sprite, Transform};
+use game_core::world::{EntityId, Sprite, Transform, World};
 use game_map::{
     GameMap, MapBuilder, MapCell, MapValidator, cell, load_game_map_ron, load_ldtk_level_file,
     load_tiled_map_file, validate_map_prefabs,
@@ -852,6 +851,11 @@ impl ContentRuntime {
             .with_context(|| format!("map '{map_name}' references unknown prefab"))
     }
 
+    fn preflight_spawn_map_in_world(&self, world: &mut World, map_name: &str) -> Result<()> {
+        let map = self.map_by_name(map_name)?;
+        spawn_map_objects_transactional(world, map, &self.prefabs).map(|_| ())
+    }
+
     fn spawn_map_by_name(&self, world: &mut World, map_name: &str) -> Result<()> {
         let map = self.map_by_name(map_name)?;
         spawn_map_objects(world, map, &self.prefabs)
@@ -861,11 +865,39 @@ impl ContentRuntime {
 /// Spawns every object of `map` through `prefabs` (Phase 7.2). Shared by startup
 /// and reset, so neither content crate carries its own copy.
 pub fn spawn_map_objects(world: &mut World, map: &GameMap, prefabs: &PrefabRegistry) -> Result<()> {
+    spawn_map_objects_transactional(world, map, prefabs).map(|_| ())
+}
+
+fn spawn_map_objects_transactional(
+    world: &mut World,
+    map: &GameMap,
+    prefabs: &PrefabRegistry,
+) -> Result<Vec<EntityId>> {
+    let mut spawned = Vec::new();
     for object in &map.objects {
-        let entity = prefabs.spawn(object.prefab, world, object.position, &object.properties)?;
-        validate_spawned_collision_components(world, entity, &map.name, &object.id)?;
+        let entity = match prefabs.spawn(object.prefab, world, object.position, &object.properties)
+        {
+            Ok(entity) => entity,
+            Err(error) => {
+                rollback_spawned_entities(world, &spawned);
+                return Err(error);
+            }
+        };
+        spawned.push(entity);
+        if let Err(error) =
+            validate_spawned_collision_components(world, entity, &map.name, &object.id)
+        {
+            rollback_spawned_entities(world, &spawned);
+            return Err(error);
+        }
     }
-    Ok(())
+    Ok(spawned)
+}
+
+fn rollback_spawned_entities(world: &mut World, spawned: &[EntityId]) {
+    for entity in spawned.iter().rev() {
+        world.despawn(*entity);
+    }
 }
 
 /// Validates collision-bearing beginner roles immediately after their prefabs
@@ -935,7 +967,10 @@ fn switch_world_to_map(world: &mut World, map_name: String) -> Result<MapId> {
         record_map_transition_error(world, message.clone());
         anyhow::bail!(message);
     };
-    if let Err(error) = content.preflight_spawn_map(&map_name) {
+    let preflight = content
+        .preflight_spawn_map(&map_name)
+        .and_then(|()| content.preflight_spawn_map_in_world(world, &map_name));
+    if let Err(error) = preflight {
         let message = format!("failed to switch to map '{map_name}': {error}");
         content.current_map = previous_map;
         world.insert_resource(content);
@@ -943,20 +978,24 @@ fn switch_world_to_map(world: &mut World, map_name: String) -> Result<MapId> {
         anyhow::bail!(message);
     }
     clear_world_for_map_respawn(world);
-    let result = content.spawn_map_by_name(world, &map_name).map(|()| map_id);
-    if result.is_ok() {
-        content.current_map = map_name.clone();
-    } else if let Err(error) = &result {
-        let mut message = format!("failed to switch to map '{map_name}': {error}");
-        content.current_map = previous_map.clone();
-        clear_world_for_map_respawn(world);
-        if let Err(rollback) = content.spawn_map_by_name(world, &previous_map) {
-            message.push_str(&format!(
-                "; also failed to restore previous map '{previous_map}': {rollback}"
-            ));
+    let result = match content.spawn_map_by_name(world, &map_name) {
+        Ok(()) => {
+            content.current_map = map_name.clone();
+            Ok(map_id)
         }
-        record_map_transition_error(world, message);
-    }
+        Err(error) => {
+            let mut message = format!("failed to switch to map '{map_name}': {error}");
+            content.current_map = previous_map.clone();
+            clear_world_for_map_respawn(world);
+            if let Err(rollback) = content.spawn_map_by_name(world, &previous_map) {
+                message.push_str(&format!(
+                    "; also failed to restore previous map '{previous_map}': {rollback}"
+                ));
+            }
+            record_map_transition_error(world, message.clone());
+            Err(anyhow!(message))
+        }
+    };
     world.insert_resource(content);
     result
 }
