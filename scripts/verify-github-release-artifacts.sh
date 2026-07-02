@@ -5,7 +5,7 @@ usage() {
     cat >&2 <<'USAGE'
 usage: scripts/verify-github-release-artifacts.sh [run-id|latest]
 
-Downloads the Linux and Windows demo artifacts from a completed Release
+Downloads the Linux and Windows demo and SDK artifacts from a completed Release
 Artifacts workflow run, then verifies their package layout.
 
 Environment:
@@ -60,12 +60,17 @@ download_and_verify() {
         --name "$artifact" \
         --dir "$destination"
 
+    local kind="$3"
+
     "$repo_root/scripts/verify-release-artifact.sh" \
         "$destination/$artifact.zip" \
-        "$platform"
+        "$platform" \
+        "$kind"
 }
 
-download_and_verify "game-demo-linux-x86_64" linux
-download_and_verify "game-demo-windows-x86_64" windows
+download_and_verify "game-demo-linux-x86_64" linux demo
+download_and_verify "game-demo-windows-x86_64" windows demo
+download_and_verify "game-sdk-linux-x86_64" linux sdk
+download_and_verify "game-sdk-windows-x86_64" windows sdk
 
-echo "GitHub release artifacts from run $run_id contain the expected package layouts"
+echo "GitHub release artifacts from run $run_id contain the expected demo and SDK package layouts"

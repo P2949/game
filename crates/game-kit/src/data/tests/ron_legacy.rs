@@ -1,5 +1,8 @@
-use super::validate::{validate_file, validate_file_with_base};
-use super::{BeginnerGameFile, load_beginner_game_text, parse_beginner_game_source};
+use super::super::validate::{validate_file, validate_file_with_base};
+use super::super::{
+    BeginnerGameFile, load_beginner_game_text, migrate_legacy_ron_source_to_toml,
+    parse_beginner_game_source,
+};
 use crate::app::{GameApp, GamePlugin};
 use crate::beginner::actors::Enemy;
 use crate::harness::GameTestHarness;
@@ -1178,6 +1181,33 @@ fn phase12_data_driven_examples_stay_valid() {
         let file: BeginnerGameFile = ron::from_str(&source).unwrap();
 
         validate_file_with_base(&file, relative, path.parent()).unwrap();
+    }
+}
+
+#[test]
+fn migrate_ron_to_toml_converts_checked_in_legacy_examples() {
+    for relative in [
+        "../../templates/data-driven-demo/assets/game.ron",
+        "../../examples/data-driven-events-demo/assets/game.ron",
+        "../../examples/data-driven-waves-demo/assets/game.ron",
+        "../../examples/data-driven-projectiles-demo/assets/game.ron",
+        "../../examples/data-driven-full-demo/assets/game.ron",
+        "../../examples/data-driven-tiled-demo/assets/game.ron",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+        let source = std::fs::read_to_string(&path).unwrap();
+        let migration = migrate_legacy_ron_source_to_toml(&source, relative).unwrap();
+
+        assert!(migration.toml.contains("version = 2"));
+        assert!(migration.toml.contains("[controls]"));
+        assert!(!migration.toml.contains("Player(("));
+        assert!(!migration.toml.contains("Some("));
+        assert!(
+            migration
+                .notes
+                .iter()
+                .any(|note| note.contains("primary game.toml"))
+        );
     }
 }
 

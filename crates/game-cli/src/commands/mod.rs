@@ -1,4 +1,10 @@
+pub(crate) mod asset_check;
+pub(crate) mod authoring_scan;
 pub(crate) mod check;
 pub(crate) mod doctor;
+pub(crate) mod migrate_ron;
 pub(crate) mod package;
+pub(crate) mod package_sdk;
+pub(crate) mod preview;
 pub(crate) mod release_check;
+pub(crate) mod validate_data;

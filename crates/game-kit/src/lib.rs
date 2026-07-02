@@ -19,8 +19,9 @@
 //!
 //! Beginner APIs are stabilized first. When a beginner method is renamed, keep
 //! the old method for one release with a deprecation note, changelog entry, and
-//! migration note. Data-driven `assets/game.ron` files are versioned by their
-//! `version` field. Advanced APIs are allowed to evolve faster.
+//! migration note. Primary no-Rust packages load from `game.toml` through
+//! `load_authoring_file`. Data-driven `assets/game.ron` files are versioned by
+//! their `version` field and remain legacy compatibility. Advanced APIs are allowed to evolve faster.
 //! Engine internals are unstable implementation details.
 //!
 //! ## First game
@@ -207,7 +208,7 @@ pub mod compat {
     pub use crate::data::{
         BeginnerAssetsFile, BeginnerControlsFile, BeginnerGameFile, BeginnerMapFile,
         BeginnerPrefabFile, BeginnerRuleFile, BeginnerScriptRuleFile, RuleEffectFile,
-        load_beginner_game_file,
+        load_authoring_file, load_authoring_file_with_asset_root, load_beginner_game_file,
     };
     pub use crate::helpers::{
         InputDriven, MovementSpeed, SimulationState, camera_follow_first, stop_all_velocity,

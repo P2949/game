@@ -1,0 +1,64 @@
+version = 2
+
+[game]
+title = "No Rust Waves"
+start_map = "arena"
+
+[assets]
+textures = ["player", "slime", "floor", "wall"]
+sounds = ["hit"]
+
+[controls]
+preset = "top-down"
+
+[[prefab]]
+kind = "player"
+name = "player"
+sprite = "player"
+health = 30
+
+[prefab.melee]
+range = 30
+damage = 10
+
+[[prefab]]
+kind = "enemy"
+name = "slime"
+sprite = "slime"
+health = 10
+chase_player = true
+tags = ["enemy"]
+
+[[prefab]]
+kind = "spawner"
+name = "spawner"
+spawn = "slime"
+every_seconds = 5
+max_alive = 4
+placement = "near-player"
+
+[[map]]
+kind = "text"
+name = "arena"
+file = "assets/maps/arena.txt"
+floor = "floor"
+wall = "wall"
+start = true
+
+[map.legend]
+P = "player"
+E = "slime"
+S = "spawner"
+
+[rules]
+enabled = [
+  "top-down-controls",
+  "enemies-damage-player",
+  "dead-enemies-despawn",
+  "spawners-spawn-prefabs",
+  "camera-follows-player",
+  "show-basic-ui",
+  "show-score",
+  "show-enemy-count",
+  "show-player-health",
+]

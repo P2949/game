@@ -1,0 +1,75 @@
+version = 2
+
+[game]
+title = "No Rust Events"
+start_map = "level_1"
+
+[assets]
+textures = ["player", "slime", "coin", "floor", "wall"]
+sounds = ["hit", "coin"]
+
+[controls]
+preset = "top-down"
+
+[[prefab]]
+kind = "player"
+name = "player"
+sprite = "player"
+health = 20
+
+[[prefab]]
+kind = "enemy"
+name = "slime"
+sprite = "slime"
+health = 1
+tags = ["enemy"]
+
+[[prefab]]
+kind = "pickup"
+name = "coin"
+sprite = "coin"
+score = 1
+sound = "coin"
+
+[[map]]
+kind = "text"
+name = "level_1"
+file = "assets/maps/level_1.txt"
+floor = "floor"
+wall = "wall"
+start = true
+
+[map.legend]
+P = "player"
+E = "slime"
+C = "coin"
+
+[[map]]
+kind = "text"
+name = "win"
+file = "assets/maps/win.txt"
+floor = "floor"
+wall = "wall"
+
+[map.legend]
+P = "player"
+
+[scene_flow]
+game = "level_1"
+win = "win"
+win_text = "Event rules cleared the room"
+win_condition = "all-enemies-dead"
+
+[rules]
+enabled = [
+  "top-down-controls",
+  "player-collects-pickups",
+  "enemies-damage-player",
+  "dead-enemies-despawn",
+  "camera-follows-player",
+  "show-basic-ui",
+  "show-score",
+  "show-player-health",
+  "show-win-panel",
+  "win-when-all-enemies-dead",
+]

@@ -1,14 +1,19 @@
 # {{title}}
 
-## Start here
+This is a legacy/transitional RON data-driven Rust-wrapper template. It remains
+useful for existing projects and migration, but the primary no-Rust authoring
+surface is a `game.toml` package run by the prebuilt player.
+
+## Legacy Workflow
 
 1. Run `cargo run` or `game-dev run`.
-2. Edit `assets/game.ron` to change player/enemy/pickup numbers and rules.
+2. Edit legacy `assets/game.ron` to change player/enemy/pickup numbers and
+   rules.
 3. Edit `assets/maps/level_1.txt` to change the level.
 4. Replace files in `assets/textures/` and `assets/sounds/` with your own art
    and sound effects.
 
-The editable RON file is intentionally small:
+The editable legacy RON file is intentionally small:
 
 - `assets.textures`, `sounds`, and `music` can register conventional asset names.
 - `controls: TopDown` selects the standard beginner controls.
@@ -17,8 +22,11 @@ The editable RON file is intentionally small:
 - `rules` selects common first-game behaviors with names like
   `TopDownControls`, `PlayerCollectsPickups`, and `ShowScore`.
 
-For larger no-Rust examples, copy `examples/data-driven-events-demo`,
+For larger legacy RON examples, copy `examples/data-driven-events-demo`,
 `examples/data-driven-waves-demo`, or `examples/data-driven-projectiles-demo`.
+To move one of these projects to the primary no-Rust package shape, run
+`game-dev migrate-ron assets/game.ron --out game.toml`, then check the result
+with `game-dev check`.
 
 The first build makes small starter assets if they do not already exist:
 
@@ -44,14 +52,14 @@ The map symbols are:
 - `C` coin
 
 Press <kbd>F5</kbd> in a debug build after changing the map or existing values
-in `assets/game.ron`. F5 validates and partially reloads the data file, then
-respawns the current map. Future spawns from beginner rules use the updated
-prefab values too, and existing custom countdown rule details, scene text, and
-audio scene settings reload. Existing action settings reload when their input
-binding stays the same. Adding, removing, or reordering asset, prefab, map, or
-custom rule names requires a restart, as do changes to scene names,
-adding/removing/reordering actions, action input bindings, or the enabled rule
-list.
+in legacy `assets/game.ron`. F5 validates and partially reloads the data file,
+then respawns the current map. Future spawns from beginner rules use the
+updated prefab values too, and existing custom countdown rule details, scene
+text, and audio scene settings reload. Existing action settings reload when
+their input binding stays the same. Adding, removing, or reordering asset,
+prefab, map, or custom rule names requires a restart, as do changes to scene
+names, adding/removing/reordering actions, action input bindings, or the
+enabled rule list.
 
 ## Project tools
 

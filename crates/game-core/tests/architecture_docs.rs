@@ -69,8 +69,11 @@ fn beginner_api_stability_policy_is_documented() {
         "Beginner API",
         "stabilized first",
         "old method for one release",
-        "Data file schema",
-        "versioned through `assets/game.ron`",
+        "Primary no-Rust schema",
+        "versioned through `game.toml`",
+        "version = 2",
+        "Legacy RON data files",
+        "versioned by `assets/game.ron`",
         "Advanced API",
         "allowed to evolve faster",
         "Engine internals",
@@ -121,6 +124,10 @@ fn beginner_api_stability_policy_is_documented() {
     assert!(
         migrations.contains("game-ron-v1-to-v2.md"),
         "migration index should link the game.ron schema migration guide"
+    );
+    assert!(
+        migrations.contains("ron-to-toml.md"),
+        "migration index should link the RON-to-TOML guide"
     );
 
     let game_ron_migration = fs::read_to_string(root.join("docs/migrations/game-ron-v1-to-v2.md"))
@@ -426,8 +433,12 @@ fn beginner_entry_docs_keep_three_tracks_and_copy_list_clear() {
 
         for required in [
             "Track A: No Rust",
+            "templates/no-rust-demo",
+            "game.toml",
+            "game-dev preview",
+            "Legacy RON",
+            "migration",
             "templates/data-driven-demo",
-            "assets/game.ron",
             "Track B: Beginner Rust",
             "templates/simple-demo",
             "tutorials 00-12",
@@ -438,7 +449,7 @@ fn beginner_entry_docs_keep_three_tracks_and_copy_list_clear() {
             "examples/script-like-custom-rules",
             "examples/events-demo",
             "Tiled no-Rust",
-            "examples/data-driven-tiled-demo",
+            "examples/no-rust-tiled",
             "Tiled Rust",
             "examples/tiled-demo",
             "crates/testbed-content",

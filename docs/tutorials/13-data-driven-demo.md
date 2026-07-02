@@ -1,11 +1,12 @@
-# Data-driven first game
+# Legacy Data-Driven First Game
 
 ## Goal
 
-Make a small playable demo by editing `assets/game.ron`, your text map, and
-your art instead of writing the usual setup code.
+Make a small playable demo by editing legacy `assets/game.ron`, your text map,
+and your art instead of writing the usual setup code. This is the transitional
+RON path; the primary no-Rust target is `game.toml` plus a prebuilt player.
 
-## Start a data-driven demo
+## Start a Legacy Data-Driven Demo
 
 From anywhere:
 
@@ -32,13 +33,13 @@ run_game("My Game", |game| {
 
 ## Files to edit
 
-- `assets/game.ron`: asset names, actors, maps, and standard rules
+- legacy `assets/game.ron`: asset names, actors, maps, and standard rules
 - `assets/maps/level_1.txt`: walls and `P`/`E`/`C` spawns
 - `assets/textures/*.png`: your art
 - `assets/sounds/*.wav`: your sound effects
 
-The first section of `game.ron` registers conventional files. For example,
-`"player"` means `assets/textures/player.png`; `"hit"` means
+The first section of legacy `game.ron` registers conventional files. For
+example, `"player"` means `assets/textures/player.png`; `"hit"` means
 `assets/sounds/hit.wav`.
 
 ```ron
@@ -69,11 +70,11 @@ Old string rules such as `"top_down_controls"` still load for compatibility,
 but new examples use the structured names because they can grow to cover
 projectiles, spawners, drops, checkpoints, scene flow, UI, and win rules.
 
-For a larger no-Rust reference, see `examples/data-driven-full-demo`. Its
+For a larger legacy RON reference, see `examples/data-driven-full-demo`. Its
 `assets/game.ron` includes doors, projectiles, spawners, checkpoints, music,
 player shooting, enemy drops, and a countdown custom rule.
 
-For visual TMX maps without Rust setup code, use Tiled no-Rust:
+For visual TMX maps through the transitional RON wrapper, use:
 
 ```bash
 GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo --locked
@@ -94,7 +95,7 @@ For smaller focused references, copy:
 - `examples/data-driven-waves-demo` for timed spawns and tag-count rules
 - `examples/data-driven-projectiles-demo` for player shooting, projectile
   rules, and enemy-death effects
-- `examples/data-driven-tiled-demo` for Tiled TMX object mapping through
+- `examples/data-driven-tiled-demo` for legacy Tiled TMX object mapping through
   `assets/game.ron`
 
 ## Script rules
@@ -159,8 +160,8 @@ run_game("My Game", |game| {
 })
 ```
 
-This is the hybrid path: keep ordinary content in RON, then use Rust only for
-the rules that make your game unusual.
+This is the hybrid path: keep ordinary content in legacy RON, then use Rust
+only for the rules that make your game unusual.
 
 ## Helpful errors
 
@@ -174,16 +175,17 @@ renderer:
 game-dev validate-data assets/game.ron
 ```
 
-In a debug build, F5 reparses `assets/game.ron`, validates it, reloads the
-current map data, respawns the current map, and reloads existing textures and
-sounds. This is a partial data reload: changing existing numbers, prefab
+In a debug build, F5 reparses legacy `assets/game.ron`, validates it, reloads
+the current map data, respawns the current map, and reloads existing textures
+and sounds. This is a partial data reload: changing existing numbers, prefab
 settings, and a map's text-file path is supported, including future spawns from
 beginner rules. Existing custom countdown rule details, scene text/buttons, and
 audio scene settings also reload. Existing action settings such as prefab,
 cooldown, direction, and sound reload when the input binding stays the same.
 Adding, removing, or reordering asset names, prefab names, map names, or custom
-rule names still requires a restart. Changing scene names, scene input bindings,
-adding/removing/reordering actions, action input bindings, or the enabled rule
-list also still requires a restart.
-The F1 debug overlay reports `game.ron reload: partial` and shows the latest
-error if validation fails.
+rule names still requires a restart. Changing scene names, scene input
+bindings, adding/removing/reordering actions, action input bindings, or the
+enabled rule list also still requires a restart.
+Because this legacy tutorial loads `game.ron`, the F1 debug overlay reports
+`game.ron reload: partial` and shows the latest error if validation fails.
+Primary `game.toml` packages report `game.toml` in the same overlay slot.

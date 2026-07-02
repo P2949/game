@@ -15,7 +15,7 @@ pub(crate) fn run_project() -> Result<()> {
 }
 
 pub(crate) fn beginner_failure_advice() -> &'static str {
-    "If this looks like a setup issue:\n    game-dev doctor --explain\n\nIf this looks like an asset/data issue:\n    game-dev asset-check\n    game-dev validate-data assets/game.ron\n\nSee:\n    docs/tutorials/common-errors.md"
+    "If this looks like a setup issue:\n    game-dev doctor --explain\n\nIf this looks like an asset/data issue:\n    game-dev asset-check\n    game-dev validate-data\n\nSee:\n    docs/tutorials/common-errors.md"
 }
 
 pub(crate) fn cargo_run_game_cli(workspace: &Path, features: &[String]) -> Command {

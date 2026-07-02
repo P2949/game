@@ -14,9 +14,10 @@ using it as a beginner starting point.
 
 ## Tracks
 
-- **Track A: No Rust.** Use `templates/data-driven-demo`, then edit
-  `assets/game.ron`, maps, textures, and sounds. Start with
-  [Data-driven first game](13-data-driven-demo.md).
+- **Track A: No Rust.** `templates/no-rust-demo` shows the primary `game.toml`
+  package shape and runs through `game-dev preview`. Legacy RON compatibility
+  remains available for migration, but it is not part of the primary tutorial
+  sequence. Tiled no-Rust examples live in `examples/no-rust-tiled`.
 - **Track B: Beginner Rust.** Use `templates/simple-demo`; follow tutorials 00-12.
   This is the one-file Rust game path with beginner builder chains.
 - **Track C: Advanced.** Use the advanced path only when beginner APIs are insufficient.
@@ -27,10 +28,13 @@ using it as a beginner starting point.
 
 ## Which Example Should I Copy?
 
-- **No Rust:** `templates/data-driven-demo`,
+- **Primary no-Rust:** `examples/no-rust-minimal`, `examples/no-rust-events`,
+  `examples/no-rust-waves`, `examples/no-rust-projectiles`,
+  `examples/no-rust-full`, `examples/no-rust-tiled`
+- **Legacy RON data wrapper:** `templates/data-driven-demo`,
   `examples/data-driven-events-demo`, `examples/data-driven-waves-demo`,
   `examples/data-driven-projectiles-demo`
-- **Tiled no-Rust:** `examples/data-driven-tiled-demo`
+- **Tiled no-Rust:** `examples/no-rust-tiled`
 - **First Rust game:** `templates/simple-demo`
 - **One-file example:** `examples/one-file-demo`
 - **Full beginner feature sample:** `examples/no-rust-shapes-demo`
@@ -68,6 +72,7 @@ numbered course:
 - [Optional - Add sound and UI](optional-add-sound-and-ui.md)
 - [Optional - Add animation](optional-add-animation.md)
 - [Optional - Package your demo](optional-package-your-demo.md)
+- [Legacy - Data-driven RON wrapper](13-data-driven-demo.md)
 
 Keep [common errors](common-errors.md) nearby while editing. The messages are
 written to point back to the builder call that fixes the problem.

@@ -5,13 +5,15 @@
 //! resources, UI text, audio, commands, and map services — so content systems
 //! never name `Ctx`, `StartCtx`, raw `World`, or `CommandQueue`.
 
+use std::path::Path;
+
 use anyhow::Result;
 use game_combat::{Faction, FactionId, Health, MeleeAttack};
 use game_core::app::{Ctx, StartCtx};
 use game_core::backend::{SoundHandle, TextureHandle};
 use game_core::builder::{PrefabId, PropertyBag};
 use game_core::camera::Camera2D;
-use game_core::commands::{CommandQueue, MapReload};
+use game_core::commands::{CommandErrorKind, CommandErrors, CommandQueue, MapReload};
 use game_core::input::{ActionId, Axis2dId, Input, MouseButton};
 use game_core::world::{Component, EntityId, Transform, Velocity, World};
 use game_map::MapCell;
@@ -21,7 +23,7 @@ use crate::assets::AssetLookup;
 use crate::beginner::audio::AudioOps;
 use crate::beginner::debug::DebugIterationInfo;
 use crate::beginner::tuning::TuningFile;
-use crate::data::{BeginnerFileRuntime, rebuild_beginner_content_runtime};
+use crate::data::{AuthoringFileRuntime, rebuild_authoring_content_runtime};
 use crate::helpers::{InputDriven, MovementSpeed};
 use crate::map::{
     ContentRuntime, change_to_map_world, reset_to_start_map_world, restart_current_map_world,
@@ -59,7 +61,9 @@ pub(crate) fn drain_beginner_spawn_queue(world: &mut World) {
     }
 
     let Some(content) = world.remove_resource::<ContentRuntime>() else {
-        log::error!("failed to run beginner spawn queue: content runtime is missing");
+        let message = "failed to run authoring spawn queue: content runtime is missing";
+        log::error!("{message}");
+        push_command_error(world, CommandErrorKind::AuthoringSpawn, message);
         return;
     };
 
@@ -70,14 +74,30 @@ pub(crate) fn drain_beginner_spawn_queue(world: &mut World) {
             request.position,
             &request.properties,
         ) {
-            log::error!(
-                "failed to spawn beginner prefab '{}': {error:?}",
-                request.prefab
-            );
+            let message = format!("failed to spawn prefab \"{}\": {error}", request.prefab);
+            log::error!("{message}");
+            push_command_error(world, CommandErrorKind::AuthoringSpawn, message);
         }
     }
 
     world.insert_resource(content);
+}
+
+pub(crate) fn push_command_error(
+    world: &mut World,
+    kind: CommandErrorKind,
+    message: impl Into<String>,
+) {
+    world
+        .resource_or_insert_with(CommandErrors::default)
+        .push(kind, message);
+}
+
+fn authoring_file_display_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("game file")
+        .to_owned()
 }
 
 /// Per-step context handed to fixed/update/render/ui systems.
@@ -641,16 +661,17 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         let mut file = self
             .inner
             .world
-            .remove_resource::<BeginnerFileRuntime>()
-            .ok_or_else(|| anyhow::anyhow!("no beginner data file is registered"))?;
+            .remove_resource::<AuthoringFileRuntime>()
+            .ok_or_else(|| anyhow::anyhow!("no game file is registered"))?;
         let path = file.path().to_path_buf();
+        let file_name = authoring_file_display_name(&path);
         let current_map = self
             .inner
             .world
             .get_resource::<ContentRuntime>()
             .map(|runtime| runtime.current_map_name().to_owned());
 
-        let rebuilt = match rebuild_beginner_content_runtime(&path, file.identity()) {
+        let rebuilt = match rebuild_authoring_content_runtime(&path, file.identity()) {
             Ok(rebuilt) => rebuilt,
             Err(error) => {
                 let message = error.to_string();
@@ -658,7 +679,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
                 self.inner.world.insert_resource(file);
                 if let Some(iteration) = self.inner.world.get_resource_mut::<DebugIterationInfo>() {
                     iteration.last_reload = format!(
-                        "game.ron failed: {}",
+                        "{file_name} failed: {}",
                         message.lines().next().unwrap_or("unknown error")
                     );
                 }
@@ -684,17 +705,17 @@ impl<'a, 'w> GameCtx<'a, 'w> {
         file.last_error = None;
         self.inner.world.insert_resource(file);
         if let Some(iteration) = self.inner.world.get_resource_mut::<DebugIterationInfo>() {
-            iteration.last_reload = format!("game.ron ok ({target_map})");
+            iteration.last_reload = format!("{file_name} ok ({target_map})");
         }
         Ok(())
     }
 
     pub fn reload_beginner_file_if_configured_or_log(&mut self) -> bool {
-        if self.resource::<BeginnerFileRuntime>().is_none() {
+        if self.resource::<AuthoringFileRuntime>().is_none() {
             return false;
         }
         if let Err(error) = self.reload_beginner_file() {
-            log::error!("failed to reload beginner data file: {error:#}");
+            log::error!("failed to reload game file: {error:#}");
         }
         true
     }
@@ -713,7 +734,7 @@ impl<'a, 'w> GameCtx<'a, 'w> {
     pub fn reload_tuning(&mut self) -> Result<()> {
         let tuning = self.resource_mut::<TuningFile>().ok_or_else(|| {
             anyhow::anyhow!(
-                "no tuning file is registered. Call game.tuning_from_file(\"tuning/game.ron\") during setup first."
+                "no tuning file is registered. Call game.tuning_from_file(\"tuning/game.toml\") during setup first."
             )
         })?;
         tuning.reload()
@@ -927,13 +948,13 @@ mod tests {
     use game_core::backend::{AudioCommand, TextureHandle};
     use game_core::builder::{MapId, PrefabRegistry};
     use game_core::camera::Camera2D;
-    use game_core::commands::{Command, CommandQueue};
+    use game_core::commands::{Command, CommandErrorKind, CommandErrors, CommandQueue};
     use game_core::gfx::Gfx;
     use game_core::input::Input;
     use game_core::nav::NavGrid;
     use game_core::tilemap::TileMap;
     use game_core::world::{Entity, Sprite, Velocity, World};
-    use game_map::MapBuilder;
+    use game_map::{MapBuilder, cell};
     use glam::{Vec2, vec2};
 
     use super::{GameCtx, drain_beginner_spawn_queue};
@@ -997,6 +1018,14 @@ mod tests {
         MapBuilder::new(name, 16.0)
             .try_tile_layer("collision", &["."])
             .unwrap()
+            .finish()
+    }
+
+    fn map_with_object(name: &str, prefab: game_core::builder::PrefabId) -> game_map::GameMap {
+        MapBuilder::new(name, 16.0)
+            .try_tile_layer("collision", &["."])
+            .unwrap()
+            .object("spawn", prefab, cell(0, 0))
             .finish()
     }
 
@@ -1081,6 +1110,36 @@ mod tests {
     }
 
     #[test]
+    fn deferred_beginner_spawn_failures_are_structured_command_errors() {
+        let mut prefabs = PrefabRegistry::new();
+        prefabs.register("broken", |_world, _position, _properties| {
+            anyhow::bail!("missing collider")
+        });
+
+        let mut world = World::new();
+        world.insert_resource(ContentRuntime::new(
+            Rc::new(prefabs),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            "test".to_owned(),
+        ));
+
+        with_game_ctx(&mut world, |game| {
+            game.spawn_prefab_at("broken", vec2(5.0, 6.0)).unwrap();
+        });
+
+        drain_beginner_spawn_queue(&mut world);
+
+        let errors = world.get_resource::<CommandErrors>().unwrap();
+        let error = errors.last().unwrap();
+        assert_eq!(error.kind, CommandErrorKind::AuthoringSpawn);
+        assert!(error.message.contains("failed to spawn prefab \"broken\""));
+        assert!(error.message.contains("missing collider"));
+    }
+
+    #[test]
     fn change_map_switches_content_runtime_and_queues_active_map_command() {
         let mut maps = HashMap::new();
         maps.insert("first".to_owned(), empty_game_map("first"));
@@ -1103,6 +1162,7 @@ mod tests {
             HashMap::new(),
             "first".to_owned(),
         ));
+        world.resource_or_insert_with(CommandQueue::new).quit();
 
         with_game_ctx(&mut world, |game| {
             game.change_map("second").unwrap();
@@ -1124,20 +1184,105 @@ mod tests {
     }
 
     #[test]
+    fn failed_map_switch_keeps_current_map_and_records_diagnostic() {
+        let mut prefabs = PrefabRegistry::new();
+        let broken = prefabs.register("broken", |_world, _position, _properties| {
+            anyhow::bail!("broken prefab")
+        });
+        let mut maps = HashMap::new();
+        maps.insert("first".to_owned(), empty_game_map("first"));
+        maps.insert("broken".to_owned(), map_with_object("broken", broken));
+        let map_ids = HashMap::from([
+            ("first".to_owned(), MapId(0)),
+            ("broken".to_owned(), MapId(1)),
+        ]);
+        let themes = HashMap::from([
+            ("first".to_owned(), empty_theme()),
+            ("broken".to_owned(), empty_theme()),
+        ]);
+
+        let mut world = World::new();
+        world.spawn(Entity::new(vec2(1.0, 2.0)).with(Marker));
+        world.insert_resource(ContentRuntime::new(
+            Rc::new(prefabs),
+            maps,
+            map_ids,
+            themes,
+            HashMap::new(),
+            "first".to_owned(),
+        ));
+
+        let error = with_game_ctx(&mut world, |game| game.change_map("broken"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("failed to switch to map 'broken'"));
+        assert_eq!(
+            world
+                .get_resource::<ContentRuntime>()
+                .unwrap()
+                .current_map_name(),
+            "first"
+        );
+        assert_eq!(world.ids_with::<Marker>().len(), 1);
+        let errors = world.get_resource::<CommandErrors>().unwrap();
+        let error = errors.last().unwrap();
+        assert_eq!(error.kind, CommandErrorKind::MapTransition);
+        assert!(error.message.contains("broken prefab"));
+    }
+
+    #[test]
+    fn unknown_map_switch_keeps_current_map_and_records_diagnostic() {
+        let mut maps = HashMap::new();
+        maps.insert("first".to_owned(), empty_game_map("first"));
+        let map_ids = HashMap::from([("first".to_owned(), MapId(0))]);
+        let themes = HashMap::from([("first".to_owned(), empty_theme())]);
+
+        let mut world = World::new();
+        world.spawn(Entity::new(vec2(1.0, 2.0)).with(Marker));
+        world.insert_resource(ContentRuntime::new(
+            Rc::new(PrefabRegistry::new()),
+            maps,
+            map_ids,
+            themes,
+            HashMap::new(),
+            "first".to_owned(),
+        ));
+
+        let error = with_game_ctx(&mut world, |game| game.change_map("missing"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("unknown map 'missing'"));
+        assert_eq!(
+            world
+                .get_resource::<ContentRuntime>()
+                .unwrap()
+                .current_map_name(),
+            "first"
+        );
+        assert_eq!(world.ids_with::<Marker>().len(), 1);
+        let errors = world.get_resource::<CommandErrors>().unwrap();
+        let error = errors.last().unwrap();
+        assert_eq!(error.kind, CommandErrorKind::MapTransition);
+        assert!(error.message.contains("unknown map 'missing'"));
+    }
+
+    #[test]
     fn reload_tuning_replaces_the_registered_values() {
         let path = std::env::temp_dir().join(format!(
-            "game-kit-context-tuning-{}-{}.ron",
+            "game-kit-context-tuning-{}-{}.toml",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        fs::write(&path, "{ \"slime.health\": 40.0 }").unwrap();
+        fs::write(&path, "[tuning]\nslime_health = 40\n").unwrap();
 
         let mut world = World::new();
         world.insert_resource(TuningFile::from_file(&path).unwrap());
-        fs::write(&path, "{ \"slime.health\": 75.0 }").unwrap();
+        fs::write(&path, "[tuning]\nslime_health = 75\n").unwrap();
 
         with_game_ctx(&mut world, |game| game.reload_tuning().unwrap());
 
@@ -1145,7 +1290,7 @@ mod tests {
             world
                 .get_resource::<TuningFile>()
                 .unwrap()
-                .int("slime.health")
+                .int("slime_health")
                 .initial(),
             75
         );
@@ -1160,16 +1305,16 @@ mod tests {
         }));
 
         let path = std::env::temp_dir().join(format!(
-            "game-kit-context-optional-tuning-{}-{}.ron",
+            "game-kit-context-optional-tuning-{}-{}.toml",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        fs::write(&path, "{ \"slime.health\": 40.0 }").unwrap();
+        fs::write(&path, "[tuning]\nslime_health = 40\n").unwrap();
         world.insert_resource(TuningFile::from_file(&path).unwrap());
-        fs::write(&path, "{ \"slime.health\": 75.0 }").unwrap();
+        fs::write(&path, "[tuning]\nslime_health = 75\n").unwrap();
 
         assert!(with_game_ctx(&mut world, |game| {
             game.reload_tuning_if_configured_or_log()
@@ -1178,7 +1323,7 @@ mod tests {
             world
                 .get_resource::<TuningFile>()
                 .unwrap()
-                .int("slime.health")
+                .int("slime_health")
                 .initial(),
             75
         );

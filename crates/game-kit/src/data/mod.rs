@@ -29,13 +29,16 @@ use crate::input::TopDownControls;
 use crate::map::{ContentRuntime, beginner_asset_path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BeginnerReloadLevel {
+pub enum AuthoringReloadLevel {
     NotSupported,
     Partial,
     Ok,
 }
 
-impl BeginnerReloadLevel {
+#[doc(hidden)]
+pub type BeginnerReloadLevel = AuthoringReloadLevel;
+
+impl AuthoringReloadLevel {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NotSupported => "not supported",
@@ -46,21 +49,24 @@ impl BeginnerReloadLevel {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct BeginnerFileRuntime {
+pub struct AuthoringFileRuntime {
     pub(crate) path: PathBuf,
     pub(crate) last_loaded_version: u64,
     pub(crate) last_error: Option<String>,
-    pub(crate) reload_level: BeginnerReloadLevel,
-    identity: BeginnerReloadIdentity,
+    pub(crate) reload_level: AuthoringReloadLevel,
+    identity: AuthoringReloadIdentity,
 }
 
-impl BeginnerFileRuntime {
-    fn new(path: PathBuf, identity: BeginnerReloadIdentity) -> Self {
+#[doc(hidden)]
+pub type BeginnerFileRuntime = AuthoringFileRuntime;
+
+impl AuthoringFileRuntime {
+    fn new(path: PathBuf, identity: AuthoringReloadIdentity) -> Self {
         Self {
             path,
             last_loaded_version: 1,
             last_error: None,
-            reload_level: BeginnerReloadLevel::Partial,
+            reload_level: AuthoringReloadLevel::Partial,
             identity,
         }
     }
@@ -69,13 +75,13 @@ impl BeginnerFileRuntime {
         &self.path
     }
 
-    pub(crate) fn identity(&self) -> &BeginnerReloadIdentity {
+    pub(crate) fn identity(&self) -> &AuthoringReloadIdentity {
         &self.identity
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct BeginnerReloadIdentity {
+pub(crate) struct AuthoringReloadIdentity {
     textures: Vec<String>,
     sounds: Vec<String>,
     music: Vec<String>,
@@ -88,8 +94,8 @@ pub(crate) struct BeginnerReloadIdentity {
     actions: Vec<BeginnerActionIdentity>,
 }
 
-impl BeginnerReloadIdentity {
-    fn from_file(file: &BeginnerGameFile, label: &str) -> Result<Self> {
+impl AuthoringReloadIdentity {
+    fn from_file(file: &AuthoringGameFile, label: &str) -> Result<Self> {
         Ok(Self {
             textures: file.assets.textures.clone(),
             sounds: file.assets.sounds.clone(),
@@ -225,7 +231,7 @@ pub(crate) struct BeginnerRuntimeConfig {
 }
 
 impl BeginnerRuntimeConfig {
-    fn from_file(file: &BeginnerGameFile) -> Self {
+    fn from_file(file: &AuthoringGameFile) -> Self {
         Self {
             custom_countdowns: file
                 .custom_rules
@@ -364,26 +370,119 @@ pub(crate) struct BeginnerRuleUiText {
     pub(crate) lines: Vec<String>,
 }
 
-pub(crate) struct RebuiltBeginnerContent {
+pub(crate) struct RebuiltAuthoringContent {
     pub(crate) runtime: ContentRuntime,
     pub(crate) config: BeginnerRuntimeConfig,
 }
 
-/// Loads a beginner RON file from the asset root and compiles it through the
-/// normal `GameApp` asset, prefab, map, input, action, scene, audio, and rule
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthoringFormat {
+    Toml,
+    RonLegacy,
+}
+
+impl AuthoringFormat {
+    fn from_path(path: &Path) -> Result<Self> {
+        let label = path.display();
+        let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+            anyhow::bail!(
+                "authoring file '{label}' has no file extension. Use `game.toml` for primary no-Rust authoring. RON is legacy; use `game-dev migrate-ron` if needed."
+            );
+        };
+
+        match extension.to_ascii_lowercase().as_str() {
+            "toml" => Ok(Self::Toml),
+            "ron" => Ok(Self::RonLegacy),
+            other => anyhow::bail!(
+                "authoring file '{label}' has unsupported extension '.{other}'. Use `game.toml` for primary no-Rust authoring. RON is legacy; use `game-dev migrate-ron` if needed."
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AuthoringLoadContext {
+    pub(crate) project_root: PathBuf,
+    pub(crate) asset_root: PathBuf,
+    pub(crate) source_file: PathBuf,
+}
+
+impl AuthoringLoadContext {
+    fn for_file(format: AuthoringFormat, source_file: PathBuf) -> Self {
+        let source_parent = source_file.parent().unwrap_or_else(|| Path::new("."));
+        match format {
+            AuthoringFormat::Toml => {
+                let project_root = source_parent.to_path_buf();
+                let asset_root = project_root.join("assets");
+                Self {
+                    project_root,
+                    asset_root,
+                    source_file,
+                }
+            }
+            AuthoringFormat::RonLegacy => {
+                let asset_root = source_parent.to_path_buf();
+                let project_root = asset_root
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| asset_root.clone());
+                Self {
+                    project_root,
+                    asset_root,
+                    source_file,
+                }
+            }
+        }
+    }
+
+    fn package_relative_label(&self) -> String {
+        self.source_file
+            .strip_prefix(&self.project_root)
+            .unwrap_or(&self.source_file)
+            .display()
+            .to_string()
+    }
+}
+
+/// Loads a primary no-Rust `game.toml` file and compiles it through the normal
+/// `GameApp` asset, prefab, map, input, action, scene, audio, and rule
 /// builders.
-pub fn load_beginner_game_file(
+///
+/// TOML packages resolve assets from an `assets/` directory next to
+/// `game.toml`. Legacy `.ron` files remain supported through the old asset-root
+/// search path for compatibility.
+pub fn load_authoring_file(
     game: &mut GameApp<'_>,
     path: impl AsRef<Path>,
 ) -> Result<TopDownControls> {
-    let loaded = read_beginner_game_file(path)?;
-    let identity = BeginnerReloadIdentity::from_file(&loaded.file, &loaded.label)?;
-    let runtime = BeginnerFileRuntime::new(loaded.full_path.clone(), identity);
+    let loaded = read_authoring_game_file(path)?;
+    load_authoring_file_from_loaded(game, loaded)
+}
+
+/// Loads a primary authoring file using an explicit asset root.
+///
+/// Relative asset roots are resolved from the authoring package root. This is
+/// intended for prebuilt tools that expose an `--assets` override.
+pub fn load_authoring_file_with_asset_root(
+    game: &mut GameApp<'_>,
+    path: impl AsRef<Path>,
+    asset_root: impl AsRef<Path>,
+) -> Result<TopDownControls> {
+    let loaded = read_authoring_game_file_with_asset_root(path, Some(asset_root.as_ref()))?;
+    load_authoring_file_from_loaded(game, loaded)
+}
+
+fn load_authoring_file_from_loaded(
+    game: &mut GameApp<'_>,
+    loaded: LoadedAuthoringGameFile,
+) -> Result<TopDownControls> {
+    let identity = AuthoringReloadIdentity::from_file(&loaded.file, &loaded.label)?;
+    let runtime = AuthoringFileRuntime::new(loaded.context.source_file.clone(), identity);
     let controls = build::build_beginner_game_file(
         game,
         loaded.file,
         &loaded.label,
-        loaded.full_path.parent(),
+        Some(&loaded.context.asset_root),
     )?;
     game.startup(move |game: &mut crate::context::StartupGameCtx<'_, '_>| {
         game.insert_resource(runtime.clone());
@@ -392,23 +491,78 @@ pub fn load_beginner_game_file(
     Ok(controls)
 }
 
-/// Validates a beginner RON file without starting runtime backends.
+/// Loads a legacy beginner RON file through the primary authoring loader.
 ///
-/// This is the same path [`GameApp::load_beginner_file`] uses, followed by the
-/// normal content finalization checks for maps, prefabs, and start-map state.
-pub fn validate_beginner_game_file(path: impl AsRef<Path>) -> Result<()> {
+/// This compatibility path keeps `game.ron` resolving from the configured asset
+/// root. Prefer [`load_authoring_file`] with `game.toml` for primary no-Rust
+/// authoring.
+pub fn load_beginner_game_file(
+    game: &mut GameApp<'_>,
+    path: impl AsRef<Path>,
+) -> Result<TopDownControls> {
+    load_authoring_file(game, path)
+}
+
+/// Validates a primary no-Rust `game.toml` file without starting runtime
+/// backends.
+///
+/// This is the same path [`load_authoring_file`] uses, followed by the normal
+/// content finalization checks for maps, prefabs, and start-map state. Legacy
+/// `.ron` files remain supported.
+pub fn validate_authoring_file(path: impl AsRef<Path>) -> Result<()> {
     let mut builder = GameBuilder::new();
     let mut game = GameApp::new(&mut builder);
-    load_beginner_game_file(&mut game, path)?;
+    load_authoring_file(&mut game, path)?;
     game.finish()
 }
 
-pub(crate) fn rebuild_beginner_content_runtime(
+/// Validates a primary authoring file with an explicit asset root.
+pub fn validate_authoring_file_with_asset_root(
+    path: impl AsRef<Path>,
+    asset_root: impl AsRef<Path>,
+) -> Result<()> {
+    let mut builder = GameBuilder::new();
+    let mut game = GameApp::new(&mut builder);
+    load_authoring_file_with_asset_root(&mut game, path, asset_root)?;
+    game.finish()
+}
+
+/// Result of converting a legacy `assets/game.ron` file into primary TOML.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RonToTomlMigration {
+    pub toml: String,
+    pub notes: Vec<String>,
+}
+
+/// Converts legacy RON authoring data into canonical primary `game.toml`.
+///
+/// The generated TOML is parsed before it is returned. Full validation belongs
+/// to the caller, because only the caller knows where the output package and
+/// asset root will live.
+pub fn migrate_legacy_ron_source_to_toml(source: &str, label: &str) -> Result<RonToTomlMigration> {
+    let file = parse_beginner_game_source(source, label)?;
+
+    let mut notes =
+        vec!["Converted legacy RON authoring data to primary game.toml version 2.".to_owned()];
+    let toml = toml_emit::emit_authoring_game_toml(&file, &mut notes);
+    toml_parse::parse_toml_authoring_source(&toml, "generated game.toml")?;
+    notes.sort();
+    notes.dedup();
+
+    Ok(RonToTomlMigration { toml, notes })
+}
+
+/// Validates a legacy beginner RON file through the primary authoring validator.
+pub fn validate_beginner_game_file(path: impl AsRef<Path>) -> Result<()> {
+    validate_authoring_file(path)
+}
+
+pub(crate) fn rebuild_authoring_content_runtime(
     path: &Path,
-    expected_identity: &BeginnerReloadIdentity,
-) -> Result<RebuiltBeginnerContent> {
-    let loaded = read_beginner_game_file(path)?;
-    let identity = BeginnerReloadIdentity::from_file(&loaded.file, &loaded.label)?;
+    expected_identity: &AuthoringReloadIdentity,
+) -> Result<RebuiltAuthoringContent> {
+    let loaded = read_authoring_game_file(path)?;
+    let identity = AuthoringReloadIdentity::from_file(&loaded.file, &loaded.label)?;
     expected_identity.ensure_matches(&identity, &loaded.label)?;
     let config = BeginnerRuntimeConfig::from_file(&loaded.file);
 
@@ -418,22 +572,26 @@ pub(crate) fn rebuild_beginner_content_runtime(
         &mut game,
         loaded.file,
         &loaded.label,
-        loaded.full_path.parent(),
+        Some(&loaded.context.asset_root),
     )?;
     let runtime = game.finish_for_reload()?;
-    Ok(RebuiltBeginnerContent { runtime, config })
+    Ok(RebuiltAuthoringContent { runtime, config })
 }
 
 mod build;
 mod defaults;
 mod effects;
 mod legacy;
-mod schema;
+mod legacy_ron;
+mod model;
+mod toml_emit;
+mod toml_parse;
+mod toml_schema;
 mod validate;
 
 use legacy::legacy_rule_kind;
-
-pub use schema::*;
+pub use legacy_ron::*;
+pub(crate) use model::*;
 
 #[cfg(test)]
 fn load_beginner_game_text(
@@ -456,39 +614,107 @@ fn load_beginner_game_text_with_base(
     build::build_beginner_game_file(game, file, label, asset_base)
 }
 
-struct LoadedBeginnerGameFile {
-    file: BeginnerGameFile,
+struct LoadedAuthoringGameFile {
+    file: AuthoringGameFile,
     label: String,
-    full_path: PathBuf,
+    context: AuthoringLoadContext,
 }
 
-fn read_beginner_game_file(path: impl AsRef<Path>) -> Result<LoadedBeginnerGameFile> {
+fn read_authoring_game_file(path: impl AsRef<Path>) -> Result<LoadedAuthoringGameFile> {
+    read_authoring_game_file_with_asset_root(path, None)
+}
+
+fn read_authoring_game_file_with_asset_root(
+    path: impl AsRef<Path>,
+    asset_root: Option<&Path>,
+) -> Result<LoadedAuthoringGameFile> {
     let requested = path.as_ref();
+    let format = AuthoringFormat::from_path(requested)?;
     let path_text = requested.to_string_lossy();
-    let full_path = beginner_asset_path(&path_text);
-    let source = std::fs::read_to_string(&full_path).with_context(|| {
-        format!(
-            "could not read beginner game file 'assets/{}' (looked for '{}')",
-            requested.display(),
-            full_path.display()
-        )
-    })?;
-    let label = requested.display().to_string();
-    let file = parse_beginner_game_source(&source, &label)?;
-    validate::validate_file_with_base(&file, &label, full_path.parent())?;
-    Ok(LoadedBeginnerGameFile {
+    let full_path = resolve_authoring_path(format, requested, &path_text)?;
+    let source = std::fs::read_to_string(&full_path)
+        .with_context(|| format_authoring_read_error(format, requested, &full_path))?;
+    let mut context = AuthoringLoadContext::for_file(format, full_path);
+    if let Some(asset_root) = asset_root {
+        context.asset_root = resolve_authoring_asset_root(&context.project_root, asset_root);
+    }
+    let label = match format {
+        AuthoringFormat::Toml => context.package_relative_label(),
+        AuthoringFormat::RonLegacy => requested.display().to_string(),
+    };
+    let file = parse_authoring_source(&source, &label, format)?;
+    validate::validate_file_with_base(&file, &label, Some(&context.asset_root))?;
+    Ok(LoadedAuthoringGameFile {
         file,
         label,
-        full_path,
+        context,
     })
 }
 
-fn parse_beginner_game_source(source: &str, label: &str) -> Result<BeginnerGameFile> {
-    ron::from_str(source).map_err(|error| {
+fn resolve_authoring_asset_root(project_root: &Path, asset_root: &Path) -> PathBuf {
+    if asset_root.is_absolute() {
+        asset_root.to_path_buf()
+    } else {
+        project_root.join(asset_root)
+    }
+}
+
+fn resolve_authoring_path(
+    format: AuthoringFormat,
+    requested: &Path,
+    path_text: &str,
+) -> Result<PathBuf> {
+    match format {
+        AuthoringFormat::Toml => {
+            if requested.is_absolute() {
+                Ok(requested.to_path_buf())
+            } else {
+                Ok(std::env::current_dir()
+                    .context("could not resolve current directory for game.toml")?
+                    .join(requested))
+            }
+        }
+        AuthoringFormat::RonLegacy => Ok(beginner_asset_path(path_text)),
+    }
+}
+
+fn format_authoring_read_error(
+    format: AuthoringFormat,
+    requested: &Path,
+    full_path: &Path,
+) -> String {
+    match format {
+        AuthoringFormat::Toml => format!(
+            "could not read game config '{}' (looked for '{}')",
+            requested.display(),
+            full_path.display()
+        ),
+        AuthoringFormat::RonLegacy => format!(
+            "could not read legacy beginner game file 'assets/{}' (looked for '{}')",
+            requested.display(),
+            full_path.display()
+        ),
+    }
+}
+
+fn parse_authoring_source(
+    source: &str,
+    label: &str,
+    format: AuthoringFormat,
+) -> Result<AuthoringGameFile> {
+    match format {
+        AuthoringFormat::Toml => toml_parse::parse_toml_authoring_source(source, label),
+        AuthoringFormat::RonLegacy => parse_beginner_game_source(source, label),
+    }
+}
+
+fn parse_beginner_game_source(source: &str, label: &str) -> Result<AuthoringGameFile> {
+    let file: BeginnerGameFile = ron::from_str(source).map_err(|error| {
         anyhow!(
             "beginner game file '{label}' is not valid RON: {error}\n\nUse controls like TopDown and rules like TopDownControls, PlayerCollectsPickups, ShowScore. They are case-sensitive."
         )
-    })
+    })?;
+    Ok(file.into())
 }
 
 impl BeginnerControlsFile {

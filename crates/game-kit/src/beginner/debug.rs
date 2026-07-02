@@ -1,11 +1,11 @@
 //! Beginner debug overlay helpers.
 
-use game_core::commands::{AssetReloadStatus, CommandErrors};
+use game_core::commands::{AssetReloadStatus, CommandErrorKind, CommandErrors};
 use glam::{vec2, vec4};
 
 use crate::beginner::actors::{Enemy, Name, Player};
 use crate::context::GameCtx;
-use crate::data::BeginnerFileRuntime;
+use crate::data::AuthoringFileRuntime;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DebugOverlay {
@@ -74,20 +74,20 @@ pub fn draw_debug_overlay(game: &mut GameCtx<'_, '_>, dt: f32) {
         lines.push(format!("assets: {} loaded", iteration.asset_count));
         lines.push(format!("last reload: {}", iteration.last_reload));
     }
-    if let Some(file) = game.resource::<BeginnerFileRuntime>() {
+    if let Some(file) = game.resource::<AuthoringFileRuntime>() {
         let name = file
             .path()
             .file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or("game.ron");
+            .unwrap_or("game file");
         lines.push(format!(
             "{name}: loaded at startup (v{})",
             file.last_loaded_version
         ));
-        lines.push(format!("game.ron reload: {}", file.reload_level.label()));
+        lines.push(format!("{name} reload: {}", file.reload_level.label()));
         if let Some(error) = &file.last_error {
             lines.push(format!(
-                "game.ron error: {}",
+                "{name} error: {}",
                 error.lines().next().unwrap_or("unknown error")
             ));
         }
@@ -100,7 +100,8 @@ pub fn draw_debug_overlay(game: &mut GameCtx<'_, '_>, dt: f32) {
         .and_then(CommandErrors::last)
     {
         lines.push(format!(
-            "Runtime command error: {}",
+            "{}: {}",
+            command_error_label(&error.kind),
             error.message.lines().next().unwrap_or("unknown error")
         ));
     }
@@ -143,6 +144,19 @@ pub fn draw_debug_overlay(game: &mut GameCtx<'_, '_>, dt: f32) {
         vec2(16.0, 16.0),
         vec4(0.78, 1.0, 0.70, 1.0),
     );
+}
+
+fn command_error_label(kind: &CommandErrorKind) -> &'static str {
+    match kind {
+        CommandErrorKind::AuthoringSpawn => "authoring error",
+        CommandErrorKind::MapTransition => "map transition error",
+        CommandErrorKind::SpawnPrefab
+        | CommandErrorKind::ChangeMap
+        | CommandErrorKind::ReloadMap
+        | CommandErrorKind::ReloadAssets
+        | CommandErrorKind::RestartMap
+        | CommandErrorKind::RestartStartMap => "Runtime command error",
+    }
 }
 
 impl<'a, 'w> GameCtx<'a, 'w> {
@@ -201,5 +215,34 @@ mod tests {
         game.frame(1.0 / 60.0);
 
         game.assert_ui_contains("Runtime command error: failed to change active map");
+    }
+
+    #[test]
+    fn overlay_reports_authoring_spawn_errors() {
+        let mut game = GameTestHarness::from_plugin(DebugPlugin).unwrap();
+        let mut errors = CommandErrors::default();
+        errors.push(
+            CommandErrorKind::AuthoringSpawn,
+            "failed to spawn prefab \"slime\": missing collider",
+        );
+        game.world_mut().insert_resource(errors);
+
+        game.frame(1.0 / 60.0);
+
+        game.assert_ui_contains("authoring error: failed to spawn prefab \"slime\"");
+    }
+
+    #[test]
+    #[should_panic(expected = "runtime command errors: failed to spawn prefab")]
+    fn harness_strict_command_error_assertion_fails_on_authoring_errors() {
+        let mut game = GameTestHarness::from_plugin(DebugPlugin).unwrap();
+        let mut errors = CommandErrors::default();
+        errors.push(
+            CommandErrorKind::AuthoringSpawn,
+            "failed to spawn prefab \"slime\": missing collider",
+        );
+        game.world_mut().insert_resource(errors);
+
+        game.assert_no_command_errors();
     }
 }

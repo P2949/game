@@ -425,13 +425,72 @@ fn full_data_driven_demo_stays_data_only() {
 }
 
 #[test]
+fn architecture_primary_authoring_toml_fixtures_do_not_use_rust_shaped_syntax() {
+    let root = workspace_root();
+    for relative in ["examples/data-driven-full-demo/game.toml"] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+
+        for required in [
+            "kind = \"player\"",
+            "kind = \"enemy\"",
+            "kind = \"pickup\"",
+            "preset = \"top-down\"",
+            "\"top-down-controls\"",
+            "\"win-when-all-enemies-dead\"",
+        ] {
+            assert!(
+                source.contains(required),
+                "{relative} should demonstrate primary TOML spelling {required:?}"
+            );
+        }
+
+        for forbidden in [
+            "Some(",
+            "Player((",
+            "Enemy((",
+            "Pickup((",
+            "Projectile((",
+            "Spawner((",
+            "Door((",
+            "Trigger((",
+            "Checkpoint((",
+            "TopDownControls",
+            "WinWhenAllEnemiesDead",
+            "TowardsMouse",
+            "::",
+            "fn ",
+            "impl ",
+            "struct ",
+            "enum ",
+            "pub ",
+            "Result",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} must not expose Rust/RON-shaped primary authoring syntax {forbidden:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn data_driven_reload_loop_is_validated_and_honest() {
     let root = workspace_root();
     let cli = fs::read_to_string(root.join("crates/game-cli/src/lib.rs"))
         .expect("failed to read game-cli");
     assert!(
-        cli.contains("validate-data") && cli.contains("validate_beginner_game_file"),
-        "game-dev should expose validate-data through the same beginner data validator"
+        cli.contains("Some(\"validate-data\") => validate_data_command(args)"),
+        "game-dev should route validate-data through the focused command module"
+    );
+    let validate_data =
+        fs::read_to_string(root.join("crates/game-cli/src/commands/validate_data.rs"))
+            .expect("failed to read validate-data command");
+    assert!(
+        validate_data.contains("validate_authoring_file_with_asset_root")
+            && validate_data.contains("validate_beginner_game_file")
+            && validate_data.contains("RON data files are legacy"),
+        "game-dev validate-data should use the primary TOML validator and retain a labeled legacy RON validator"
     );
 
     let data = fs::read_to_string(root.join("crates/game-kit/src/data/mod.rs"))
@@ -439,7 +498,7 @@ fn data_driven_reload_loop_is_validated_and_honest() {
     for required in [
         "BeginnerFileRuntime",
         "BeginnerReloadLevel",
-        "rebuild_beginner_content_runtime",
+        "rebuild_authoring_content_runtime",
         "changed its {kind} list",
     ] {
         assert!(
@@ -458,7 +517,12 @@ fn data_driven_reload_loop_is_validated_and_honest() {
 
     let debug = fs::read_to_string(root.join("crates/game-kit/src/beginner/debug.rs"))
         .expect("failed to read debug overlay");
-    for required in ["game.ron reload:", "loaded at startup", "game.ron error:"] {
+    for required in [
+        "last reload:",
+        "{name}: loaded at startup",
+        "{name} reload:",
+        "{name} error:",
+    ] {
         assert!(
             debug.contains(required),
             "debug overlay should explain data reload status with {required:?}"
@@ -523,9 +587,9 @@ fn data_driven_tiled_demo_stays_data_only_and_uses_tiled_maps() {
     let cookbook = fs::read_to_string(root.join("docs/cookbook/tiled.md"))
         .expect("failed to read Tiled cookbook");
     assert!(cookbook.contains("Tiled no-Rust"));
-    assert!(cookbook.contains(
-        "GAME_ASSET_DIR=examples/data-driven-tiled-demo/assets cargo run -p data-driven-tiled-demo"
-    ));
+    assert!(cookbook.contains("game-dev preview --project examples/no-rust-tiled"));
+    assert!(cookbook.contains("legacy Rust-wrapper"));
+    assert!(cookbook.contains("examples/data-driven-tiled-demo"));
 
     let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
         .expect("failed to read CI workflow");

@@ -1,0 +1,57 @@
+version = 2
+
+[game]
+title = "{{title}}"
+start_map = "level-1"
+
+[assets]
+textures = ["player", "slime", "coin", "floor", "wall"]
+sounds = ["coin"]
+
+[controls]
+preset = "top-down"
+
+[[prefab]]
+kind = "player"
+name = "player"
+sprite = "player"
+speed = 130
+health = 100
+
+[[prefab]]
+kind = "enemy"
+name = "slime"
+sprite = "slime"
+speed = 80
+health = 30
+chase_player = true
+
+[[prefab]]
+kind = "pickup"
+name = "coin"
+sprite = "coin"
+score = 1
+sound = "coin"
+
+[[map]]
+kind = "text"
+name = "level-1"
+file = "assets/maps/level-1.txt"
+floor = "floor"
+wall = "wall"
+start = true
+
+[map.legend]
+P = "player"
+E = "slime"
+C = "coin"
+
+[rules]
+enabled = [
+  "top-down-controls",
+  "player-collects-pickups",
+  "enemies-damage-player",
+  "camera-follows-player",
+  "show-score",
+  "show-player-health",
+]

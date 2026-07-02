@@ -36,8 +36,8 @@ run_game("My Game", |game| {
 
 ## What changed
 
-Nothing changes when the beginner API already describes what you want. Stay
-with beginner Rust or `assets/game.ron` for:
+Nothing changes when the primary `game.toml` package or secondary beginner Rust
+API already describes what you want. Stay there for:
 
 - player, enemy, pickup, projectile, door, checkpoint, trigger, and spawner
   behavior
@@ -45,6 +45,8 @@ with beginner Rust or `assets/game.ron` for:
 - custom behavior built from `on_*` hooks, actor handles, collections, and
   custom rules
 - packaging, asset checking, data validation, and fast iteration
+
+Use legacy `assets/game.ron` only for existing wrapper projects or migration.
 
 Use the advanced path only when the game idea truly needs lower-level engine
 experiments or custom systems that the beginner vocabulary cannot express.

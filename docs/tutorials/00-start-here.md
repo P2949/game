@@ -8,7 +8,7 @@ internals first.
 
 ## Files to edit
 
-Create the project from anywhere:
+Create the secondary beginner Rust project from anywhere:
 
 ```bash
 cargo install cargo-generate
@@ -28,9 +28,10 @@ have a local checkout, the equivalent command is
 
 Then edit `src/main.rs`.
 
-If you want the no-Rust path instead, use
-`cargo generate --git https://github.com/P2949/game templates/data-driven-demo --name my-game`
-and start with [13 - Data-driven first game](13-data-driven-demo.md).
+If you want the primary no-Rust path instead, start from
+`templates/no-rust-demo`, edit `game.toml`, and run `game-dev preview`. The
+legacy RON wrapper is documented only for existing projects and migration in
+[Legacy data-driven first game](13-data-driven-demo.md).
 
 ## Full code
 
@@ -65,8 +66,8 @@ prerequisites for your operating system:
 - [Linux setup](../setup/linux.md)
 
 Then run `game-dev doctor` when you need a prerequisite check, and
-`game-dev check` when you want assets, optional `assets/game.ron`, and Rust
-types checked together. If
+`game-dev check` when you want assets and Rust types checked together. Legacy
+RON wrapper projects are still validated by the same command. If
 `game_starter` cannot be fetched, first check your
 network connection and the generated `Cargo.toml` git dependency. If Cargo
 cannot run at all, install Rust from <https://rustup.rs> and restart your

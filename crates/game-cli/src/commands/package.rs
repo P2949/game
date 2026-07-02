@@ -6,16 +6,21 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow, bail};
 use walkdir::WalkDir;
 
-use crate::assets::validate_assets_dir;
+use crate::assets::{
+    asset_ignore_patterns_from_game_file, validate_assets_dir, validate_assets_dir_with_ignores,
+};
 use crate::manifest::package_info_from_manifest;
 use crate::paths::{absolutize_from, executable_name, source_assets_dir};
 use crate::process::beginner_failure_advice;
+use crate::project::{
+    NoRustPathOverrides, ProjectKind, detect_project_kind, resolve_no_rust_project_paths_with_env,
+};
 
-struct PackageOptions {
-    release: bool,
-    output: Option<PathBuf>,
-    zip: bool,
-    features: Vec<String>,
+pub(super) struct PackageOptions {
+    pub(super) release: bool,
+    pub(super) output: Option<PathBuf>,
+    pub(super) zip: bool,
+    pub(super) features: Vec<String>,
 }
 
 pub(crate) fn package_project_command(args: impl Iterator<Item = String>) -> Result<()> {
@@ -25,11 +30,8 @@ pub(crate) fn package_project_command(args: impl Iterator<Item = String>) -> Res
         zip,
         features,
     } = parse_package_options(args, "package")?;
-    if !release {
-        bail!("game-dev package currently requires --release");
-    }
     let output = output.ok_or_else(|| anyhow!("game-dev package requires --out <directory>"))?;
-    package_current_project(&output, zip, &features)
+    package_current_project(&output, zip, release, &features)
 }
 
 pub(crate) fn package_workspace_demo_command(
@@ -54,7 +56,7 @@ pub(crate) fn package_workspace_demo_command(
     package_workspace_demo(workspace, &output, &features)
 }
 
-fn parse_package_options(
+pub(super) fn parse_package_options(
     mut args: impl Iterator<Item = String>,
     command: &str,
 ) -> Result<PackageOptions> {
@@ -89,17 +91,30 @@ fn parse_package_options(
     })
 }
 
-fn package_current_project(requested_output: &Path, zip: bool, features: &[String]) -> Result<()> {
+fn package_current_project(
+    requested_output: &Path,
+    zip: bool,
+    release: bool,
+    features: &[String],
+) -> Result<()> {
     let project = env::current_dir().context("failed to resolve current project directory")?;
-    package_project_at(&project, requested_output, zip, features)
+    package_project_at(&project, requested_output, zip, release, features)
 }
 
 pub(crate) fn package_project_at(
     project: &Path,
     requested_output: &Path,
     zip: bool,
+    release: bool,
     features: &[String],
 ) -> Result<()> {
+    if detect_project_kind(project)? == ProjectKind::NoRustPackage {
+        return package_no_rust_project_at(project, requested_output, zip, None);
+    }
+    if !release {
+        bail!("game-dev package currently requires --release for Rust projects");
+    }
+
     let output = absolutize_from(project, requested_output);
     ensure_empty_or_missing(&output)?;
 
@@ -160,6 +175,93 @@ pub(crate) fn package_project_at(
     Ok(())
 }
 
+fn package_no_rust_project_at(
+    project: &Path,
+    requested_output: &Path,
+    zip: bool,
+    player_override: Option<&Path>,
+) -> Result<()> {
+    let output = absolutize_from(project, requested_output);
+    ensure_empty_or_missing(&output)?;
+    let paths = resolve_no_rust_project_paths_with_env(project, &NoRustPathOverrides::default());
+
+    let ignore = asset_ignore_patterns_from_game_file(&paths.game_file)?;
+    validate_assets_dir_with_ignores(&paths.asset_dir, false, ignore.clone())?;
+    game_kit::data::validate_authoring_file_with_asset_root(&paths.game_file, &paths.asset_dir)?;
+
+    let player = resolve_player_executable(player_override)?;
+    let player_name = executable_name("game-player");
+
+    fs::create_dir_all(&output)
+        .with_context(|| format!("failed to create package output '{}'", output.display()))?;
+    fs::copy(&player, output.join(&player_name)).with_context(|| {
+        format!(
+            "failed to copy game-player '{}' to '{}'",
+            player.display(),
+            output.display()
+        )
+    })?;
+    if let Ok(game_dev) = env::current_exe()
+        && game_dev.is_file()
+    {
+        let game_dev_name = game_dev
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("game-dev");
+        let _ = fs::copy(&game_dev, output.join(game_dev_name));
+    }
+    fs::copy(&paths.game_file, output.join("game.toml")).with_context(|| {
+        format!(
+            "failed to copy game config '{}' to package",
+            paths.game_file.display()
+        )
+    })?;
+    copy_directory(&paths.asset_dir, &output.join("assets"))?;
+    ensure_builtin_font(&output.join("assets"))?;
+    validate_assets_dir_with_ignores(&output.join("assets"), true, ignore)?;
+    write_launchers(&output, &player_name)?;
+    write_no_rust_package_readme(&output, &player_name)?;
+    if zip {
+        zip_package(&output)?;
+    }
+
+    println!("packaged no-Rust project at {}", output.display());
+    Ok(())
+}
+
+fn resolve_player_executable(explicit: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = explicit {
+        if path.is_file() {
+            return Ok(path.to_path_buf());
+        }
+        bail!("game-player executable '{}' does not exist", path.display());
+    }
+    if let Some(path) = env::var_os("GAME_PLAYER").map(PathBuf::from)
+        && path.is_file()
+    {
+        return Ok(path);
+    }
+    if let Ok(current_exe) = env::current_exe()
+        && let Some(parent) = current_exe.parent()
+    {
+        let sibling = parent.join(executable_name("game-player"));
+        if sibling.is_file() {
+            return Ok(sibling);
+        }
+    }
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for profile in ["release", "debug"] {
+        let candidate = workspace
+            .join("target")
+            .join(profile)
+            .join(executable_name("game-player"));
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    bail!("could not find game-player; build it first or set GAME_PLAYER")
+}
+
 fn package_workspace_demo(
     workspace: &Path,
     requested_output: &Path,
@@ -214,7 +316,7 @@ fn package_workspace_demo(
     Ok(())
 }
 
-fn ensure_empty_or_missing(output: &Path) -> Result<()> {
+pub(super) fn ensure_empty_or_missing(output: &Path) -> Result<()> {
     if output.exists()
         && fs::read_dir(output)
             .with_context(|| format!("failed to read package destination '{}'", output.display()))?
@@ -229,7 +331,7 @@ fn ensure_empty_or_missing(output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
+pub(super) fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
     for entry in WalkDir::new(source) {
         let entry = entry.with_context(|| format!("could not walk '{}'", source.display()))?;
         let relative = entry
@@ -257,7 +359,7 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn copy_runtime_libraries(build_dir: &Path, output: &Path) -> Result<()> {
+pub(super) fn copy_runtime_libraries(build_dir: &Path, output: &Path) -> Result<()> {
     for name in [
         "libSDL3.so.0",
         "libSDL3.0.dylib",
@@ -304,7 +406,7 @@ fn ensure_builtin_font(assets: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_launchers(output: &Path, executable_name: &str) -> Result<()> {
+pub(super) fn write_launchers(output: &Path, executable_name: &str) -> Result<()> {
     let shell = output.join("run.sh");
     fs::write(
         &shell,
@@ -349,6 +451,17 @@ fn write_project_package_readme(output: &Path, executable_name: &str) -> Result<
     .with_context(|| format!("failed to write '{}'", readme.display()))
 }
 
+fn write_no_rust_package_readme(output: &Path, executable_name: &str) -> Result<()> {
+    let readme = output.join("README.txt");
+    fs::write(
+        &readme,
+        format!(
+            "No-Rust game package\n\nOpen game.toml in any text editor to change the game. Keep this directory together: `{executable_name}` needs the adjacent `game.toml` and `assets` folder.\n\nLinux/macOS: run ./run.sh from a terminal.\nWindows: right-click run.ps1 and choose Run with PowerShell, or double-click run.bat.\n\nNo Rust or Cargo is needed to play or edit this package.\n"
+        ),
+    )
+    .with_context(|| format!("failed to write '{}'", readme.display()))
+}
+
 fn write_workspace_package_readme(output: &Path, executable_name: &str) -> Result<()> {
     let readme = output.join("README.txt");
     fs::write(
@@ -380,4 +493,49 @@ fn zip_package(output: &Path) -> Result<()> {
     }
     println!("wrote {}", zip_path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::package_no_rust_project_at;
+    use crate::templates::{DemoTemplate, new_project};
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn no_rust_package_copies_player_config_and_assets_without_cargo() {
+        let project = temp_path("package-project");
+        let output = temp_path("package-output");
+        let player = temp_path("fake-player");
+        new_project(&project, DemoTemplate::NoRust, "{ path = \"unused\" }").unwrap();
+        fs::write(&player, "fake player").unwrap();
+
+        package_no_rust_project_at(&project, &output, false, Some(&player)).unwrap();
+
+        assert!(output.join("game.toml").is_file());
+        assert!(output.join("assets/maps/level-1.txt").is_file());
+        assert!(output.join("README.txt").is_file());
+        assert!(output.join(super::executable_name("game-player")).is_file());
+        assert!(!output.join("Cargo.toml").exists());
+        assert!(!output.join("src/main.rs").exists());
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "game-cli-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        if path.exists() {
+            if path.is_dir() {
+                fs::remove_dir_all(&path).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+            }
+        }
+        path
+    }
 }

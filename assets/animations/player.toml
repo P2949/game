@@ -1,0 +1,52 @@
+texture = "textures/test.png"
+columns = 4
+rows = 1
+
+[[clip]]
+name = "idle"
+frames = [0]
+fps = 6
+
+[[clip]]
+name = "walk_up"
+frames = [0]
+fps = 10
+
+[[clip]]
+name = "walk_down"
+frames = [1]
+fps = 10
+
+[[clip]]
+name = "walk_left"
+frames = [2]
+fps = 10
+
+[[clip]]
+name = "walk_right"
+frames = [3]
+fps = 10
+
+[[clip]]
+name = "attack_up"
+frames = [0, 1]
+fps = 12
+looping = false
+
+[[clip]]
+name = "attack_down"
+frames = [1, 2]
+fps = 12
+looping = false
+
+[[clip]]
+name = "attack_left"
+frames = [2, 3]
+fps = 12
+looping = false
+
+[[clip]]
+name = "attack_right"
+frames = [3, 0]
+fps = 12
+looping = false

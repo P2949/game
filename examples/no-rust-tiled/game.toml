@@ -1,0 +1,51 @@
+version = 2
+
+[game]
+title = "No Rust Tiled"
+start_map = "level_1"
+
+[assets]
+textures = ["player", "slime", "floor", "wall"]
+
+[controls]
+preset = "top-down"
+
+[[prefab]]
+kind = "player"
+name = "player"
+sprite = "player"
+speed = 130
+health = 100
+
+[[prefab]]
+kind = "enemy"
+name = "slime"
+sprite = "slime"
+speed = 70
+health = 40
+chase_player = true
+
+[prefab.melee]
+range = 26
+damage = 6
+
+[[map]]
+kind = "tiled"
+name = "level_1"
+file = "assets/maps/tiled_demo.tmx"
+floor = "floor"
+wall = "wall"
+start = true
+
+[map.objects]
+Player = "player"
+Slime = "slime"
+
+[rules]
+enabled = [
+  "top-down-controls",
+  "enemies-damage-player",
+  "camera-follows-player",
+  "pause-and-reset",
+  "show-player-health",
+]

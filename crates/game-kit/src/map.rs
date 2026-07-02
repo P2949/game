@@ -1,7 +1,7 @@
 //! Map authoring (Phase 6) and content/runtime map services (Phase 7).
 //!
-//! [`MapAuthor`] declares a map in code or loads one from RON, referring to
-//! prefabs by **name** (matching the RON format) instead of `PrefabId`. On
+//! [`MapAuthor`] declares a map in code or loads one from legacy/advanced RON,
+//! referring to prefabs by **name** (matching the RON format) instead of `PrefabId`. On
 //! finalization the facade resolves names, validates the map, registers its
 //! collision tilemap + theme for rendering, and records the full [`GameMap`] (with
 //! objects) into a [`ContentRuntime`] resource so startup/reset systems can spawn
@@ -15,7 +15,7 @@ use std::rc::Rc;
 use anyhow::{Context, Result, anyhow};
 use game_core::app::MapData;
 use game_core::builder::{MapId, PrefabId, PrefabRegistry, PropertyBag};
-use game_core::commands::CommandQueue;
+use game_core::commands::{CommandErrorKind, CommandErrors, CommandQueue};
 use game_core::nav::NavGrid;
 use game_core::world::World;
 use game_core::world::{Sprite, Transform};
@@ -339,7 +339,7 @@ pub(crate) fn beginner_asset_path(path: &str) -> PathBuf {
 }
 
 /// Builder for one map. Created by [`GameApp::map`] (in-code) or
-/// [`GameApp::map_from_ron`] (external content). Finalized lazily by
+/// [`GameApp::map_from_ron`] (legacy/advanced external content). Finalized lazily by
 /// [`Self::start`].
 pub struct MapAuthor<'a, 'app> {
     app: &'a mut GameApp<'app>,
@@ -840,11 +840,22 @@ impl ContentRuntime {
         ))
     }
 
-    fn spawn_current(&self, world: &mut World) -> Result<()> {
-        let map = self
-            .maps
-            .get(&self.current_map)
-            .ok_or_else(|| anyhow!("unknown current map '{}'", self.current_map))?;
+    fn map_by_name(&self, name: &str) -> Result<&GameMap> {
+        self.maps
+            .get(name)
+            .ok_or_else(|| anyhow!("unknown map '{name}'"))
+    }
+
+    fn preflight_spawn_map(&self, map_name: &str) -> Result<()> {
+        let map = self.map_by_name(map_name)?;
+        validate_map_prefabs(map, &self.prefabs)
+            .with_context(|| format!("map '{map_name}' references unknown prefab"))?;
+        let mut scratch = World::new();
+        spawn_map_objects(&mut scratch, map, &self.prefabs)
+    }
+
+    fn spawn_map_by_name(&self, world: &mut World, map_name: &str) -> Result<()> {
+        let map = self.map_by_name(map_name)?;
         spawn_map_objects(world, map, &self.prefabs)
     }
 }
@@ -919,14 +930,43 @@ fn switch_world_to_map(world: &mut World, map_name: String) -> Result<MapId> {
     let mut content = world
         .remove_resource::<ContentRuntime>()
         .ok_or_else(|| anyhow!("content runtime missing; was the game-kit plugin used?"))?;
-    let map_id = content
-        .map_id(&map_name)
-        .ok_or_else(|| anyhow!("unknown map '{map_name}'"))?;
-    content.current_map = map_name;
+    let previous_map = content.current_map.clone();
+    let Some(map_id) = content.map_id(&map_name) else {
+        let message = format!("unknown map '{map_name}'");
+        world.insert_resource(content);
+        record_map_transition_error(world, message.clone());
+        anyhow::bail!(message);
+    };
+    if let Err(error) = content.preflight_spawn_map(&map_name) {
+        let message = format!("failed to switch to map '{map_name}': {error}");
+        content.current_map = previous_map;
+        world.insert_resource(content);
+        record_map_transition_error(world, message.clone());
+        anyhow::bail!(message);
+    }
     clear_world_for_map_respawn(world);
-    let result = content.spawn_current(world).map(|()| map_id);
+    let result = content.spawn_map_by_name(world, &map_name).map(|()| map_id);
+    if result.is_ok() {
+        content.current_map = map_name.clone();
+    } else if let Err(error) = &result {
+        let mut message = format!("failed to switch to map '{map_name}': {error}");
+        content.current_map = previous_map.clone();
+        clear_world_for_map_respawn(world);
+        if let Err(rollback) = content.spawn_map_by_name(world, &previous_map) {
+            message.push_str(&format!(
+                "; also failed to restore previous map '{previous_map}': {rollback}"
+            ));
+        }
+        record_map_transition_error(world, message);
+    }
     world.insert_resource(content);
     result
+}
+
+fn record_map_transition_error(world: &mut World, message: impl Into<String>) {
+    world
+        .resource_or_insert_with(CommandErrors::default)
+        .push(CommandErrorKind::MapTransition, message);
 }
 
 pub(crate) fn change_to_map_world(world: &mut World, map_name: &str) -> Result<MapId> {

@@ -12,10 +12,11 @@ pub(super) fn validate_file(file: &BeginnerGameFile, label: &str) -> Result<()> 
 }
 
 pub(super) fn validate_file_with_base(
-    file: &BeginnerGameFile,
+    file: impl Into<AuthoringGameFile>,
     label: &str,
     asset_base: Option<&Path>,
 ) -> Result<()> {
+    let file = file.into();
     if file.version != 1 {
         anyhow::bail!(
             "unsupported beginner game file version {}. Supported version: 1",
@@ -87,7 +88,7 @@ pub(super) fn validate_file_with_base(
         .flat_map(BeginnerPrefabFile::tags)
         .collect::<Vec<_>>();
     let prefab_data = build_prefab_data_index(&file.prefabs);
-    let scene_names = scene_names(file);
+    let scene_names = scene_names(&file);
     let scene_name_refs = scene_names.iter().map(String::as_str).collect::<Vec<_>>();
 
     for prefab in &file.prefabs {
@@ -899,7 +900,7 @@ fn validate_rule_combinations(
     Ok(())
 }
 
-fn scene_names(file: &BeginnerGameFile) -> Vec<String> {
+fn scene_names(file: &AuthoringGameFile) -> Vec<String> {
     let Some(flow) = &file.scene_flow else {
         return Vec::new();
     };

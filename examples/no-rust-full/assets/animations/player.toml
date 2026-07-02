@@ -1,0 +1,19 @@
+texture = "textures/player.png"
+columns = 1
+rows = 1
+
+[[clip]]
+name = "idle"
+frames = [0]
+fps = 6
+
+[[clip]]
+name = "walk"
+frames = [0]
+fps = 8
+
+[[clip]]
+name = "attack"
+frames = [0]
+fps = 10
+looping = false

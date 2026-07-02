@@ -1,14 +1,15 @@
 # When to use the advanced API
 
-Most demos should stay with the beginner API or `assets/game.ron`. Use the
-advanced API only when the game idea needs lower-level control that the
-beginner vocabulary cannot express.
+Most demos should stay with the primary `game.toml` package or the secondary
+beginner Rust API. Use the advanced API only when the game idea needs
+lower-level control that the beginner vocabulary cannot express.
+Advanced Rust authoring is not the primary no-Rust surface.
 For the exact public API boundary, see [api-boundary.md](api-boundary.md).
 
 ## Stay beginner for normal demos
 
-Use `game_starter::prelude::*`, `game_kit::beginner::prelude::*`, or
-`assets/game.ron` for:
+Use a primary `game.toml` package, `game_starter::prelude::*`, or
+`game_kit::beginner::prelude::*` for:
 
 - players, enemies, pickups, doors, checkpoints, triggers, and projectiles
 - maps, scenes, score, health, UI, sound, music, and animation
@@ -33,12 +34,17 @@ state because those are the point of the advanced path. Keep those concepts out 
 
 ## What to copy
 
-Copy `templates/simple-demo`, `templates/data-driven-demo`,
+Copy `templates/no-rust-demo` or one of the `examples/no-rust-*` packages first
+when you do not want Rust. Copy `templates/simple-demo`,
 `examples/one-file-demo`, `examples/no-rust-shapes-demo`,
-`examples/script-like-custom-rules`, or `simple-content` first.
+`examples/script-like-custom-rules`, or `simple-content` when you want the
+secondary beginner Rust path.
+
+Use `templates/data-driven-demo` only for legacy RON compatibility or migration
+work.
 
 Do not copy `testbed-content` for a first game. It is an advanced lab for
-manual systems, RON maps, tuple prefabs, and lower-level content experiments.
+manual systems, advanced RON maps, tuple prefabs, and lower-level content experiments.
 It should remain useful, but visibly separate from the beginner path.
 
 When the beginner API almost works but one common feature is missing, prefer

@@ -1,0 +1,14 @@
+texture = "textures/test.png"
+columns = 4
+rows = 1
+
+[[clip]]
+name = "flight"
+frames = [0, 1]
+fps = 12
+
+[[clip]]
+name = "impact"
+frames = [2, 3]
+fps = 12
+looping = false

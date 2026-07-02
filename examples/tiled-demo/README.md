@@ -21,4 +21,5 @@ Edit `assets/maps/tiled_demo.tmx` in Tiled. Objects with class/type/name `Player
 .object("Slime", "slime")
 ```
 
-Use `examples/data-driven-tiled-demo` for the equivalent no-Rust `assets/game.ron` workflow.
+Use `examples/no-rust-tiled` for the equivalent primary no-Rust `game.toml`
+workflow. `examples/data-driven-tiled-demo` remains the legacy RON wrapper.

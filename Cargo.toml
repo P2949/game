@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-default-members = ["bin/game"]
+default-members = ["bin/game", "bin/game-player"]
 members = [
     "crates/game-audio",
     "crates/game-backend-headless",
@@ -52,6 +52,7 @@ members = [
     "examples/waves-demo",
     "xtask",
     "bin/game",
+    "bin/game-player",
 ]
 
 [workspace.package]
@@ -77,6 +78,7 @@ ron = "0.12.1"
 sdl3 = "0.18.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "1.1.2"
 walkdir = "2"
 
 [profile.release]

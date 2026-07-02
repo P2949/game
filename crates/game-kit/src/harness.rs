@@ -15,7 +15,7 @@ use game_core::backend::{AudioCommand, SoundHandle};
 use game_core::builder::{GameBuilder, MapId, MapRegistry, PrefabRegistry, RuntimeContent};
 use game_core::camera::Camera2D;
 use game_core::commands::{
-    AssetReloadRequest, AssetReloadStatus, Command, CommandQueue, MapReload,
+    AssetReloadRequest, AssetReloadStatus, Command, CommandErrors, CommandQueue, MapReload,
 };
 use game_core::gfx::Gfx;
 use game_core::input::{ActionId, Axis2dId, Input, InputRegistry, MouseButton};
@@ -249,6 +249,21 @@ impl GameTestHarness {
 
     pub fn has_resource<T: 'static>(&self) -> bool {
         self.world.get_resource::<T>().is_some()
+    }
+
+    pub fn assert_no_command_errors(&self) {
+        let Some(errors) = self.world.get_resource::<CommandErrors>() else {
+            return;
+        };
+        if errors.is_empty() {
+            return;
+        }
+        let messages = errors
+            .iter()
+            .map(|error| error.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        panic!("runtime command errors: {messages}");
     }
 
     pub fn move_enemy_next_to_player(&mut self, index: usize) {

@@ -36,7 +36,7 @@ an orthogonal square-tile XML TMX map with an uncompressed CSV layer named
 `Collision` (`0` floor, non-zero wall) and objects identified by class, type,
 or name. Map each identifier to a prefab with `.object(...)`; see the
 [Tiled cookbook](cookbook/tiled.md) for Tiled Rust
-(`examples/tiled-demo`) and Tiled no-Rust
+(`examples/tiled-demo`) and the legacy RON Tiled wrapper
 (`examples/data-driven-tiled-demo`) examples. From the workspace root:
 
 ```bash

@@ -1,11 +1,14 @@
 # Cookbook
 
 Small beginner recipes for common game features. Each page points at a matching
-`examples/*` crate that you can copy into a new project.
+`examples/*` crate or no-Rust package that you can copy into a new project.
 
-Use `templates/data-driven-demo` or `examples/data-driven-full-demo` when you
-want to stay in `assets/game.ron`; use the recipes below when you are ready for
-beginner Rust builder chains.
+The primary no-Rust target is `game.toml` plus the prebuilt player workflow.
+Start from `templates/no-rust-demo`, `examples/no-rust-minimal`,
+`examples/no-rust-full`, or `examples/no-rust-tiled`. Use
+`templates/data-driven-demo` or legacy `examples/data-driven-*` wrappers only
+when you want the transitional `assets/game.ron` path. Use the recipes below
+when you are ready for secondary beginner Rust builder chains.
 
 - [Coins and score](coins-and-score.md)
 - [Projectiles](projectiles.md)

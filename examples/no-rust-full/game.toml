@@ -1,0 +1,259 @@
+version = 2
+
+[game]
+title = "Data Driven Full Demo"
+
+[assets]
+textures = ["player"]
+sounds = ["hit"]
+music = ["theme"]
+animation_sheets = ["player"]
+
+[controls]
+preset = "top-down"
+
+[[prefab]]
+kind = "player"
+name = "player"
+sprite = "player"
+animation_sheet = "player"
+speed = 135.0
+health = 100
+
+[prefab.melee]
+range = 30.0
+damage = 15
+
+[[prefab]]
+kind = "enemy"
+name = "slime"
+sprite = "player"
+speed = 80.0
+health = 30
+chase_player = true
+drops = "coin"
+tags = ["enemy"]
+
+[prefab.melee]
+range = 26.0
+damage = 6
+
+[[prefab]]
+kind = "enemy"
+name = "boss"
+sprite = "player"
+speed = 55.0
+health = 120
+chase_player = true
+drops = "heart"
+tags = ["enemy", "boss"]
+
+[prefab.melee]
+range = 32.0
+damage = 10
+
+[[prefab]]
+kind = "enemy"
+name = "bomber"
+sprite = "player"
+speed = 70.0
+health = 20
+chase_player = true
+tags = ["enemy", "explosive"]
+data = { fuse = 3.0 }
+
+[prefab.melee]
+range = 24.0
+damage = 4
+
+[[prefab]]
+kind = "pickup"
+name = "coin"
+sprite = "player"
+score = 1
+sound = "hit"
+
+[[prefab]]
+kind = "pickup"
+name = "heart"
+sprite = "player"
+score = 0
+heal_player = 25
+
+[[prefab]]
+kind = "projectile"
+name = "bolt"
+sprite = "player"
+damage = 15
+speed = 280.0
+duration = 0.8
+
+[[prefab]]
+kind = "spawner"
+name = "spawner"
+spawn = "slime"
+every_seconds = 2.5
+max_alive = 4
+placement = "near-player"
+
+[[prefab]]
+kind = "door"
+name = "exit"
+sprite = "player"
+action = "change-map"
+map = "level_2"
+
+[[prefab]]
+kind = "trigger"
+name = "danger"
+size = [48.0, 48.0]
+visible_debug = "player"
+
+[[prefab]]
+kind = "checkpoint"
+name = "checkpoint"
+sprite = "player"
+
+[[map]]
+kind = "text"
+name = "menu"
+file = "assets/maps/menu.txt"
+floor = "player"
+wall = "player"
+start = true
+
+[[map]]
+kind = "text"
+name = "game"
+file = "assets/maps/game.txt"
+floor = "player"
+wall = "player"
+
+[map.legend]
+P = "player"
+E = "slime"
+C = "coin"
+H = "heart"
+S = "spawner"
+D = "exit"
+K = "checkpoint"
+Z = "bomber"
+
+[[map]]
+kind = "text"
+name = "level_2"
+file = "assets/maps/level_2.txt"
+floor = "player"
+wall = "player"
+
+[map.legend]
+P = "player"
+B = "boss"
+E = "slime"
+C = "coin"
+
+[[map]]
+kind = "text"
+name = "game_over"
+file = "assets/maps/game_over.txt"
+floor = "player"
+wall = "player"
+
+[[map]]
+kind = "text"
+name = "win"
+file = "assets/maps/win.txt"
+floor = "player"
+wall = "player"
+
+[scene_flow]
+menu = "menu"
+game = "game"
+game_over = "game_over"
+win = "win"
+menu_text = "Data Driven Full Demo"
+game_over_button = "Try Again"
+win_text = "You cleared the data file!"
+win_button = "Play Again"
+start_on = "attack"
+restart_on = "reset"
+win_condition = "all-enemies-dead"
+
+[scene_flow.menu_button]
+label = "Start"
+map = "game"
+
+[audio]
+master_volume = 0.8
+
+[audio.music_on_scene.menu]
+track = "theme"
+volume = 0.2
+fade_in = 0.2
+
+[audio.music_on_scene.game]
+track = "theme"
+volume = 0.2
+fade_in = 0.2
+
+[audio.music_on_scene.game_over]
+track = "theme"
+volume = 0.15
+
+[audio.music_on_scene.win]
+track = "theme"
+volume = 0.15
+
+[[action]]
+kind = "player-shoots"
+prefab = "bolt"
+action = "attack"
+cooldown = 0.2
+direction = "towards-mouse"
+sound = "hit"
+
+[[custom_rule]]
+kind = "countdown"
+name = "explosive fuse"
+tag = "explosive"
+key = "fuse"
+
+[[custom_rule.when_zero]]
+action = "damage-tagged"
+tag = "enemy"
+amount = 20
+radius = 48.0
+
+[[custom_rule.when_zero]]
+action = "damage-player"
+amount = 20
+radius = 48.0
+
+[[custom_rule.when_zero]]
+action = "play-sound"
+sound = "hit"
+
+[[custom_rule.when_zero]]
+action = "despawn-self"
+
+[rules]
+enabled = [
+  "top-down-controls",
+  "player-collects-pickups",
+  "enemies-damage-player",
+  "enemy-drops",
+  "projectiles",
+  "spawners-spawn-prefabs",
+  "doors-change-maps",
+  "player-activates-checkpoints",
+  "respawn-at-checkpoint",
+  "camera-follows-player",
+  "pause-and-reset",
+  "show-basic-ui",
+  "show-player-health",
+  "show-menu",
+  "show-pause-menu",
+  "show-game-over-panel",
+  "show-win-panel",
+  "win-when-all-enemies-dead",
+]

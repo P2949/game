@@ -1,5 +1,9 @@
 # {{title}}
 
+This is the secondary beginner Rust template. Use it when you want to write a
+small `src/main.rs` with the beginner Rust API. The primary no-Rust template is
+`templates/no-rust-demo` and uses `game.toml` without Cargo project files.
+
 ## Start here
 
 1. Run `cargo run` or `game-dev run`.

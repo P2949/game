@@ -8,4 +8,5 @@ Current guides:
 
 - [v0.1 to v0.2](v0.1-to-v0.2.md)
 - [game.ron v1 to v2](game-ron-v1-to-v2.md)
+- [RON to TOML](ron-to-toml.md)
 - [root API cleanup](root-api-cleanup.md)

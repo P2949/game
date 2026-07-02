@@ -110,7 +110,9 @@ fn distribution_policy_keeps_tagged_git_model_explicit() {
         current_tag.as_str(),
         "cargo xtask new-demo",
         "Prebuilt demo zips",
-        "verified Linux and Windows demo zips",
+        "verified",
+        "Linux and Windows demo zips",
+        "no-Rust SDK zips",
         "Vulkan-capable GPU/driver",
         "publish crates.io packages after the beginner API stabilizes",
         "dedicated `game-template` repository",
@@ -228,10 +230,20 @@ fn standalone_beginner_cli_is_documented_and_xtask_wrapped() {
         cli_manifest.contains(r#"ci-build-sdl3 = ["game-audio/ci-build-sdl3"]"#),
         "game-cli CI should be able to source-build SDL3 through game-audio"
     );
+    for required in [r#"ogg = ["game-audio/ogg"]"#, r#"mp3 = ["game-audio/mp3"]"#] {
+        assert!(
+            cli_manifest.contains(required),
+            "game-cli should forward optional audio validation feature {required:?}"
+        );
+    }
     let cli = read_game_cli_sources();
     for required in [
-        "game-dev check [--features feature-list]",
+        "game-dev check [--project dir] [--features feature-list]",
+        "game-dev authoring-scan [--project dir]",
+        "game-dev migrate-ron assets/game.ron --out game.toml",
         "fn check_project",
+        "fn authoring_scan_command",
+        "fn migrate_ron_command",
         "validate_assets_dir(&assets, false)",
         "validate_beginner_game_file",
         "cargo check failed",
@@ -304,7 +316,7 @@ fn standalone_beginner_cli_is_documented_and_xtask_wrapped() {
         "game-dev doctor --explain",
         "If this looks like an asset/data issue:",
         "game-dev asset-check",
-        "game-dev validate-data assets/game.ron",
+        "game-dev validate-data",
         "Rule `projectiles_damage_enemies` needs the `projectiles` rule",
         "restart required",
         ".object(\"Slime\", \"slime\")",
@@ -373,10 +385,15 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         "\"v*\"",
         "game-demo-linux-x86_64",
         "game-demo-windows-x86_64",
+        "game-sdk-linux-x86_64",
+        "game-sdk-windows-x86_64",
         "cargo run -p xtask --features ci-build-sdl3 -- package-demo --release --features ci-build-sdl3",
+        "cargo run -p xtask --features ci-build-sdl3 -- package-sdk --release --features ci-build-sdl3",
         "Verify Linux package archive",
+        "Verify Linux SDK archive",
         "scripts/verify-release-artifact.sh",
         "Verify Windows package archive",
+        "Verify Windows SDK archive",
         "Expand-Archive",
         "actions/upload-artifact",
         "gh release upload",
@@ -390,20 +407,31 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
     let verifier = fs::read_to_string(root.join("scripts/verify-release-artifact.sh"))
         .expect("failed to read release artifact verifier");
     for required in [
-        "usage: scripts/verify-release-artifact.sh <archive.zip> <linux|windows>",
+        "usage: scripts/verify-release-artifact.sh <archive.zip> <linux|windows> [demo|sdk]",
         "game",
         "game.exe",
+        "game-player",
+        "game-dev",
         "libSDL3.so.0",
         "SDL3.dll",
         "run.sh",
         "run.ps1",
         "run.bat",
         "README.txt",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
         "assets/fonts/DejaVuSans.ttf",
         "assets/game.ron",
         "assets/maps/tiled_demo.tmx",
         "assets/textures/test.png",
         "assets/sounds/hit.wav",
+        "templates/no-rust-demo/game.toml",
+        "templates/no-rust-demo/assets/fonts/DejaVuSans.ttf",
+        "templates/no-rust-demo/Cargo.toml",
+        "examples/no-rust-minimal/assets/fonts/DejaVuSans.ttf",
+        "examples/no-rust-full/assets/fonts/DejaVuSans.ttf",
+        "examples/no-rust-full/assets/animations/player.toml",
+        "README.txt must say no Rust is required",
     ] {
         assert!(
             verifier.contains(required),
@@ -422,6 +450,8 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         "gh run download",
         "game-demo-linux-x86_64",
         "game-demo-windows-x86_64",
+        "game-sdk-linux-x86_64",
+        "game-sdk-windows-x86_64",
         "verify-release-artifact.sh",
     ] {
         assert!(
@@ -436,6 +466,12 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
             "cargo xtask package-demo --release --out <directory> [--features feature-list]"
         ),
         "workspace demo packaging should document feature flags for release builds"
+    );
+    assert!(
+        cli.contains(
+            "cargo xtask package-sdk --release --out <directory> [--features feature-list]"
+        ),
+        "no-Rust SDK packaging should document feature flags for release builds"
     );
 
     let xtask_manifest =
@@ -453,6 +489,11 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         "Releases",
         "game-demo-linux-x86_64.zip",
         "game-demo-windows-x86_64.zip",
+        "game-sdk-linux-x86_64.zip",
+        "game-sdk-windows-x86_64.zip",
+        "game-player",
+        "game-dev",
+        "templates/no-rust-demo",
         "Vulkan-capable GPU/driver",
         "source builds remain the main",
     ] {
@@ -472,7 +513,8 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
             .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
         assert!(
             source.contains("Prebuilt demo package")
-                || source.contains("Prebuilt demo release artifacts"),
+                || source.contains("Prebuilt demo release artifacts")
+                || source.contains("Prebuilt Demo And SDK Release Artifacts"),
             "{relative} should document the prebuilt demo path"
         );
         assert!(
@@ -488,10 +530,30 @@ fn release_workflow_publishes_prebuilt_demo_artifacts() {
         "scripts/verify-github-release-artifacts.sh <run-id>",
         "latest successful `release.yml` run",
         "cargo run -p xtask --features ci-build-sdl3 -- package-demo --release --features ci-build-sdl3",
+        "cargo run -p xtask --features ci-build-sdl3 -- package-sdk --release --features ci-build-sdl3",
+        "scripts/verify-release-artifact.sh /tmp/game-sdk-linux-x86_64.zip linux sdk",
+        "/tmp/game-sdk-linux-x86_64/game-dev new /tmp/my-game --template no-rust",
     ] {
         assert!(
             checklist.contains(required),
             "release checklist should document {required:?}"
+        );
+    }
+
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("failed to read CI workflow");
+    for required in [
+        "Build no-Rust SDK artifact",
+        "Verify no-Rust SDK without Cargo",
+        "package-sdk --release --features ci-build-sdl3 --out /tmp/game-sdk",
+        "cargo must not be called after the SDK has been built",
+        "game-dev\" new /tmp/sdk-no-rust --template no-rust",
+        "game-dev\" check --project /tmp/sdk-no-rust",
+        "game-dev\" preview --project /tmp/sdk-no-rust --smoke-frames 0",
+    ] {
+        assert!(
+            ci.contains(required),
+            "CI should include SDK no-Cargo smoke detail {required:?}"
         );
     }
 }

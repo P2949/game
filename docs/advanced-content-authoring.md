@@ -2,7 +2,8 @@
 
 This document is intentionally second, not the starting point. Begin with the
 [beginner authoring guide](beginner-authoring.md) unless you specifically need
-custom ECS-shaped prefabs, systems, queries, RON maps, or engine pressure tests.
+custom ECS-shaped prefabs, systems, queries, advanced RON maps, or engine
+pressure tests.
 If you are deciding whether to cross that boundary, read
 [when to use the advanced API](when-to-use-advanced-api.md) first.
 The maintained import and layer contract is in
@@ -43,9 +44,9 @@ let assets = game.assets(|assets| {
 
 ## Raw prefabs and systems
 
-Use this path for custom tuple prefabs, manual schedules, explicit queries, RON
-map experiments, or specialized content tests. Advanced content still depends
-on `game-kit`; it does not wire SDL, Vulkan, audio devices, schedules,
+Use this path for custom tuple prefabs, manual schedules, explicit queries,
+legacy/advanced RON map experiments, or specialized content tests. Advanced
+content still depends on `game-kit`; it does not wire SDL, Vulkan, audio devices, schedules,
 validators, registries, command queues, or raw runtime contexts.
 
 ```rust

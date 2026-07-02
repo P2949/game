@@ -74,10 +74,6 @@ pub use crate::beginner::ui::{
 pub use crate::bundle::vec2s;
 /// Defines a content plugin without requiring `GamePlugin` boilerplate.
 pub use crate::content_plugin;
-pub use crate::data::{
-    BeginnerAssetsFile, BeginnerControlsFile, BeginnerGameFile, BeginnerMapFile,
-    BeginnerPrefabFile, BeginnerRuleFile, BeginnerScriptRuleFile, RuleEffectFile,
-};
 pub use crate::input::{ActionAuthor, Axis2dAuthor, InputAuthor, TopDownControls};
 pub use crate::map::MapAuthor;
 pub use crate::prefab::{IntoContentName, IntoMovementAxis};

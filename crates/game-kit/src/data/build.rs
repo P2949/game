@@ -34,7 +34,7 @@ fn conventional_asset_path(
 
 pub(super) fn build_beginner_game_file(
     game: &mut GameApp<'_>,
-    file: BeginnerGameFile,
+    file: AuthoringGameFile,
     label: &str,
     asset_base: Option<&Path>,
 ) -> Result<TopDownControls> {
@@ -67,10 +67,11 @@ pub(super) fn build_beginner_game_file(
             };
     }
     for key in &file.assets.animation_sheets {
-        asset_author = match asset_path(asset_base, &format!("animations/{key}.ron")) {
-            Some(path) => asset_author.spritesheet_from_meta(key.clone(), path)?,
-            None => asset_author.animation_sheet_auto(key.clone())?,
-        };
+        asset_author =
+            match conventional_asset_path(asset_base, "animations", key, &["toml", "ron"]) {
+                Some(path) => asset_author.spritesheet_from_meta(key.clone(), path)?,
+                None => asset_author.animation_sheet_auto(key.clone())?,
+            };
     }
     let assets = asset_author.build();
 

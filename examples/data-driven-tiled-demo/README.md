@@ -1,6 +1,9 @@
 # Data Driven Tiled Demo
 
-This example is the no-Rust Tiled path: `src/main.rs` only loads
+Legacy Rust-wrapper example. The primary no-Rust package equivalent is
+`examples/no-rust-tiled`.
+
+This example keeps the transitional `src/main.rs` wrapper that loads
 `assets/game.ron`. The data file maps Tiled object identifiers to beginner
 prefabs and uses the normal top-down beginner rules.
 
